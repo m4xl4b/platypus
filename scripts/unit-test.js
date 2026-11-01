@@ -498,6 +498,13 @@ function elderTests(ok) {
   const old = agent('o', 'OLD');
   act(old.world, 'Read', 'src/auth/oldToken.ts', now - 120000, { err: true, out: 'File does not exist.' });
   ok(!bt.hints({ id: 's' }, [old], lessons, now).length, 'Nonno: un\'azione finita da più di 30 s non conta');
+  // lo stesso comando scritto in un altro modo: cartella, variabili, redirezioni e pipe non contano
+  const flaky = [lesson('flaky-command', 'cd /d/app && CI=1 npm test 2>&1 | tail -20')];
+  const run = (cmd, i) => { const x = agent('r' + i, 'R' + i); x.world.start('hr' + i, 'Bash', { command: cmd }, now - 1000, '/p', 0); return x; };
+  const same = ['npm test', 'cd /x && npm test > out.txt 2>&1', 'NODE_ENV=test npm test | head -5', 'npm test -- --grep auth'].map(run);
+  const other = ['npm testing', 'npm run test:e2e', 'npm', 'git status'].map((c, i) => run(c, i + 10));
+  const hs = bt.hints({ id: 's' }, [...same, ...other], flaky, now);
+  ok(hs.length === same.length && same.every(x => hs.some(y => y.agent === x.id)), 'Nonno: riconosce «npm test» scritto in quattro modi diversi (' + hs.map(y => y.agent).join(',') + ')');
   // l'interruttore dell'apprendimento
   const { OfficeState, DEFAULT_SETTINGS } = require(path.join(ROOT, 'src', 'core', 'state'));
   ok(DEFAULT_SETTINGS.elderEnabled === true && DEFAULT_SETTINGS.bottegaLearn === true, 'opzioni: Nonno e apprendimento accesi di base');

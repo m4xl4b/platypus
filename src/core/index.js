@@ -30,7 +30,7 @@ const worldmap = require('./worldmap');
 const semantic = require('./semantic');
 const grounding = require('./grounding');
 const surprise = require('./surprise');
-const { Bottega, digest, hints, renderSection } = require('./bottega');
+const { Bottega, digest, hints, renderSection, projectKey } = require('./bottega');
 const claudemd = require('./claudemd');
 const { TranscriptWatcher, SessionRegistry, claudeDir, findCoworkBases } = require('./sources');
 const { Weather } = require('./weather');
@@ -64,17 +64,25 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const bottega = new Bottega(bottegaDir || path.join(path.dirname(settingsPath), 'bottega'));
   // il libro impara dalle sessioni aperte: gli stessi fatti della mappa, una volta al minuto
   // (i casi già visti non contano due volte; la demo ha il suo libro finto)
+  // e, per ogni progetto aperto, rilegge da sé le sessioni passate (una volta ogni 6 ore: quelle già lette non si rileggono)
+  const ARCHIVE_EVERY = 6 * 3600000, archived = new Map();
   function learnLive() {
     let n = 0;
     if (!state.settings.bottegaLearn) return 0;
     for (const s of state.sessions.values()) {
       if (s.demo || !s.cwd) continue;
       try { const agents = agentsOf(s); if (agents.length) n += bottega.learn(s.cwd, digest(s, agents)); } catch {}
+      const key = projectKey(s.cwd);
+      if (Date.now() - (archived.get(key) || 0) < ARCHIVE_EVERY) continue;
+      archived.set(key, Date.now());
+      try { bottega.learnFromArchive(s.cwd, { base, settings: state.settings, liveIds: liveIds() }); } catch {}
     }
     return n;
   }
   const learnTimer = setInterval(learnLive, 60000);
   learnTimer.unref && learnTimer.unref();
+  const learnSoon = setTimeout(learnLive, 15000); // le sessioni aperte all'avvio non aspettano il primo minuto
+  learnSoon.unref && learnSoon.unref();
   state.includeCowork = !!includeCowork;
   const watcher = new TranscriptWatcher(state, { base });
   const registry = new SessionRegistry(state, watcher, { base });
@@ -521,7 +529,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     for (const id of [...approvals.keys()]) finishApproval(id, null);
     if (replay) replay.stop();
     stats.stop();
-    clearInterval(learnTimer);
+    clearInterval(learnTimer); clearTimeout(learnSoon);
     bottega.stop();
     state.stop();
     for (const c of clients) try { c.end(); } catch {}

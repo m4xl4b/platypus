@@ -347,6 +347,15 @@ function run(ok) {
   archiveTests(ok);
   gitBashPathTests(ok);
   shellResetTests(ok);
+  bashLabelTests(ok);
+}
+
+// il fumetto di un comando senza descrizione mostra il comando vero, non il "cd" davanti
+function bashLabelTests(ok) {
+  const { describeTool } = require(path.join(ROOT, 'src', 'core', 'describe'));
+  const d = c => describeTool('Bash', { command: c });
+  ok(/npm test/.test(d('cd C:/Users/me/work/app && npm test 2>&1 | tail -30')) && !/cd /.test(d('cd "C:/My Work" && cd sub && npm test')), 'fumetto di Bash: «' + d('cd C:/Users/me/work/app && npm test') + '»');
+  ok(/cd sub/.test(d('cd sub')) && /^Dice/.test(describeTool('Bash', { command: 'x', description: 'Dice ciao' })), 'fumetto di Bash: un cd da solo resta, la descrizione vince');
 }
 
 module.exports = { run };

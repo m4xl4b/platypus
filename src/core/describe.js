@@ -24,7 +24,8 @@ function describeTool(name, input) {
   switch (name) {
     case 'Bash':
     case 'PowerShell':
-      return input.description ? clip(input.description) : tr('Esegue: {cmd}', { cmd: clip(input.command, 50) });
+      // senza descrizione: il comando vero, non il "cd cartella &&" che lo precede
+      return input.description ? clip(input.description) : tr('Esegue: {cmd}', { cmd: clip(String(input.command || '').replace(/^\s*(?:cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*)+/, ''), 50) });
     case 'BashOutput':
       return tr('Controlla un processo in background');
     case 'KillShell':

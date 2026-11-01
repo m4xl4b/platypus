@@ -129,12 +129,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const kindsFk = new Set((fk.lessons || []).map(l => l.kind));
   ok(learned > 0 && kindsFk.has('ghost-path') && kindsFk.has('loop-trap') && kindsFk.has('flaky-command'), `il libro impara da una sessione aperta: ${learned} casi, ${[...kindsFk].join(', ')}`);
   ok(core.learnLive() === 0, 'imparare di nuovo dalla stessa sessione non aggiunge nulla');
-  // dall'archivio, in background: la sessione aperta si salta, quella passata si legge una volta sola
-  const lr = JSON.parse((await get(port, '/api/bottega/learn', 'POST', JSON.stringify({ cwd: fakeCwd }))).body);
+  // dall'archivio, da sé e in background (senza il bottone): la sessione aperta si salta, quella passata si legge una volta sola
   let fk2 = {};
   for (let k = 0; k < 40; k++) { await sleep(100); fk2 = JSON.parse((await get(port, '/api/bottega?cwd=' + encodeURIComponent(fakeCwd))).body); if (fk2.learning && !fk2.learning.running) break; }
   const gl = (fk2.lessons || []).find(l => l.kind === 'ghost-path');
-  ok(lr.ok && lr.learning.total === 1 && fk2.learnedSessions === 1 && gl && gl.sessions.length === 2 && gl.level === 'lesson', `imparare dall'archivio: ${fk2.learnedSessions} sessione letta, il percorso inventato ora è una lezione (${gl ? gl.sessions.length : 0} sessioni)`);
+  ok(fk2.learning && fk2.learning.total === 1 && fk2.learnedSessions === 1 && gl && gl.sessions.length === 2 && gl.level === 'lesson', `imparare dall'archivio da sé: ${fk2.learnedSessions} sessione letta, il percorso inventato ora è una lezione (${gl ? gl.sessions.length : 0} sessioni)`);
   const lr2 = JSON.parse((await get(port, '/api/bottega/learn', 'POST', JSON.stringify({ cwd: fakeCwd }))).body);
   ok(lr2.ok && lr2.learning.total === 0, 'una sessione già letta e non cambiata non si rilegge');
   core.bottega.save();

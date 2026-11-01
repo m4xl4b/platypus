@@ -111,6 +111,8 @@ To uninstall:
 
 The lessons Platypus deduces from your sessions live in `~/.platypus/bottega`, one JSON file per project folder (the file name is a key computed from the folder). Nothing leaves your computer.
 
+The book learns from the open sessions once a minute and, when a project has an open session, rereads that project's past sessions by itself in the background (every 6 hours at most; a session already read and unchanged is skipped).
+
 - To forget a single lesson: open the Book (BOOK on the floor's notice board, or WORKSHOP in the lobby) and press FORGET.
 - To forget a project's book, or all of them: close Platypus and delete its file, or the whole `~/.platypus/bottega` folder.
 - To stop learning: OPT → *The Workshop book learns from sessions*. Grandpa has his own switch next to it.

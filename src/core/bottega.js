@@ -34,6 +34,15 @@ function projectKey(cwd) { return crypto.createHash('sha1').update(normDir(cwd))
 const sha = s => crypto.createHash('sha1').update(s).digest('hex').slice(0, 12);
 // un comando come "firma" leggibile: spazi compattati, niente percorsi assoluti
 const cmdOf = sig => String(sig || '').replace(/^run:/, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+// il cuore di un comando, per riconoscerlo quando torna: senza "cd …", variabili d'ambiente,
+// redirezioni e pipe ("cd app && CI=1 npm test 2>&1 | tail -20" è "npm test")
+function cmdCore(cmd) {
+  const parts = String(cmd || '').replace(/^run:/, '').split(/&&|\|\||;|\n/).map(x => x.trim()).filter(Boolean);
+  const seg = parts.find(x => !/^(cd|pushd|popd|set|export|source|\.)\b/.test(x)) || parts[0] || '';
+  return seg.split('|')[0].replace(/\d*>&\d|\d*>>?\s*\S+|<\s*\S+/g, ' ').split(/\s+/)
+    .filter(w => w && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) && !/^(sudo|time|nohup|exec)$/.test(w)).join(' ');
+}
+const sameCmd = (lesson, cur) => { const a = cmdCore(lesson), b = cmdCore(cur); return !!a && (a === b || b.startsWith(a + ' ')); };
 // uno schema d'errore: senza numeri di riga, colonne, numeri e contenuti tra virgolette
 function errorPattern(excerpt) {
   return String(excerpt || '').replace(/(?:[A-Za-z]:)?[\w.~\-]*[\\/][^\s:'"()]+/g, '<path>').replace(/(['"`]).*?\1/g, '<…>').replace(/\d+/g, 'N').replace(/\s+/g, ' ').trim().slice(0, 100);
@@ -270,7 +279,7 @@ function hints(session, agents, lessons, now = Date.now()) {
     if (!cur || (cur.err !== null && now - cur.t - (cur.dur || 0) > RECENT_MS)) continue; // in corso, o appena finita
     const cmd = /^(run|verify|look)$/.test(cur.act) ? cmdOf(cur.sig) : null;
     const match = l => {
-      if (cmd && (l.kind === 'flaky-command' || l.kind === 'slow-step' || l.kind === 'loop-trap')) return l.key === cmd;
+      if (cmd && (l.kind === 'flaky-command' || l.kind === 'slow-step' || l.kind === 'loop-trap')) return sameCmd(l.key, cmd);
       if (cur.act === 'edit' && (l.kind === 'fragile-file' || l.kind === 'stale-trap')) return l.key === cur.target;
       if ((cur.act === 'read' || cur.act === 'search') && l.kind === 'ghost-path') return l.key === cur.target;
       if (l.kind === 'known-fix' && cur.err && cur.fail) return l.key.split(' → ')[0] === errorPattern(cur.fail.excerpt);
