@@ -43,5 +43,8 @@
   "Dimenticati nell'ultima compattazione": "Forgotten in the last compaction",
   "da {a} a {b} token": "from {a} to {b} tokens",
   "NON MISURABILE": "CAN'T TELL",
-  "le parole del compito non compaiono nel suo lavoro": "the task's words never show up in its work"
+  "le parole del compito non compaiono nel suo lavoro": "the task's words never show up in its work",
+  "Torna alla vista intera (doppio clic)": "Back to the whole view (double-click)",
+  "Zoom": "Zoom",
+  "rotella per ingrandire attorno al cursore, trascina per spostarti (nei grafici 3D con Maiusc o con il tasto destro, perché il trascinamento li ruota), doppio clic o il tasto «1:1» per tornare alla vista intera. Il territorio ingrandito mostra i nomi dei file; il sismografo ingrandisce solo il tempo.": "scroll to zoom in around the cursor, drag to move (in the 3D charts with Shift or the right button, since dragging rotates them), double-click or the \"1:1\" button to go back to the whole view. A zoomed territory shows the file names; the seismograph zooms only on time."
 }

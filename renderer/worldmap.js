@@ -37,14 +37,14 @@
 
   const W = { open: false, sid: null, aid: 'main', replay: false, data: null, T: null, playing: false, yaw: -0.6, pitch: 0.42, drag: null,
     axes: ['work', 'novelty', 'friction'], hover: null, tiles: [], timer: null, fetching: false, layoutSig: '', layout: null, lastFrame: 0,
-    view: 'map', mind: null, mhover: null, ground: null, groundSeq: 0 };
+    view: 'map', mind: null, mhover: null, ground: null, groundSeq: 0, zoom: {} };
   const VIEWS = ['map', 'mind', 'ground', 'surp'];
   const usesGround = () => W.view === 'ground' || W.view === 'surp'; // le due viste leggono /api/grounding
 
   function el() { return $('#worldmap'); }
 
   window.openWorldMap = function (sid, aid, replay) {
-    W.open = true; W.sid = sid; W.aid = aid || 'main'; W.replay = !!replay; W.T = null; W.playing = false; W.data = null; W.mind = null; W.ground = null; W.layoutSig = '';
+    W.open = true; W.sid = sid; W.aid = aid || 'main'; W.replay = !!replay; W.T = null; W.playing = false; W.data = null; W.mind = null; W.ground = null; W.layoutSig = ''; W.zoom = {};
     build();
     el().hidden = false;
     refresh();
@@ -104,26 +104,27 @@
         <p><b>${esc(tr('Stella polare'))}</b>: ${esc(tr('la stella è il compito che gli è stato dato. Il grafico dice quanto ogni azione parla delle stesse cose del compito, rispetto alle sue prime azioni: se resta bassa a lungo l\'agente sta andando alla deriva. Una nuova richiesta sposta la stella.'))}</p>
         <p><b>${esc(tr('Mappa e territorio'))}</b>: ${esc(tr('confronta quello che l\'agente sa e dice con quello che c\'è davvero. Contorno arancione con l\'orologio: un file che ha letto ed è poi cambiato (da un altro agente o fuori dalla sessione) senza che lui lo rileggesse, un ricordo scaduto. Caselle viola tratteggiate con il punto di domanda: file che ha cercato, aperto o citato e che non esistono, i percorsi inventati; più chiare se poi qualcuno li ha creati (era un\'intenzione). A destra, le sue affermazioni («i test passano», «ho corretto X»…) confrontate con quello che ha fatto nello stesso turno: ancorata se c\'è un fatto che la prova, senza prove se non c\'è, smentita se l\'ultimo esito è un fallimento. L\'indice di ancoraggio è la quota di affermazioni ancorate. Clic su una voce per andare a quel momento.'))}</p>
         <p><b>${esc(tr('Sorpresa e cause'))}</b>: ${esc(tr('ogni punta del sismografo è un fallimento (un test rosso, un comando che non va, un file che non c\'è…), alta quanto era inatteso: di più se prima funzionava, di meno se era il primo tentativo o un test appena scritto. Il colore dice cosa ha fatto dopo: verde si corregge, rosso insiste con lo stesso comando, grigio si ferma. A destra le catene: l\'errore, i file che cita, la prima modifica (verde se tocca un file citato, arancione se cerca altrove) e la conferma, quando lo stesso comando torna a riuscire. In ufficio, «!?» sopra la testa per una sorpresa forte e una nuvoletta grigia per chi insiste.'))}</p>
+        <p><b>${esc(tr('Zoom'))}</b>: ${esc(tr('rotella per ingrandire attorno al cursore, trascina per spostarti (nei grafici 3D con Maiusc o con il tasto destro, perché il trascinamento li ruota), doppio clic o il tasto «1:1» per tornare alla vista intera. Il territorio ingrandito mostra i nomi dei file; il sismografo ingrandisce solo il tempo.'))}</p>
         <p class="dim">${esc(tr('Motore lessicale sperimentale: confronta le parole importanti (anche dentro i nomi dei file e del codice), non il significato profondo. Funziona tutto sul computer, senza scaricare modelli.'))}</p>
         <p class="dim">${esc(tr('La mappa è ricostruita da quello che l\'agente fa (file, comandi, ricerche, esiti), non da quello che pensa: i suoi pensieri non sono visibili.'))}</p>
       </div>`;
     const e = el();
     e.querySelector('.x').onclick = closeWorldMap;
     e.querySelector('.wm-help-btn').onclick = () => { const l = e.querySelector('.wm-legend'); l.hidden = !l.hidden; };
-    e.querySelector('.wm-agent').onchange = ev => { W.aid = ev.target.value; W.data = null; W.mind = null; W.T = null; W.layoutSig = ''; refresh(); };
+    e.querySelector('.wm-agent').onchange = ev => { W.aid = ev.target.value; W.data = null; W.mind = null; W.T = null; W.layoutSig = ''; for (const k in ZBOX) if (W.zoom[k]) setZoom(k, { k: 1, x: 0, y: 0 }, 0, 0); refresh(); };
     for (const s of e.querySelectorAll('select[data-ax]')) s.onchange = ev => { W.axes[Number(ev.target.dataset.ax)] = ev.target.value; };
     const range = e.querySelector('input[type=range]');
     range.oninput = () => { W.playing = false; const [a, b] = span(); W.T = Number(range.value) >= 1000 ? null : a + (b - a) * Number(range.value) / 1000; };
     e.querySelector('.wm-live').onclick = () => { W.T = null; W.playing = false; refresh(); };
     e.querySelector('.wm-play').onclick = () => { if (W.playing) { W.playing = false; return; } const [a] = span(); W.T = a; W.playing = true; };
     const traj = e.querySelector('.wm-traj canvas');
-    traj.onpointerdown = ev => { W.drag = { x: ev.clientX, y: ev.clientY, yaw: W.yaw, pitch: W.pitch }; traj.setPointerCapture(ev.pointerId); };
+    traj.onpointerdown = ev => { if (panGesture(ev)) return; W.drag = { x: ev.clientX, y: ev.clientY, yaw: W.yaw, pitch: W.pitch }; traj.setPointerCapture(ev.pointerId); };
     traj.onpointermove = ev => { if (!W.drag) return; W.yaw = W.drag.yaw + (ev.clientX - W.drag.x) / 120; W.pitch = Math.max(-1.3, Math.min(1.3, W.drag.pitch + (ev.clientY - W.drag.y) / 160)); };
     traj.onpointerup = () => { W.drag = null; };
     for (const b of e.querySelectorAll('.wm-views button')) b.onclick = () => setView(b.dataset.v);
     setView(W.view);
     const bub = e.querySelector('.wm-bub canvas');
-    bub.onpointerdown = ev => { W.drag = { x: ev.clientX, y: ev.clientY, yaw: W.yaw, pitch: W.pitch }; bub.setPointerCapture(ev.pointerId); };
+    bub.onpointerdown = ev => { if (panGesture(ev)) return; W.drag = { x: ev.clientX, y: ev.clientY, yaw: W.yaw, pitch: W.pitch }; bub.setPointerCapture(ev.pointerId); };
     bub.onpointermove = ev => {
       const r = bub.getBoundingClientRect(); W.mhover = { x: ev.clientX - r.left, y: ev.clientY - r.top };
       if (!W.drag) return; W.yaw = W.drag.yaw + (ev.clientX - W.drag.x) / 120; W.pitch = Math.max(-1.3, Math.min(1.3, W.drag.pitch + (ev.clientY - W.drag.y) / 160));
@@ -143,7 +144,9 @@
     const seis = e.querySelector('.wm-seis canvas');
     seis.onmousemove = ev => { const r = seis.getBoundingClientRect(); W.shover = { x: ev.clientX - r.left, y: ev.clientY - r.top }; };
     seis.onmouseleave = () => { W.shover = null; };
-    seis.onclick = () => { const sp = W.spikeHover; if (sp) { W.playing = false; W.T = sp.t; } };
+    seis.onclick = () => { const sp = W.spikeHover; if (sp && !justPanned(seis)) { W.playing = false; W.T = sp.t; } };
+    zoomable('terr'); zoomable('gterr'); zoomable('seis', { axis: 'x' });
+    zoomable('traj', { pan: panGesture }); zoomable('bub', { pan: panGesture });
   }
 
   function setView(v) {
@@ -275,6 +278,60 @@
     return { ctx, w, h };
   }
 
+  // ---------------------------------------------------------------- zoom dei grafici: rotella, trascina, doppio clic
+  // per ogni grafico: schermo = disegno * k + (x, y). Il sismografo ingrandisce solo il tempo (asse x).
+  const ZBOX = { terr: '.wm-terr', gterr: '.wm-gterr', traj: '.wm-traj', bub: '.wm-bub', seis: '.wm-seis' };
+  const ZOOM_MAX = 8;
+  const zoomOf = key => W.zoom[key] || { k: 1, x: 0, y: 0 };
+  // nei grafici 3D il trascinamento ruota: si sposta con Maiusc o con il tasto destro
+  const panGesture = ev => ev.shiftKey || ev.button === 1 || ev.button === 2;
+  function setZoom(key, z, w, h, axis) {
+    z.k = Math.max(1, Math.min(ZOOM_MAX, z.k));
+    z.x = Math.min(0, Math.max(w * (1 - z.k), z.x));
+    z.y = axis === 'x' ? 0 : Math.min(0, Math.max(h * (1 - z.k), z.y));
+    if (z.k < 1.01) z.k = 1, z.x = 0, z.y = 0;
+    W.zoom[key] = z;
+    const chip = el().querySelector(ZBOX[key] + ' .wm-zoom');
+    if (chip) { chip.hidden = z.k === 1; chip.textContent = '×' + z.k.toFixed(1) + ' · 1:1'; }
+    const cv = el().querySelector(ZBOX[key] + ' canvas');
+    if (cv && (key === 'terr' || key === 'gterr')) cv.style.cursor = z.k > 1 ? 'grab' : '';
+  }
+  function zoomable(key, { axis = 'xy', pan = () => true } = {}) {
+    const box = el().querySelector(ZBOX[key]), cv = box.querySelector('canvas');
+    const size = () => { const r = cv.getBoundingClientRect(); return [r, r.width, r.height]; };
+    const reset = () => { const [, w, h] = size(); setZoom(key, { k: 1, x: 0, y: 0 }, w, h, axis); };
+    const chip = document.createElement('button');
+    chip.className = 'wm-zoom'; chip.hidden = true; chip.title = tr('Torna alla vista intera (doppio clic)');
+    chip.onclick = reset;
+    box.appendChild(chip);
+    cv.addEventListener('wheel', ev => {
+      ev.preventDefault();
+      const [r, w, h] = size(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
+      const z0 = zoomOf(key), k = Math.max(1, Math.min(ZOOM_MAX, z0.k * Math.exp(-ev.deltaY * 0.0015)));
+      // il punto sotto il cursore resta fermo
+      setZoom(key, { k, x: mx - (mx - z0.x) * k / z0.k, y: axis === 'x' ? 0 : my - (my - z0.y) * k / z0.k }, w, h, axis);
+    }, { passive: false });
+    cv.addEventListener('dblclick', reset);
+    cv.addEventListener('contextmenu', ev => ev.preventDefault());
+    let p = null;
+    cv.addEventListener('pointerdown', ev => {
+      if (zoomOf(key).k === 1 || !pan(ev)) return;
+      p = { x: ev.clientX, y: ev.clientY, z: { ...zoomOf(key) }, moved: false };
+      cv.setPointerCapture(ev.pointerId);
+    });
+    cv.addEventListener('pointermove', ev => {
+      if (!p) return;
+      const dx = ev.clientX - p.x, dy = ev.clientY - p.y;
+      if (Math.abs(dx) + Math.abs(dy) > 3) p.moved = true;
+      const [, w, h] = size();
+      setZoom(key, { k: p.z.k, x: p.z.x + dx, y: p.z.y + dy }, w, h, axis);
+    });
+    const end = () => { if (p && p.moved) cv._panned = Date.now(); p = null; };
+    cv.addEventListener('pointerup', end);
+    cv.addEventListener('pointercancel', end);
+  }
+  const justPanned = cv => Date.now() - (cv._panned || 0) < 250; // il clic che chiude un trascinamento non conta
+
   function drawTerritory(t, box = '.wm-terr') {
     const cv = el().querySelector(box + ' canvas');
     const { ctx, w, h } = fitCanvas(cv);
@@ -284,16 +341,30 @@
     const g = box === '.wm-gterr' ? W.ground : null;
     const sig = w + 'x' + h + '|' + d.nodes.length + '|' + (d.tree ? d.tree.files.length : 0) + '|' + W.aid + '|' + (g ? g.ghosts.length : -1);
     if (sig !== W.layoutSig) { W.layout = layoutTree(buildHierarchy(), w, h); W.layoutSig = sig; }
-    const { tiles, boxes } = W.layout;
+    // con lo zoom le caselle si ridisegnano più grandi (non la stessa immagine ingrandita): i nomi compaiono man mano
+    const zkey = box === '.wm-gterr' ? 'gterr' : 'terr', z = zoomOf(zkey);
+    const zsig = sig + '|' + z.k + '|' + z.x + '|' + z.y;
+    if (W.layout.zsig !== zsig) {
+      const sc = r => ({ ...r, x: r.x * z.k + z.x, y: r.y * z.k + z.y, w: r.w * z.k, h: r.h * z.k });
+      const inView = r => r.x < w && r.y < h && r.x + r.w > 0 && r.y + r.h > 0;
+      const all = W.layout.tiles.map(sc);
+      // la scia usa tutte le caselle (anche fuori dallo schermo), il disegno solo quelle visibili
+      W.layout.z = { all, tiles: z.k === 1 ? all : all.filter(inView), boxes: W.layout.boxes.map(sc).filter(inView) };
+      W.layout.zsig = zsig;
+    }
+    const { all, tiles, boxes } = W.layout.z;
     const T = nowT();
     const fogPat = fogPattern(ctx);
     const byKey = new Map();
     let total = 0, known = 0, frontier = 0, edited = 0;
-    for (const tl of tiles) {
+    for (const tl of all) {
       byKey.set(tl.key, tl);
+      if (groupOf(tl.key)) continue;
       const lv = levelAt(tl.n, T);
-      const proj = !groupOf(tl.key);
-      if (proj) { total++; if (lv >= 2) known++; if (lv === 1) frontier++; if (lv >= 3) edited++; }
+      total++; if (lv >= 2) known++; if (lv === 1) frontier++; if (lv >= 3) edited++;
+    }
+    for (const tl of tiles) {
+      const lv = levelAt(tl.n, T);
       const x = tl.x + 0.5, y = tl.y + 0.5, ww = Math.max(0.5, tl.w - 1), hh = Math.max(0.5, tl.h - 1);
       if (lv === 0) { ctx.fillStyle = fogPat; ctx.fillRect(x, y, ww, hh); continue; }
       let col;
@@ -305,13 +376,15 @@
       // appena toccato: bordo bianco che pulsa
       const last = tl.n[6] || 0;
       if (W.T == null && last && Date.now() - last < 15000 && ((t / 250) | 0) % 2) { ctx.strokeStyle = '#fff1e8'; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, ww - 1, hh - 1); }
-      if (ww > 46 && hh > 12) { ctx.fillStyle = lv >= 3 ? '#000' : lv === 1 ? '#83769C' : '#07060c'; ctx.font = '13px VT, monospace'; ctx.fillText(clipText(ctx, tl.name, ww - 4), x + 2, y + 11); }
+      // il nome resta dentro la parte visibile della casella (ingrandita può uscire dal bordo)
+      const lx = Math.max(x, 0), ly = Math.max(y, 0), lw = Math.min(x + ww, w) - lx;
+      if (lw > 46 && y + hh - ly > 12) { ctx.fillStyle = lv >= 3 ? '#000' : lv === 1 ? '#83769C' : '#07060c'; ctx.font = '13px VT, monospace'; ctx.fillText(clipText(ctx, tl.name, lw - 4), lx + 2, ly + 11); }
     }
     for (const b of boxes) {
       ctx.strokeStyle = b.special ? '#7e2553' : b.depth === 1 ? '#5f574f' : '#2a2440';
       ctx.lineWidth = 1;
       ctx.strokeRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1);
-      if (b.w > 40 && b.h > 26) { ctx.fillStyle = b.special ? '#ff77a8' : '#c2c3c7'; ctx.font = '13px VT, monospace'; ctx.fillText(clipText(ctx, b.name + '/', b.w - 6), b.x + 3, b.y + 10); }
+      if (b.w > 40 && b.h > 26 && b.y >= 0) { ctx.fillStyle = b.special ? '#ff77a8' : '#c2c3c7'; ctx.font = '13px VT, monospace'; const bx = Math.max(b.x, 0); ctx.fillText(clipText(ctx, b.name + '/', Math.min(b.x + b.w, w) - bx - 6), bx + 3, b.y + 10); }
     }
     // la scia degli ultimi posti visitati e la posizione attuale
     const traj = d.trajectories;
@@ -449,7 +522,8 @@
     const many = W.aid === 'all';
     const rows = many ? [...new Map(g.surprises.map(s => [s.agent, s.agentName])).entries()].slice(0, 10) : [[W.aid, '']];
     const pad = many ? 92 : 10;
-    const x = tt => pad + ((tt - a) / (b - a)) * (w - pad - 10);
+    const z = zoomOf('seis');
+    const x = tt => (pad + ((tt - a) / (b - a)) * (w - pad - 10)) * z.k + z.x;
     W.spikes = [];
     if (!g.surprises.length) { ctx.fillStyle = '#83769C'; ctx.fillText(tr('Nessuna sorpresa: finora il mondo non gli ha dato torto.'), 12, 28); W.spikeHover = null; return; }
     const rowH = (h - 10) / rows.length;
@@ -459,9 +533,12 @@
       // soglia della sorpresa forte (0,7)
       ctx.setLineDash([2, 4]); ctx.strokeStyle = '#3a2f4f'; ctx.beginPath(); ctx.moveTo(pad, base - 0.7 * (rowH - 12) + 0.5); ctx.lineTo(w - 6, base - 0.7 * (rowH - 12) + 0.5); ctx.stroke(); ctx.setLineDash([]);
       if (many) { ctx.fillStyle = '#c2c3c7'; ctx.fillText(clipText(ctx, name, pad - 8), 4, base - 2); }
+      // ingrandito, le punte non invadono la colonna dei nomi
+      ctx.save(); ctx.beginPath(); ctx.rect(pad - 4, 0, w - pad + 4, h); ctx.clip();
       for (const s of list) {
         if (many && s.agent !== id) continue;
         const sx = x(s.t), hh = Math.max(3, s.value * (rowH - 12));
+        if (sx < pad - 4 || sx > w + 4) continue;
         const col = (REACT[s.reaction] || REACT.stops)[1];
         // la più recente, se forte, trema un po'
         const live = W.T == null && Date.now() - s.t < 20000 && s.value >= 0.7;
@@ -470,9 +547,16 @@
         ctx.fillRect(sx - 3 + jx, base - hh - 2, 7, 3);
         W.spikes.push({ x: sx, y0: base - hh - 3, y1: base, s });
       }
+      ctx.restore();
     });
     ctx.fillStyle = '#fff1e8';
     if (W.T != null) ctx.fillRect(x(W.T) - 1, 0, 2, h);
+    // ingrandito: l'intervallo di tempo che si vede
+    if (z.k > 1) {
+      const at = sx => a + (((sx - z.x) / z.k - pad) / (w - pad - 10)) * (b - a);
+      const lab = hhmm(at(pad)) + ' – ' + hhmm(at(w - 10));
+      ctx.fillStyle = '#83769C'; ctx.fillText(lab, w - 10 - ctx.measureText(lab).width, 16);
+    }
     // tooltip della punta più vicina
     const tip = el().querySelector('.wm-seis .wm-tip');
     let best = null;
@@ -549,15 +633,16 @@
     const cy = Math.cos(W.yaw), sy = Math.sin(W.yaw), cp = Math.cos(W.pitch), sp = Math.sin(W.pitch);
     let x = p[0] * cy - p[2] * sy, z = p[0] * sy + p[2] * cy;
     let y = p[1] * cp - z * sp; z = p[1] * sp + z * cp;
-    const f = 6 / (6 + z), s = Math.min(w, h) * 0.3;
-    return [w / 2 + x * s * f, h / 2 - y * s * f, z];
+    const f = 6 / (6 + z), s = Math.min(w, h) * 0.3, zm = W.pz || { k: 1, x: 0, y: 0 };
+    return [(w / 2 + x * s * f) * zm.k + zm.x, (h / 2 - y * s * f) * zm.k + zm.y, z];
   }
   function axisVal(k, v) { const a = AXES[k]; return ((a.f(v) - a.min) / (a.max - a.min)) * 2 - 1; }
   function drawTrajectory(t) {
     const cv = el().querySelector('.wm-traj canvas');
     const { ctx, w, h } = fitCanvas(cv);
     ctx.fillStyle = '#020803'; ctx.fillRect(0, 0, w, h);
-    if (!W.drag) W.yaw += 0.0025;
+    W.pz = zoomOf('traj');
+    if (!W.drag && W.pz.k === 1) W.yaw += 0.0025; // ingrandito non gira da solo: quello che guardi resta lì
     // cubo e pavimento a griglia (grafica vettoriale verde)
     const C = [[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]];
     const E = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
@@ -731,7 +816,8 @@
     ctx.fillStyle = '#04030a'; ctx.fillRect(0, 0, w, h);
     const m = W.mind;
     if (!m || m.empty || !m.pieces) { ctx.fillStyle = '#83769C'; ctx.font = '18px VT, monospace'; ctx.fillText(m && m.empty ? tr('Ancora niente nel contesto di questo agente.') : tr('Carico la mappa…'), 12, 24); return; }
-    if (!W.drag) W.yaw += 0.002;
+    W.pz = zoomOf('bub');
+    if (!W.drag && W.pz.k === 1) W.yaw += 0.002;
     const T = nowT();
     const single = m.ctx.length === 1;
     const mainId = m.ctx[0] && m.ctx[0].id;
