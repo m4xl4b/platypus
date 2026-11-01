@@ -55,6 +55,7 @@ function describeTool(name, input) {
     case 'TodoWrite':
     case 'TaskCreate':
     case 'TaskUpdate':
+    case 'mcp__ccd_turn__update_plan':
       return tr('Aggiorna la lista delle cose da fare');
     case 'Skill':
       return tr('Usa la skill {name}', { name: clip(input.skill || input.command, 30) });
@@ -68,6 +69,8 @@ function describeTool(name, input) {
       return tr('Ti manda un file');
     case 'SubagentHandback':
       return tr('Consegna il resoconto');
+    case 'mcp__ccd_turn__wrap_up':
+      return tr('Chiude il turno con un riepilogo');
     case 'SendMessage':
       return input.to || input.recipient ? tr('Scrive a {who}', { who: clip(String(input.to || input.recipient), 24) }) : tr('Scrive a un collega');
     case 'Workflow':
