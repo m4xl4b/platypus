@@ -520,6 +520,7 @@ body.widget #widget { display: block; flex: 1; padding: 6px 8px; overflow: hidde
 #worldmap .wm-axes { padding: 3px 6px; background: #020803; font-family: 'PS2P'; font-size: 7px; color: #00e436; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
 #worldmap .wm-axes select { font-size: 14px; max-width: 150px; }
 #worldmap .wm-tip { position: absolute; z-index: 2; pointer-events: none; background: #14111f; border: 2px solid #c2c3c7; padding: 3px 6px; font-size: 16px; line-height: 1; max-width: 260px; word-break: break-all; }
+#worldmap .wm-zoom { position: absolute; z-index: 3; top: 2px; right: 4px; font-family: 'PS2P'; font-size: 7px; background: #2a2440; color: #ffec27; border: 0; padding: 3px 5px; cursor: pointer; }
 #worldmap .wm-time { display: flex; align-items: center; gap: 8px; height: 30px; }
 #worldmap .wm-time .wm-band { flex: 1; height: 18px; border: 1px solid #2a2440; }
 #worldmap .wm-time input[type=range] { width: 160px; accent-color: #00e436; }

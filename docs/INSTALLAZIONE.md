@@ -158,6 +158,8 @@ Usa solo Node.js, senza Electron e senza `npm install`: è il modo più leggero,
 
 Le lezioni che Platypus deduce dalle tue sessioni stanno in `~/.platypus/bottega`, un file JSON per cartella di progetto (il nome del file è una chiave calcolata dalla cartella). Niente esce dal computer.
 
+Il libro impara dalle sessioni aperte una volta al minuto e, quando un progetto ha una sessione aperta, rilegge da sé in background le sue sessioni passate (al massimo ogni 6 ore; una sessione già letta e non cambiata si salta).
+
 - Per dimenticare una lezione: apri il Libro (LIBRO sul tabellone del piano, oppure BOTTEGA nell'atrio) e premi DIMENTICA.
 - Per dimenticare il libro di un progetto, o tutti: chiudi Platypus e cancella il suo file, oppure l'intera cartella `~/.platypus/bottega`.
 - Per non farlo più imparare: OPZ → *Il Libro della bottega impara dalle sessioni*. Il Nonno ha un suo interruttore lì accanto.

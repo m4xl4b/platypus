@@ -21,7 +21,7 @@ const USER_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
 const PLAN_DRAFT_MS = 45 * 60 * 1000;
 // il file del piano quando il transcript non ne ha il testo (solo .md, piccolo, se c'è ancora)
 function readPlanFile(p) {
-  try { if (!/.md$/i.test(p) || require('fs').statSync(p).size > 256 * 1024) return ''; return require('fs').readFileSync(p, 'utf8'); } catch { return ''; }
+  try { if (!/\.md$/i.test(p) || require('fs').statSync(p).size > 256 * 1024) return ''; return require('fs').readFileSync(p, 'utf8'); } catch { return ''; }
 }
 function isPlanFile(p) { return typeof p === 'string' && /[\\/]\.claude[^\\/]*[\\/]plans[\\/][^\\/]+\.md$/i.test(p); }
 
@@ -245,6 +245,7 @@ class OfficeState extends EventEmitter {
         plan: null,              // {title, steps[], at}
         planDraft: null,         // {path, text, t}: il file in <config>/plans/ mentre Claude lo scrive
         mdDraft: null,           // {path, text, t}: l'ultimo .md toccato altrove (il piano nell'app desktop)
+        deskPlan: null,          // [{text, status}]: la lista dei compiti dell'app desktop (mcp__ccd_turn__update_plan)
         workflows: new Map(),    // runId -> esecuzione di un Workflow (vedi ensureRun)
         workflowCalls: new Map(), // toolUseId dello strumento Workflow -> {description, t}
         messages: [],            // SendMessage tra agenti: {t, from, to, toId, summary}
@@ -525,7 +526,26 @@ class OfficeState extends EventEmitter {
         if (input.subject) t.text = clip(input.subject, 60);
         s.todos = this.boardTodos(s); s.todosAt = ts;
       }
-    } else if ((tool === 'Write' || tool === 'Edit' || tool === 'MultiEdit') && /.md$/i.test(String(input.file_path || ''))) {
+    } else if (tool === 'mcp__ccd_turn__update_plan') {
+      // app desktop di Claude: la lista dei compiti passa da questo strumento (items la sostituisce tutta;
+      // advance chiude il passo in corso e apre il successivo; done/start indicano i passi per numero, da 1)
+      if (Array.isArray(input.items)) s.deskPlan = input.items.slice(0, 12).map(x => ({ text: clip(String((x && x.content) || ''), 60), status: norm(x && x.status) }));
+      const L = s.deskPlan;
+      if (!L) return;
+      if (input.advance) {
+        const i = L.findIndex(x => x.status === 'doing');
+        if (i >= 0) L[i].status = 'done';
+        const j = L.findIndex(x => x.status === 'todo');
+        if (j >= 0) L[j].status = 'doing';
+      }
+      if (Array.isArray(input.done)) for (const n of input.done) if (L[Number(n) - 1]) L[Number(n) - 1].status = 'done';
+      if (input.start && L[Number(input.start) - 1]) L[Number(input.start) - 1].status = 'doing';
+      s.todos = L.map(x => ({ ...x })); s.todosAt = ts;
+    } else if (tool === 'mcp__ccd_turn__wrap_up' && s.deskPlan) {
+      // chiudere il turno spunta la lista
+      for (const x of s.deskPlan) x.status = 'done';
+      s.todos = s.deskPlan.map(x => ({ ...x })); s.todosAt = ts;
+    } else if ((tool === 'Write' || tool === 'Edit' || tool === 'MultiEdit') && /\.md$/i.test(String(input.file_path || ''))) {
       // Claude Code scrive il piano in un file .md e poi chiama ExitPlanMode senza contenuto. Il file sta in
       // <config>/plans/ o, nell'app desktop, in una cartella di lavoro della sessione: in modalità piano Claude può
       // scrivere solo quello, quindi vale l'ultimo .md toccato prima di ExitPlanMode (quelli in plans/ hanno la precedenza)

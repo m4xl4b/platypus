@@ -252,6 +252,20 @@ function planBoardTests(ok) {
   now += 1000; st.applyTranscriptLine(S3, null, { type: 'assistant', timestamp: iso(now), cwd: '/p', message: { id: 'o1', role: 'assistant', content: [{ type: 'tool_use', id: 'o1', name: 'Write', input: { file_path: '/p/README.md', content: '# Leggimi\n- a\n- b' } }], usage: { input_tokens: 1, output_tokens: 1 } } });
   now += 60 * 60000; st.applyTranscriptLine(S3, null, { type: 'assistant', timestamp: iso(now), cwd: '/p', message: { id: 'o2', role: 'assistant', content: [{ type: 'tool_use', id: 'o2', name: 'ExitPlanMode', input: {} }], usage: { input_tokens: 1, output_tokens: 1 } } });
   ok(!st.sessions.get(S3).plan, 'un .md toccato un\'ora prima non viene preso per il piano');
+  // app desktop: la lista dei compiti arriva da mcp__ccd_turn__update_plan (items, advance, done/start) e wrap_up la chiude
+  const S4 = 'sess-plan-0004';
+  const use4 = (name, input) => { now += 1000; st.applyTranscriptLine(S4, null, { type: 'assistant', timestamp: iso(now), cwd: '/p', message: { id: 'd' + (++k), role: 'assistant', content: [{ type: 'tool_use', id: 'd' + k, name, input }], usage: { input_tokens: 1, output_tokens: 1 } } }); };
+  const todo = () => st.sessions.get(S4).todos.map(t => t.text + ':' + t.status).join(' | ');
+  use4('mcp__ccd_turn__update_plan', { items: [{ content: 'Leggi il codice', status: 'in_progress' }, { content: 'Correggi', status: 'pending' }, { content: 'Test', status: 'pending' }], scope: 'first_task' });
+  ok(todo() === 'Leggi il codice:doing | Correggi:todo | Test:todo', 'app desktop: la lista dei compiti arriva sulla lavagna');
+  use4('mcp__ccd_turn__update_plan', { advance: true });
+  ok(todo() === 'Leggi il codice:done | Correggi:doing | Test:todo', 'advance: chiude il passo in corso e apre il successivo');
+  use4('mcp__ccd_turn__update_plan', { done: [2], start: 3 });
+  ok(todo() === 'Leggi il codice:done | Correggi:done | Test:doing', 'done e start per numero');
+  use4('Write', { file_path: '/p/build.cmd', content: 'echo' });
+  use4('mcp__ccd_turn__wrap_up', { recap: 'fatto' });
+  ok(todo() === 'Leggi il codice:done | Correggi:done | Test:done', 'wrap_up: la lista è tutta spuntata');
+  ok(!st.sessions.get(S4).mdDraft, 'un file .cmd non è un .md');
   const p = parsePlan('# Titolo\n## Contesto\n## Modifiche\n### 1. Primo [link](http://x)\n### 2. Secondo `codice`\n## Verifica');
   ok(p.steps.join('|') === 'Primo link|Secondo codice', 'passi numerati anche nei titoli, senza markdown: ' + p.steps.join(' · '));
   ok(parsePlan('# T\n## Analisi\n## Refresh\n## Test').steps.join('|') === 'Analisi|Refresh|Test', 'senza numeri: i titoli ##');
@@ -333,6 +347,15 @@ function run(ok) {
   archiveTests(ok);
   gitBashPathTests(ok);
   shellResetTests(ok);
+  bashLabelTests(ok);
+}
+
+// il fumetto di un comando senza descrizione mostra il comando vero, non il "cd" davanti
+function bashLabelTests(ok) {
+  const { describeTool } = require(path.join(ROOT, 'src', 'core', 'describe'));
+  const d = c => describeTool('Bash', { command: c });
+  ok(/npm test/.test(d('cd C:/Users/me/work/app && npm test 2>&1 | tail -30')) && !/cd /.test(d('cd "C:/My Work" && cd sub && npm test')), 'fumetto di Bash: «' + d('cd C:/Users/me/work/app && npm test') + '»');
+  ok(/cd sub/.test(d('cd sub')) && /^Dice/.test(describeTool('Bash', { command: 'x', description: 'Dice ciao' })), 'fumetto di Bash: un cd da solo resta, la descrizione vince');
 }
 
 module.exports = { run };
