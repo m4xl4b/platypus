@@ -112,6 +112,14 @@ function splitCharTests(ok) {
     fs.writeFileSync(f, L('Già fatto'));
     w.pollTracked();
     ok(got[1] && got[1].message.content === 'Già fatto', 'file riscritto: si rilegge da capo');
+    // riscritto mentre il decodificatore tiene mezzo carattere: quel byte non deve sporcare la prima riga nuova
+    const b2 = L('Una riga lunga quanto basta, lasciata a metà proprio sulla è');
+    fs.writeFileSync(f, b2.subarray(0, b2.lastIndexOf(Buffer.from('è')) + 1));
+    w.pollTracked();
+    fs.writeFileSync(f, L('Sì'));
+    w.pollTracked();
+    const last = got[got.length - 1];
+    ok(got.length === 3 && last.message.content === 'Sì', `file riscritto a metà di un carattere: «${last && last.message.content}» (${got.length} righe)`);
     w.stop();
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }

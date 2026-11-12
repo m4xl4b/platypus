@@ -2684,8 +2684,8 @@ function updateBalloon(c) {
   if (c._maxW !== maxW) { c.el.style.maxWidth = maxW + 'px'; c._maxW = maxW; }
   c.el.style.opacity = Math.max(0, Math.min(1, c.alpha));
   const bw = c.el.offsetWidth, bh = c.el.offsetHeight;
-  // il Nonno che racconta sceglie il posto per primo: la sua lezione dura poco e deve stare vicino a lui
-  const prio = (focusId === c.id ? 10 : 0) + (c.npc === 'elder' && c.speech ? 6 : 0) + (status === 'waiting' ? 5 : 0) + (c.role === 'boss' ? 3 : c.role === 'manager' ? 2 : 0) + (walking ? 0 : 1);
+  // il Nonno che racconta sceglie il posto prima degli agenti al lavoro (la lezione dura poco e deve stargli vicino), ma dopo chi aspetta un tuo OK
+  const prio = (focusId === c.id ? 10 : 0) + (c.npc === 'elder' && c.speech ? 4 : 0) + (status === 'waiting' ? 5 : 0) + (c.role === 'boss' ? 3 : c.role === 'manager' ? 2 : 0) + (walking ? 0 : 1);
   return { c, bw, bh, hx: c.x * scale, top: headTop * scale - bh - 8, prio };
 }
 
@@ -3081,7 +3081,7 @@ function renderWidget() {
     const c = sessionCounts(s); ag += c.agents; busy += c.busy; cost += s.cost || 0;
     for (const a of [s.main, ...s.subs]) if (a.status === 'waiting' && !a.finished) {
       const ap = approvalFor(s.id, a.id);
-      items.push({ s, txt: agentName(a) + (ap ? ': ' + (ap.text || tr('chiede il permesso')) : ' ' + tr('aspetta il tuo OK')), cls: 'w', ap });
+      items.push({ s, txt: agentName(a) + (ap ? ': ' + (ap.text || tr('chiede il permesso')) : a.action ? ': ' + a.action : ' ' + tr('aspetta il tuo OK')), cls: 'w', ap });
     }
     for (const al of alertsOf(s)) if (al.kind !== 'wait') items.push({ s, txt: al.text, cls: 'a' });
   }

@@ -309,8 +309,8 @@ function checkWaiting() {
   if (win && win.isVisible() && win.isFocused() && !process.env.PLATYPUS_NOTIFY_TEST) return;
   const first = fresh[0];
   const title = fresh.length === 1
-    ? tr('{agent} chiede il tuo permesso', { agent: agentLabel(first.a) })
-    : tr('{n} agenti chiedono il tuo permesso', { n: fresh.length });
+    ? tr('{agent} ti aspetta', { agent: agentLabel(first.a) }) // un permesso, una domanda o un piano: lo dice la riga sotto
+    : tr('{n} agenti ti aspettano', { n: fresh.length });
   const body = fresh.length === 1
     ? tr('Piano {n}', { n: first.floor }) + ' · ' + sessionLabel(first.s) + '\n' + (first.a.action || '')
     : fresh.slice(0, 4).map(f => agentLabel(f.a) + ' · ' + tr('piano {n}', { n: f.floor }) + ' ' + sessionLabel(f.s)).join('\n');
