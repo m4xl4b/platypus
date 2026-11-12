@@ -9,7 +9,7 @@ const { OfficeState, kindOf } = require('./state');
 const { claudeDir } = require('./sources');
 const { tr } = require('../i18n');
 
-const HEAD = 64 * 1024, TAIL = 256 * 1024;
+const HEAD = 64 * 1024, TAIL = 256 * 1024, FIRST_LINE_MAX = 8 * 1024 * 1024;
 const cache = new Map(); // path -> {mtime, size, info}
 
 function readSlice(p, start, len) {
@@ -31,7 +31,13 @@ function parseLines(text, dropFirst, dropLast) {
 }
 
 function summarize(p, st) {
-  const head = parseLines(readSlice(p, 0, Math.min(HEAD, st.size)), false, st.size > HEAD);
+  let headText = readSlice(p, 0, Math.min(HEAD, st.size));
+  // prima riga più lunga di 64 KB (es. un'immagine incollata): si legge fino al suo a capo, entro un limite
+  if (st.size > HEAD && headText.indexOf('\n') < 0) {
+    const big = readSlice(p, 0, Math.min(FIRST_LINE_MAX, st.size)), nl = big.indexOf('\n');
+    if (nl >= 0) headText = big.slice(0, nl + 1);
+  }
+  const head = parseLines(headText, false, st.size > HEAD);
   const tailStart = Math.max(0, st.size - TAIL);
   // sotto i 256 KB la "coda" è tutto il file (la testa si ferma a 64 KB: fine e titolo stanno più avanti)
   const tail = st.size > HEAD ? parseLines(readSlice(p, tailStart, st.size - tailStart), tailStart > 0, false) : head;

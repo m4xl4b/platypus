@@ -134,6 +134,24 @@ function archiveTests(ok) {
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 
+// archivio: la prima riga (più di 64 KB, es. un'immagine incollata) non deve far perdere inizio, titolo e cartella
+function archiveBigFirstLineTests(ok) {
+  const { listArchive } = require(path.join(ROOT, 'src', 'core', 'archive'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-test-'));
+  try {
+    const pdir = path.join(tmp, 'projects', 'proj');
+    fs.mkdirSync(pdir, { recursive: true });
+    const t0 = Date.parse('2026-10-20T09:00:00Z');
+    const m = (i, type, content) => JSON.stringify({ type, timestamp: iso(t0 + i * 60000), sessionId: 'sess-big-0001', cwd: '/p/app', message: { role: type, content } }) + '\n';
+    let body = m(0, 'user', [{ type: 'text', text: 'Guarda questa schermata' }, { type: 'image', source: { data: 'A'.repeat(80 * 1024) } }]);
+    for (let i = 1; i <= 29; i++) body += m(i, i % 2 ? 'assistant' : 'user', [{ type: 'text', text: 'ok' }]);
+    body += JSON.stringify({ type: 'ai-title', aiTitle: 'Schermata da sistemare', sessionId: 'sess-big-0001' }) + '\n';
+    fs.writeFileSync(path.join(pdir, 'sess-big-0001.jsonl'), body);
+    const x = listArchive({ base: tmp }).find(r => r.id === 'sess-big-0001');
+    ok(x && x.start === t0 && Math.round((x.end - x.start) / 60000) === 29 && x.cwd === '/p/app' && x.title === 'Schermata da sistemare', `archivio, prima riga da 80 KB: inizio ${x && x.start === t0}, durata ${x && Math.round((x.end - x.start) / 60000)} min, cartella «${x && x.cwd}»`);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
 // mappa: percorsi dei comandi Git Bash su Windows (/d/dev/... è D:\dev\...)
 function gitBashPathTests(ok) {
   const { AgentWorld, relKey } = require(path.join(ROOT, 'src', 'core', 'worldmap'));
@@ -374,6 +392,7 @@ function run(ok) {
   resumedSubTests(ok);
   archiveTests(ok);
   splitCharTests(ok);
+  archiveBigFirstLineTests(ok);
   gitBashPathTests(ok);
   shellResetTests(ok);
   bashLabelTests(ok);
