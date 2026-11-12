@@ -192,6 +192,29 @@ function askUserTests(ok) {
   ok(s.main.status === 'thinking' && !s.main.userWait, 'arrivata la risposta, l\'agente torna a pensare');
   st.tick();
   ok(!s.alerts.some(a => a.kind === 'wait'), 'e l\'avviso sparisce');
+  // la domanda insieme ad altri strumenti nello stesso messaggio: resta in attesa finché non rispondi, in qualunque ordine
+  const use = (id, name) => ({ type: 'tool_use', id, name, input: name === 'Read' ? { file_path: '/p/a.js' } : { questions: [{ question: 'Quale?' }] } });
+  const res = id => line(now += 1000, 'user', [{ type: 'tool_result', tool_use_id: id, content: 'ok' }]);
+  st.applyTranscriptLine(S, null, line(now += 1000, 'assistant', [use('r2', 'Read'), use('q2', 'AskUserQuestion')]));
+  st.applyTranscriptLine(S, null, res('r2'));
+  ok(s.main.status === 'waiting', `Read + domanda, finisce il Read: resta in attesa (${s.main.status})`);
+  st.applyTranscriptLine(S, null, res('q2'));
+  ok(s.main.status === 'thinking' && !s.main.userWait, 'poi rispondi: torna a pensare');
+  st.applyTranscriptLine(S, null, line(now += 1000, 'assistant', [use('q3', 'AskUserQuestion'), use('r3', 'Read')]));
+  ok(s.main.status === 'waiting', `domanda + Read: il Read non copre l'attesa (${s.main.status})`);
+  st.applyTranscriptLine(S, null, res('q3')); st.applyTranscriptLine(S, null, res('r3'));
+  ok(s.main.status === 'thinking' && !s.main.userWait, 'risposte arrivate: nessuna attesa rimasta');
+  // con gli hook: il PostToolUse di un altro strumento non chiude la domanda, quello della domanda sì
+  const hook = (ev, tool) => st.applyHook({ hook_event_name: ev, session_id: S, cwd: '/p', tool_name: tool, tool_input: {} });
+  hook('PreToolUse', 'AskUserQuestion'); hook('PreToolUse', 'Read'); hook('PostToolUse', 'Read');
+  ok(s.main.status === 'waiting', `hook: finisce un altro strumento, la domanda resta aperta (${s.main.status})`);
+  hook('PostToolUse', 'AskUserQuestion');
+  ok(s.main.status === 'thinking' && !s.main.userWait, 'hook: risposta arrivata');
+  // interrotta: la domanda non vale più, e il lavoro dopo non torna «in attesa»
+  st.applyTranscriptLine(S, null, line(now += 1000, 'assistant', [use('q4', 'AskUserQuestion')]));
+  st.applyTranscriptLine(S, null, line(now += 1000, 'user', [{ type: 'text', text: '[Request interrupted by user for tool use]' }]));
+  st.applyTranscriptLine(S, null, line(now += 1000, 'assistant', [use('r4', 'Read')]));
+  ok(s.main.status === 'working' && !s.main.userWait, `dopo un'interruzione la vecchia domanda non conta (${s.main.status})`);
   st.stop && st.stop();
 }
 

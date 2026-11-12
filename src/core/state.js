@@ -381,6 +381,23 @@ class OfficeState extends EventEmitter {
     a.userWait = true;
     this.setAgent(a, 'waiting', name === 'ExitPlanMode' ? tr('Aspetta che approvi il piano') : tr('Aspetta la tua risposta'), ts);
   }
+  // lo strumento "dell'utente" di questo agente ancora senza risposta: dal transcript (pendingTools) o dall'hook
+  userPending(s, a, agentId) {
+    for (const p of s.pendingTools.values()) if (!p.answered && USER_TOOLS.has(p.name) && (p.agentId || null) === (agentId || null)) return p.name;
+    return a.userHook || null;
+  }
+  // la risposta è arrivata (o la domanda non vale più: interruzione, nuova richiesta, fine del turno)
+  userAnswered(s, a, agentId) {
+    for (const p of s.pendingTools.values()) if (USER_TOOLS.has(p.name) && (p.agentId || null) === (agentId || null)) p.answered = true;
+    a.userHook = null; a.userWait = false;
+  }
+  // dopo ogni passo: finché una domanda è aperta l'agente aspetta l'utente, qualunque altro strumento parta o finisca
+  step(s, a, agentId, status, action, ts) {
+    const u = this.userPending(s, a, agentId);
+    if (u) return this.waitUser(a, u, ts);
+    a.userWait = false;
+    this.setAgent(a, status, action, ts);
+  }
 
   addTokens(s, a, usage, msgId, ts) {
     if (!usage) return;
@@ -778,8 +795,7 @@ class OfficeState extends EventEmitter {
           a.pendingName = b.name;
           s.pendingTools.set(b.id, { name: b.name, input: b.input || {}, agentId, ts });
           this.worldStart(s, a, b.id, b.name, b.input, ts);
-          if (USER_TOOLS.has(b.name)) this.waitUser(a, b.name, ts);
-          else this.setAgent(a, 'working', a.pendingDesc, ts);
+          this.step(s, a, agentId, 'working', a.pendingDesc, ts);
           if (SPAWN_TOOLS.has(b.name)) {
             const inp = b.input || {};
             s.spawns.set(b.id, { type: inp.subagent_type || 'general-purpose', description: inp.description || '', prompt: inp.prompt || '', parent: agentId });
@@ -812,7 +828,7 @@ class OfficeState extends EventEmitter {
             s.pendingTools.delete(b.tool_use_id);
             this.worldEnd(s, a, b.tool_use_id, b.is_error, b, line, ts);
             if (pend) {
-              if (USER_TOOLS.has(pend.name)) a.userWait = false;
+              if (USER_TOOLS.has(pend.name)) a.userHook = null;
               if (pend.name === 'TaskCreate' && !agentId) this.resolveTask(s, b.tool_use_id, b.content);
               // il piano approvato nel risultato (con le modifiche dell'utente), se Claude Code ce lo mette
               if (pend.name === 'ExitPlanMode' && !agentId && !b.is_error) { const ap = approvedPlan(b, line); if (ap) this.setPlan(s, ap, ts); }
@@ -838,7 +854,7 @@ class OfficeState extends EventEmitter {
             this.onUserText(s, a, b.text, ts, agentId);
           }
         }
-        if (hadResult) this.setAgent(a, 'thinking', tr('Valuta il risultato…'), ts);
+        if (hadResult) this.step(s, a, agentId, 'thinking', tr('Valuta il risultato…'), ts);
       }
     }
     if (live) this.sample(s);
@@ -848,7 +864,7 @@ class OfficeState extends EventEmitter {
   onUserText(s, a, text, ts, agentId) {
     const t = String(text).trim();
     if (!t) return;
-    if (t.startsWith('[Request interrupted')) { a.pending = 0; a.userWait = false; a.interruptedAt = ts; this.setAgent(a, 'idle', tr('Interrotto da te'), ts); return; }
+    if (t.startsWith('[Request interrupted')) { a.pending = 0; this.userAnswered(s, a, agentId); a.interruptedAt = ts; this.setAgent(a, 'idle', tr('Interrotto da te'), ts); return; }
     if (t.startsWith('<command-name>')) {
       const m = t.match(/<command-name>([^<]+)<\/command-name>/);
       this.setAgent(a, 'thinking', tr('Comando {cmd}', { cmd: m ? m[1] : '' }), ts);
@@ -858,6 +874,7 @@ class OfficeState extends EventEmitter {
     // l'obiettivo (stella polare): per un sottoagente il suo primo messaggio, per il capo ogni nuova richiesta
     const m = this.mindOf(s, a);
     if (!agentId || !m.goals.length) m.setGoal(ts, t);
+    this.userAnswered(s, a, agentId); // una nuova richiesta chiude la domanda rimasta aperta
     if (agentId) this.setAgent(a, 'thinking', tr('Legge il compito…'), ts);
     else this.setAgent(a, 'thinking', tr('Nuovo compito: «{text}»', { text: clip(t, 40) }), ts);
   }
@@ -943,12 +960,13 @@ class OfficeState extends EventEmitter {
         break;
       case 'UserPromptSubmit':
         if (s.demo && ev.prompt) this.mindOf(s, s.main).setGoal(t, ev.prompt); // per le sessioni vere lo leggiamo dal transcript
+        this.userAnswered(s, s.main, null);
         this.setAgent(s.main, 'thinking', tr('Nuovo compito: «{text}»', { text: clip(ev.prompt, 40) }));
         break;
       case 'PreToolUse': {
         const a = getA();
-        if (USER_TOOLS.has(ev.tool_name)) this.waitUser(a, ev.tool_name);
-        else this.setAgent(a, 'working', describeTool(ev.tool_name, ev.tool_input));
+        if (USER_TOOLS.has(ev.tool_name)) a.userHook = ev.tool_name;
+        this.step(s, a, subId, 'working', describeTool(ev.tool_name, ev.tool_input));
         if (SPAWN_TOOLS.has(ev.tool_name) && ev.tool_use_id) {
           const inp = ev.tool_input || {};
           s.spawns.set(ev.tool_use_id, { type: inp.subagent_type || 'general-purpose', description: inp.description || '', prompt: inp.prompt || '', parent: subId || null });
@@ -958,15 +976,15 @@ class OfficeState extends EventEmitter {
       case 'PostToolUse': {
         const a = getA();
         if (s.demo) a.errStreak = 0;
-        a.userWait = false;
-        this.setAgent(a, 'thinking', tr('Valuta il risultato…'));
+        if (USER_TOOLS.has(ev.tool_name)) this.userAnswered(s, a, subId);
+        this.step(s, a, subId, 'thinking', tr('Valuta il risultato…'));
         break;
       }
       case 'PostToolUseFailure': {
         const a = getA();
-        a.userWait = false;
+        if (USER_TOOLS.has(ev.tool_name)) this.userAnswered(s, a, subId);
         if (s.demo) { a.errStreak = a.errTool === ev.tool_name ? a.errStreak + 1 : 1; a.errTool = ev.tool_name; }
-        this.setAgent(a, 'thinking', tr('Valuta l\'errore…'));
+        this.step(s, a, subId, 'thinking', tr('Valuta l\'errore…'));
         break;
       }
       case 'PermissionRequest': {
@@ -986,7 +1004,7 @@ class OfficeState extends EventEmitter {
         break;
       }
       case 'Stop':
-        s.main.userWait = false;
+        this.userAnswered(s, s.main, null);
         this.setAgent(s.main, 'idle', tr('Ha finito: tocca a te'));
         break;
       case 'SubagentStart': {
