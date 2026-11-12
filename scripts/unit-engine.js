@@ -168,6 +168,17 @@ function statsRenameTests(ok) {
     const names = r.projects.map(p => p.name + ':' + p.cost.toFixed(2));
     ok(r.projects.length === 1 && r.projects[0].name === label && Math.abs(r.projects[0].cost - 1.6) < 1e-6 && r.totals.sessions === 1, `sessione Cowork con titolo arrivato dopo: un solo progetto (${names.join(', ')}; sessioni ${r.totals.sessions})`);
     stats.stop();
+    // due sessioni Cowork senza titolo sotto lo stesso nome, poi una riceve il titolo: restano due sessioni in tutto, non tre
+    const mk = id => ({ ...s, id });
+    const a = mk('sess-cw-000a'), b = mk('sess-cw-000b'), labels = { [a.id]: 'outputs', [b.id]: 'outputs' };
+    const st2 = { sessions: new Map([[a.id, a], [b.id, b]]), label: x => labels[x.id], costOf: () => 0.5, rateOf: () => 0 };
+    const stats2 = new Stats(st2, path.join(tmp, 'stats2.json'));
+    stats2.collect();
+    labels[b.id] = 'Report Q3';
+    stats2.collect();
+    const r2 = stats2.report(Object.keys(stats2.data.days)[0]);
+    ok(r2.totals.sessions === 2, `nome condiviso da due sessioni, una cambia titolo: ${r2.totals.sessions} sessioni in tutto (${r2.projects.map(p => p.name + ':' + p.sessions).join(', ')})`);
+    stats2.stop();
     const again = new Stats(st, path.join(tmp, 'stats.json')); // il vecchio stats.json (senza «name») resta leggibile
     ok(Object.keys(again.data.days).length === 1, 'stats.json riletto');
     again.stop();

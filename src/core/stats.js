@@ -115,7 +115,8 @@ class Stats {
   rename(d, sid, from, to) {
     const o = d.projects[from];
     if (!o || !o.sessions.includes(sid)) return;
-    if (o.sessions.length > 1) return; // voce condivisa: i costi non si possono dividere
+    // voce condivisa con altre sessioni: i costi fatti finora non si possono dividere e restano lì, ma la sessione non si conta due volte
+    if (o.sessions.length > 1) { o.sessions = o.sessions.filter(x => x !== sid); this.dirty = true; return; }
     delete d.projects[from];
     const n = d.projects[to];
     if (!n) d.projects[to] = o;
