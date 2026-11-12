@@ -174,6 +174,27 @@ function statsRenameTests(ok) {
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 
+// una domanda di Claude all'utente (AskUserQuestion) senza risposta: l'agente aspetta, e dopo un po' scatta l'avviso
+function askUserTests(ok) {
+  const { OfficeState } = require(path.join(ROOT, 'src', 'core', 'state'));
+  let now = Date.parse('2026-10-23T10:00:00Z');
+  const st = new OfficeState({ clock: () => now, settings: {} });
+  const S = 'sess-ask-0001', t0 = now;
+  const line = (t, type, content) => ({ type, timestamp: iso(t), cwd: '/p', message: { role: type, content, ...(type === 'assistant' ? { id: 'm' + t, usage: { input_tokens: 1, output_tokens: 1 } } : {}) } });
+  st.applyTranscriptLine(S, null, line(t0, 'assistant', [{ type: 'tool_use', id: 'q1', name: 'AskUserQuestion', input: { questions: [{ question: 'Quale?' }] } }]));
+  const s = st.sessions.get(S);
+  ok(s.main.status === 'waiting', `domanda in sospeso: lo stato è «${s.main.status}» (atteso waiting)`);
+  st.applyRegistry([{ sessionId: S, alive: true, status: 'busy', cwd: '/p' }]); // il registro dice «busy»: non la cancella
+  ok(s.main.status === 'waiting', 'il registro «busy» non toglie l\'attesa della risposta');
+  now = t0 + 4 * 60000; st.tick();
+  ok(s.alerts.some(a => a.kind === 'wait'), 'dopo qualche minuto scatta l\'avviso «aspetta il tuo OK»');
+  st.applyTranscriptLine(S, null, line(now, 'user', [{ type: 'tool_result', tool_use_id: 'q1', content: 'A' }]));
+  ok(s.main.status === 'thinking' && !s.main.userWait, 'arrivata la risposta, l\'agente torna a pensare');
+  st.tick();
+  ok(!s.alerts.some(a => a.kind === 'wait'), 'e l\'avviso sparisce');
+  st.stop && st.stop();
+}
+
 // mappa: percorsi dei comandi Git Bash su Windows (/d/dev/... è D:\dev\...)
 function gitBashPathTests(ok) {
   const { AgentWorld, relKey } = require(path.join(ROOT, 'src', 'core', 'worldmap'));
@@ -416,6 +437,7 @@ function run(ok) {
   splitCharTests(ok);
   archiveBigFirstLineTests(ok);
   statsRenameTests(ok);
+  askUserTests(ok);
   gitBashPathTests(ok);
   shellResetTests(ok);
   bashLabelTests(ok);

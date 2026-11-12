@@ -376,6 +376,12 @@ class OfficeState extends EventEmitter {
     a.lastActivity = Math.max(a.lastActivity, t);
   }
 
+  // una domanda (o un piano) per l'utente senza risposta: l'agente aspetta lui, non lavora
+  waitUser(a, name, ts) {
+    a.userWait = true;
+    this.setAgent(a, 'waiting', name === 'ExitPlanMode' ? tr('Aspetta che approvi il piano') : tr('Aspetta la tua risposta'), ts);
+  }
+
   addTokens(s, a, usage, msgId, ts) {
     if (!usage) return;
     if (msgId) {
@@ -772,7 +778,8 @@ class OfficeState extends EventEmitter {
           a.pendingName = b.name;
           s.pendingTools.set(b.id, { name: b.name, input: b.input || {}, agentId, ts });
           this.worldStart(s, a, b.id, b.name, b.input, ts);
-          this.setAgent(a, 'working', a.pendingDesc, ts);
+          if (USER_TOOLS.has(b.name)) this.waitUser(a, b.name, ts);
+          else this.setAgent(a, 'working', a.pendingDesc, ts);
           if (SPAWN_TOOLS.has(b.name)) {
             const inp = b.input || {};
             s.spawns.set(b.id, { type: inp.subagent_type || 'general-purpose', description: inp.description || '', prompt: inp.prompt || '', parent: agentId });
@@ -805,6 +812,7 @@ class OfficeState extends EventEmitter {
             s.pendingTools.delete(b.tool_use_id);
             this.worldEnd(s, a, b.tool_use_id, b.is_error, b, line, ts);
             if (pend) {
+              if (USER_TOOLS.has(pend.name)) a.userWait = false;
               if (pend.name === 'TaskCreate' && !agentId) this.resolveTask(s, b.tool_use_id, b.content);
               // il piano approvato nel risultato (con le modifiche dell'utente), se Claude Code ce lo mette
               if (pend.name === 'ExitPlanMode' && !agentId && !b.is_error) { const ap = approvedPlan(b, line); if (ap) this.setPlan(s, ap, ts); }
@@ -840,7 +848,7 @@ class OfficeState extends EventEmitter {
   onUserText(s, a, text, ts, agentId) {
     const t = String(text).trim();
     if (!t) return;
-    if (t.startsWith('[Request interrupted')) { a.pending = 0; a.interruptedAt = ts; this.setAgent(a, 'idle', tr('Interrotto da te'), ts); return; }
+    if (t.startsWith('[Request interrupted')) { a.pending = 0; a.userWait = false; a.interruptedAt = ts; this.setAgent(a, 'idle', tr('Interrotto da te'), ts); return; }
     if (t.startsWith('<command-name>')) {
       const m = t.match(/<command-name>([^<]+)<\/command-name>/);
       this.setAgent(a, 'thinking', tr('Comando {cmd}', { cmd: m ? m[1] : '' }), ts);
@@ -878,7 +886,7 @@ class OfficeState extends EventEmitter {
         if (e.status === 'waiting') {
           if (m.status !== 'waiting') this.addLog(s, e.waitingFor ? tr('Claude aspetta il tuo OK ({what})', { what: e.waitingFor }) : tr('Claude aspetta il tuo OK'), 'wait');
           this.setAgent(m, 'waiting', e.waitingFor ? tr('Aspetta il tuo OK: {what}', { what: e.waitingFor }) : tr('Aspetta il tuo OK'), t);
-        } else if (m.status === 'waiting') {
+        } else if (m.status === 'waiting' && !m.userWait) { // se aspetta una risposta a una domanda, lo dice il transcript
           this.setAgent(m, e.status === 'busy' ? 'thinking' : 'idle', e.status === 'busy' ? tr('Riprende il lavoro') : tr('Ha finito: tocca a te'), t);
         } else if (e.status === 'idle' && BUSY.has(m.status) && t - m.lastActivity > 4000) {
           this.setAgent(m, 'idle', tr('Ha finito: tocca a te'), m.lastActivity);
@@ -939,7 +947,8 @@ class OfficeState extends EventEmitter {
         break;
       case 'PreToolUse': {
         const a = getA();
-        this.setAgent(a, 'working', describeTool(ev.tool_name, ev.tool_input));
+        if (USER_TOOLS.has(ev.tool_name)) this.waitUser(a, ev.tool_name);
+        else this.setAgent(a, 'working', describeTool(ev.tool_name, ev.tool_input));
         if (SPAWN_TOOLS.has(ev.tool_name) && ev.tool_use_id) {
           const inp = ev.tool_input || {};
           s.spawns.set(ev.tool_use_id, { type: inp.subagent_type || 'general-purpose', description: inp.description || '', prompt: inp.prompt || '', parent: subId || null });
@@ -949,11 +958,13 @@ class OfficeState extends EventEmitter {
       case 'PostToolUse': {
         const a = getA();
         if (s.demo) a.errStreak = 0;
+        a.userWait = false;
         this.setAgent(a, 'thinking', tr('Valuta il risultato…'));
         break;
       }
       case 'PostToolUseFailure': {
         const a = getA();
+        a.userWait = false;
         if (s.demo) { a.errStreak = a.errTool === ev.tool_name ? a.errStreak + 1 : 1; a.errTool = ev.tool_name; }
         this.setAgent(a, 'thinking', tr('Valuta l\'errore…'));
         break;
@@ -975,6 +986,7 @@ class OfficeState extends EventEmitter {
         break;
       }
       case 'Stop':
+        s.main.userWait = false;
         this.setAgent(s.main, 'idle', tr('Ha finito: tocca a te'));
         break;
       case 'SubagentStart': {
