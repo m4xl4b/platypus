@@ -152,6 +152,28 @@ function archiveBigFirstLineTests(ok) {
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 
+// statistiche: il titolo di una sessione Cowork arriva a lavoro iniziato, ma è sempre la stessa sessione
+function statsRenameTests(ok) {
+  const { Stats } = require(path.join(ROOT, 'src', 'core', 'stats'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-test-'));
+  try {
+    let cost = 0.8, label = 'Report';
+    const s = { id: 'sess-cw-0001', kind: 'cowork', project: 'cowork', createdAt: Date.now(), tok: { in: 1, out: 1, cr: 0, cw: 0 }, completed: 0, completedByType: {}, errByType: {}, toolsByType: {}, wByType: {}, releases: [], alerts: [] };
+    const st = { sessions: new Map([[s.id, s]]), label: () => label, costOf: () => cost, rateOf: () => 0 };
+    const stats = new Stats(st, path.join(tmp, 'stats.json'));
+    stats.collect();
+    label = 'Report trimestrale per il cliente'; cost = 1.6;
+    stats.collect();
+    const r = stats.report(Object.keys(stats.data.days)[0]);
+    const names = r.projects.map(p => p.name + ':' + p.cost.toFixed(2));
+    ok(r.projects.length === 1 && r.projects[0].name === label && Math.abs(r.projects[0].cost - 1.6) < 1e-6 && r.totals.sessions === 1, `sessione Cowork con titolo arrivato dopo: un solo progetto (${names.join(', ')}; sessioni ${r.totals.sessions})`);
+    stats.stop();
+    const again = new Stats(st, path.join(tmp, 'stats.json')); // il vecchio stats.json (senza «name») resta leggibile
+    ok(Object.keys(again.data.days).length === 1, 'stats.json riletto');
+    again.stop();
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
 // mappa: percorsi dei comandi Git Bash su Windows (/d/dev/... è D:\dev\...)
 function gitBashPathTests(ok) {
   const { AgentWorld, relKey } = require(path.join(ROOT, 'src', 'core', 'worldmap'));
@@ -393,6 +415,7 @@ function run(ok) {
   archiveTests(ok);
   splitCharTests(ok);
   archiveBigFirstLineTests(ok);
+  statsRenameTests(ok);
   gitBashPathTests(ok);
   shellResetTests(ok);
   bashLabelTests(ok);
