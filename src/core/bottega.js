@@ -30,6 +30,8 @@ function normDir(cwd) {
   if (process.platform === 'win32' || /^[a-z]:\//i.test(d)) d = d.toLowerCase();
   return d;
 }
+// il nome da mostrare: l'ultima cartella con le sue maiuscole (la chiave invece è minuscola su Windows)
+const dirName = cwd => String(cwd || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop();
 function projectKey(cwd) { return crypto.createHash('sha1').update(normDir(cwd)).digest('hex').slice(0, 16); }
 const sha = s => crypto.createHash('sha1').update(s).digest('hex').slice(0, 12);
 // un comando come "firma" leggibile: spazi compattati, niente percorsi assoluti
@@ -112,9 +114,12 @@ class Bottega {
     const key = projectKey(cwd);
     let b = this.books.get(key);
     if (!b) {
-      b = { key, name: path.basename(normDir(cwd)) || cwd, cwd: String(cwd || ''), lessons: {}, learned: {}, forgotten: {} };
+      b = { key, name: dirName(cwd) || String(cwd || ''), cwd: String(cwd || ''), lessons: {}, learned: {}, forgotten: {} };
+      let fresh = b.name;
       try { Object.assign(b, JSON.parse(fs.readFileSync(path.join(this.dir, key + '.json'), 'utf8')), { key }); } catch {}
+      // i libri salvati con il nome in minuscolo prendono quello giusto (stessa chiave, stesse lezioni)
       b.dirty = false;
+      if (dirName(cwd) && b.name !== fresh) { b.name = fresh; b.dirty = true; }
       this.books.set(key, b);
     }
     return b;

@@ -4,6 +4,54 @@ Le versioni di Platypus (fino alla 2.7 si chiamava Agent Office), dalla più rec
 
 *English version: [CHANGELOG.md](CHANGELOG.md).*
 
+## 2.10: workflow e squadre, mappe con lo zoom, un giro sulla sicurezza
+
+Platypus ora mostra i Workflow e i team di agenti di Claude Code, ti lascia ingrandire i grafici della mappa della realtà, riempie le lavagne anche nell'uso vero e ha avuto un giro di sicurezza su tutta l'app.
+
+- **Workflow e squadre** (nuovo pannello **SQUADRE**, tasto **W** o il pulsante sulla bacheca del piano):
+  - gli agenti di un Workflow ora compaiono in ufficio, in una stanza per ogni esecuzione e fase, con il nome della loro etichetta, e i loro token entrano nel costo, dal vivo, in archivio e nei replay (prima mancavano);
+  - il pannello elenca ogni esecuzione con stato, agenti al lavoro, tempo trascorso, costo, token e chiamate agli strumenti, e per ogni fase una barra di avanzamento, il costo e la durata; gli agenti falliti sono elencati per nome, e quando l'esecuzione finisce trovi una breve analisi (fase più lunga e più costosa, agente più lento, fallimenti, compiti rifatti) più il riassunto di Claude Code;
+  - mostra anche squadre e reparti (chi lavora, aspetta, è fermo o ha finito) e i messaggi che gli agenti si scambiano;
+  - un'etichetta «n WF» nell'atrio e nell'archivio indica dove girano o sono girati dei workflow;
+  - nella demo, il piano 3 ha un workflow che avanza da solo e uno concluso con la sua analisi.
+- **Zoom sui grafici della mappa** (territorio, bolla del contesto, traiettoria, sismografo):
+  - la rotella del mouse ingrandisce attorno al cursore, fino a 8x; trascinando sposti la vista; un doppio clic o la targhetta «×2.0 · 1:1» torna alla vista intera;
+  - sul territorio i quadratini vengono ridisegnati più grandi, così i nomi dei file compaiono man mano che ingrandisci;
+  - i due grafici 3D continuano a ruotare quando trascini, quindi si spostano con Maiusc o con il tasto destro, e mentre sono ingranditi smettono di ruotare da soli;
+  - il sismografo ingrandisce solo il tempo, tiene la colonna dei nomi degli agenti e mostra l'intervallo di tempo visibile.
+- **Lavagne**:
+  - i piani arrivano di nuovo alla lavagna: l'attuale Claude Code scrive il piano in un file invece di passarlo, e Platypus ora lo segue, sia dal terminale sia dall'app desktop di Claude;
+  - anche le liste di cose da fare dell'app desktop di Claude riempiono la lavagna del capo, e vengono spuntate quando il turno finisce;
+  - le lavagne stanno ora subito sotto l'ufficio del capo, quindi nei piani affollati non devi più scorrere per trovarle, e la lavagna dei piani vuota dice che il piano comparirà lì in modalità piano;
+  - il titolo della lavagna non è più tagliato e i passi lunghi del piano finiscono con i puntini di sospensione.
+- **Il Nonno si fa vedere**:
+  - prima parlava solo se il comando era identico a quello della lezione; ora `cd app && CI=1 npm test 2>&1 | tail -30` corrisponde a una lezione su `npm test`, e così lo stesso comando con altri argomenti;
+  - il Libro della bottega rilegge da solo le sessioni passate di un progetto, in background, finché il progetto ha una sessione aperta (prima lo faceva solo il pulsante manuale).
+- **Fumetti**: non coprono più la faccia dei personaggi, non stanno più sopra la scheda di un agente, e un fumetto di Bash senza descrizione mostra il comando vero invece del `cd cartella &&` che lo precede.
+- **Icona sulla barra delle applicazioni di Windows**: è tornata l'icona anni '80 di Platypus al posto dell'atomo e del nome di Electron.
+- **Interfaccia**:
+  - **Barra in alto**: prima i numeri che chiedono un'azione (attesa, avvisi, costo, al lavoro, poi agenti, fatti, sessioni, in diretta), e quello che non entra sparisce intero invece di essere tagliato a metà parola; il pulsante «?» resta visibile nelle finestre strette;
+  - **Opzioni**: sei sezioni al posto di un lungo elenco, la barra SALVA sempre visibile che dice quando ci sono modifiche non salvate, e un avviso prima di chiudere e perderle; «Notifiche di Windows» diventa «Notifiche del sistema»;
+  - **Aiuto**: scorre nelle finestre piccole (metà era irraggiungibile) e copre le viste MAPPA E TERRITORIO e SORPRESA E CAUSE, il Libro della bottega e il pannello SQUADRE;
+  - **Mappa della realtà**: le quattro schede delle viste mostrano il nome intero nelle finestre piccole.
+- **Sicurezza**:
+  - Platypus ora gira su Electron 44, una versione supportata (quella vecchia non riceveva più correzioni di sicurezza);
+  - un'altra pagina aperta nel tuo browser non può più chiamare il server locale dell'ufficio (per esempio un server di sviluppo su un'altra porta), né caricare l'ufficio in una cornice nascosta per farti cliccare SÌ su un fumetto di permesso;
+  - un indirizzo malformato non può più mandare in crash il server;
+  - la finestra resta sull'ufficio e manda al browser solo i link web;
+  - su Linux e macOS la cartella `~/.platypus` (nomi dei progetti, comandi, estratti degli errori) è leggibile solo da te;
+  - «Riprendi» su Windows con Windows Terminal non esegue più come comando parte del nome di una cartella che contiene `;`.
+- **Piccole correzioni**:
+  - **Testo**: le lettere accentate non risultano più rovinate quando Platypus legge una riga mentre Claude Code la sta ancora scrivendo;
+  - **Archivio**: una sessione con un primo messaggio molto grande (per esempio un'immagine incollata) mantiene data di inizio, durata, titolo e cartella;
+  - **Statistiche**: una sessione Cowork che riceve il titolo in un secondo momento, o viene rinominata, non è più contata come due progetti;
+  - **Ti aspetta**: mentre Claude ti fa una domanda o aspetta che approvi un piano, l'agente risulta in attesa di te, con un avviso, invece che «al lavoro»;
+  - **Mappa della realtà**: `sed -i` segna il file come modificato, `cp` e `mv` non segnano più come modificato il file d'origine, e le espressioni di sed come `s/old/new/` non compaiono più come cartelle;
+  - **Libro della bottega su Windows**: il nome del progetto conserva le maiuscole, anche nella sezione di `CLAUDE.md`;
+  - **Scorciatoie**: con la mappa della realtà, il Libro della bottega o il pannello SQUADRE aperti, i tasti non agiscono più sull'ufficio nascosto dietro;
+  - **Lavagne**: le etichette sotto non si sovrappongono più alle gambe, e il fumetto del Nonno resta vicino a lui.
+- **Prima di aggiornare**: Electron 44 non supporta più macOS 12, Windows a 32 bit e Linux armv7l. La finestra del desktop richiede Node.js 22.12 o successivo; con Node.js 20 Platypus funziona ancora nel browser con `npm run web`.
+
 ## 2.9.1: correzioni
 
 Correzioni dei bug trovati con un giro di debug su tutta l'app, ognuna con una prova automatica.

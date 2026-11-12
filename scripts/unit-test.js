@@ -524,14 +524,83 @@ function elderTests(ok) {
   ok(bt.renderSection(many, 'x').split('\n').filter(l => l.startsWith('- ')).length === 8, 'CLAUDE.md: al massimo 8 lezioni');
 }
 
+// i comandi di shell che scrivono: sed -i, cp, mv (solo la destinazione è modificata)
+function shellWriteTests(ok) {
+  const sh = (cmd) => { const w = new AgentWorld(); const id = 'c' + (++seq); w.start(id, 'Bash', { command: cmd }, 1000, '', 0); w.end(id, false, { content: '' }, {}, 1100, ''); return w; };
+  const ed = (w, k) => !!(w.nodes.get(k) && w.nodes.get(k).edit), seen = (w, k) => !!(w.nodes.get(k) && w.nodes.get(k).seen);
+  let w = sh("sed -i 's/getUser/fetchUser/g' src/api.ts");
+  ok(ed(w, 'src/api.ts'), 'sed -i: il file risulta modificato');
+  w = sh("sed -n 's/a/b/p' src/api.ts");
+  ok(seen(w, 'src/api.ts') && !ed(w, 'src/api.ts'), 'sed senza -i: solo visto');
+  w = sh("sed -n '1,20p' src/api.ts | grep -i foo");
+  ok(seen(w, 'src/api.ts') && !ed(w, 'src/api.ts'), 'sed in sola lettura seguito da grep -i: il -i non è suo, solo visto');
+  w = sh("sed -i 's/a/b/' src/api.ts && cat src/other.ts");
+  ok(ed(w, 'src/api.ts') && seen(w, 'src/other.ts') && !ed(w, 'src/other.ts'), 'sed -i in una catena: modificato solo il suo file');
+  w = sh('cp src/a.ts src/b.ts');
+  ok(ed(w, 'src/b.ts') && seen(w, 'src/a.ts') && !ed(w, 'src/a.ts'), 'cp: modificata la destinazione, la sorgente solo vista');
+  w = sh('mv src/a.ts src/b.ts');
+  ok(ed(w, 'src/b.ts') && seen(w, 'src/a.ts') && !ed(w, 'src/a.ts'), 'mv: modificata la destinazione, la sorgente solo vista');
+  w = sh('cd src && cp a.ts b.ts && cat c.ts');
+  ok(ed(w, 'src/b.ts') && !ed(w, 'src/a.ts') && !ed(w, 'src/c.ts'), 'cp in una catena: conta solo il suo segmento');
+  w = sh('rm src/a.ts src/b.ts');
+  ok(ed(w, 'src/a.ts') && ed(w, 'src/b.ts'), 'rm: tutti i percorsi modificati come prima');
+  w = sh('node gen.js > out.txt');
+  ok(ed(w, 'out.txt'), 'redirezione: come prima');
+}
+
+// le espressioni di sed/perl/awk non sono cartelle del progetto
+function sedExpressionTests(ok) {
+  const placesOf = (cmd) => { const w = new AgentWorld(); const id = 'c' + (++seq); w.start(id, 'Bash', { command: cmd }, 1000, '', 0); w.end(id, false, { content: '' }, {}, 1100, ''); return [...w.nodes.keys()].filter(k => !k.startsWith('cmd:')).join(','); };
+  ok(placesOf('sed -i "s/old/new/" src/api.ts') === 'src/api.ts', 'sed "s/old/new/": non è un luogo: ' + placesOf('sed -i "s/old/new/" src/api.ts'));
+  ok(placesOf("sed -i 's/old value/new value/g' src/api.ts") === 'src/api.ts', 'sed con spazi nell\'espressione: nessun luogo inventato: ' + placesOf("sed -i 's/old value/new value/g' src/api.ts"));
+  ok(placesOf("sed -e 'y/abc/xyz/' -e '/^#/d' src/api.ts") === 'src/api.ts', 'sed y/// e /x/d: nessun luogo');
+  ok(placesOf("perl -pe 's/a b/c d/' src/api.ts") === 'src/api.ts', 'perl -pe: nessun luogo');
+  ok(placesOf("awk '/foo/' src/api.ts") === 'src/api.ts', 'awk /x/: nessun luogo');
+  ok(placesOf('sed -i s/getUser/fetchUser/g src/api.ts') === 'src/api.ts', 'sed senza virgolette: nessun luogo inventato: ' + placesOf('sed -i s/getUser/fetchUser/g src/api.ts'));
+  ok(placesOf('cat s/old/new/ src/api.ts').includes('s/old/new'), 'fuori da sed, s/old/new/ resta un percorso');
+  ok(placesOf('ls "src/mydir/"') === 'src/mydir', 'una cartella tra virgolette resta una cartella: ' + placesOf('ls "src/mydir/"'));
+  ok(placesOf('sed -i "s/a/b/" "src/mydir/"') === 'src/mydir', 'cartella vera accanto a un\'espressione sed');
+}
+
+// il nome del progetto nel libro e nel CLAUDE.md conserva le maiuscole (la chiave no)
+function bottegaNameTests(ok) {
+  const bt = require(path.join(ROOT, 'src', 'core', 'bottega'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-bname-'));
+  try {
+    const b1 = new bt.Bottega(dir);
+    const win = 'C:\\Users\\me\\MyShop';
+    const les = { kind: 'ghost-path', key: 'src/old.ts', sid: 'x', t: Date.now(), agent: 'A', excerpt: '' };
+    b1.learn(win, [les]);
+    ok(b1.view(win).name === 'MyShop', 'nome del libro: ' + b1.view(win).name);
+    ok(b1.view('C:\\Users\\me\\MyShop\\').name === 'MyShop' && b1.view('C:/Users/me/MyShop/').name === 'MyShop', 'nome: barre finali e / o \\ uguali');
+    ok(bt.renderSection([{ level: 'lesson', pinned: true, weight: 1, kind: 'ghost-path', key: 'a.ts' }], b1.view(win).name).includes('(MyShop)'), 'titolo del CLAUDE.md con le maiuscole');
+    b1.stop();
+    // un libro già salvato col nome in minuscolo: alla prossima apertura prende quello giusto
+    const f = path.join(dir, bt.projectKey(win) + '.json');
+    const saved = JSON.parse(fs.readFileSync(f, 'utf8'));
+    saved.name = 'myshop';
+    fs.writeFileSync(f, JSON.stringify(saved));
+    const b2 = new bt.Bottega(dir);
+    ok(b2.list()[0].name === 'myshop', 'elenco: il nome vecchio finché non si apre con la cartella');
+    const v = b2.view(win);
+    ok(v.name === 'MyShop' && v.lessons.length === 1 && v.key === bt.projectKey(win), 'libro vecchio: nome corretto, stessa chiave, lezioni intatte');
+    b2.stop();
+    ok(JSON.parse(fs.readFileSync(f, 'utf8')).name === 'MyShop', 'il nome corretto viene salvato');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
 function run(ok) {
   console.log('libro della bottega');
   bottegaTests(ok);
+  bottegaNameTests(ok);
   elderTests(ok);
   console.log('sorprese');
   surpriseTests(ok);
   console.log('mappa contro territorio');
   groundingTests(ok);
+  console.log('comandi di shell che scrivono');
+  shellWriteTests(ok);
+  sedExpressionTests(ok);
   console.log('percorsi inventati');
   ghostTests(ok);
   console.log('affermazioni');

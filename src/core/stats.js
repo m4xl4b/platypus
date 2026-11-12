@@ -80,6 +80,8 @@ class Stats {
         ? { cost: 0, tok: 0, completed: 0, cbt: {}, err: {}, tools: {}, costType: {}, rel: '', alerts: [] }
         : { ...cur, alerts: [] });
       const d = this.day(t);
+      // il titolo di una sessione Cowork arriva (o cambia) a lavoro iniziato: quel che era sotto il vecchio nome passa al nuovo
+      if (prev && prev.name && prev.name !== name) this.rename(d, s.id, prev.name, name);
       const p = this.proj(d, name, s.kind === 'cowork' ? 'cowork' : 'code');
       if (!p.sessions.includes(s.id)) { p.sessions.push(s.id); this.dirty = true; }
       const dc = cur.cost - (base.cost || 0), dt = cur.tok - (base.tok || 0), dd = cur.completed - (base.completed || 0);
@@ -104,8 +106,26 @@ class Stats {
       if (d.releases.length > 300) d.releases.splice(0, d.releases.length - 300);
       const newAlerts = cur.alerts.filter(id => !(base.alerts || []).includes(id)).length;
       if (newAlerts) { d.alerts += newAlerts; this.dirty = true; }
+      cur.name = name;
       this.data.last[s.id] = cur;
     }
+  }
+
+  // sposta la voce di una sessione da un nome progetto a un altro (solo se quella voce è solo sua)
+  rename(d, sid, from, to) {
+    const o = d.projects[from];
+    if (!o || !o.sessions.includes(sid)) return;
+    // voce condivisa con altre sessioni: i costi fatti finora non si possono dividere e restano lì, ma la sessione non si conta due volte
+    if (o.sessions.length > 1) { o.sessions = o.sessions.filter(x => x !== sid); this.dirty = true; return; }
+    delete d.projects[from];
+    const n = d.projects[to];
+    if (!n) d.projects[to] = o;
+    else {
+      n.cost += o.cost; n.tokens += o.tokens; n.completed += o.completed; n.commits += o.commits; n.prs += o.prs; n.tests += o.tests;
+      for (const x of o.sessions) if (!n.sessions.includes(x)) n.sessions.push(x);
+    }
+    for (const r of d.releases) if (r.project === from) r.project = to;
+    this.dirty = true;
   }
 
   // ---------- letture ----------

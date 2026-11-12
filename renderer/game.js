@@ -1623,7 +1623,7 @@ function drawBoard(g, t) {
   R(x, y, w, h, '#fbf8f0');
   R(x + 4, y + h, w - 8, 3, '#8b8a9a'); R(x + 10, y + h, 6, 2, C.red); R(x + 18, y + h, 6, 2, C.blue); R(x + 26, y + h, 6, 2, C.dgreen);
   const legTxt = g.key === 'A' ? tr('CAPO') : tr('LIBERA');
-  pixText(legTxt, x + w - 2 - legTxt.length * 4, y + h + 4, '#5F574F', 4);
+  pixText(legTxt, Math.round(x + (w - legTxt.length * 4) / 2), y + h + 6, '#5F574F', 4); // in mezzo, tra le gambe
   // contenuto disegnato a pixel (i testi sono etichette HTML)
   const ct = b.content;
   if (ct && ct.kind === 'art' && ARTS[ct.art]) {
@@ -2684,7 +2684,8 @@ function updateBalloon(c) {
   if (c._maxW !== maxW) { c.el.style.maxWidth = maxW + 'px'; c._maxW = maxW; }
   c.el.style.opacity = Math.max(0, Math.min(1, c.alpha));
   const bw = c.el.offsetWidth, bh = c.el.offsetHeight;
-  const prio = (focusId === c.id ? 10 : 0) + (status === 'waiting' ? 5 : 0) + (c.role === 'boss' ? 3 : c.role === 'manager' ? 2 : 0) + (walking ? 0 : 1);
+  // il Nonno che racconta sceglie il posto prima degli agenti al lavoro (la lezione dura poco e deve stargli vicino), ma dopo chi aspetta un tuo OK
+  const prio = (focusId === c.id ? 10 : 0) + (c.npc === 'elder' && c.speech ? 4 : 0) + (status === 'waiting' ? 5 : 0) + (c.role === 'boss' ? 3 : c.role === 'manager' ? 2 : 0) + (walking ? 0 : 1);
   return { c, bw, bh, hx: c.x * scale, top: headTop * scale - bh - 8, prio };
 }
 
@@ -3080,7 +3081,7 @@ function renderWidget() {
     const c = sessionCounts(s); ag += c.agents; busy += c.busy; cost += s.cost || 0;
     for (const a of [s.main, ...s.subs]) if (a.status === 'waiting' && !a.finished) {
       const ap = approvalFor(s.id, a.id);
-      items.push({ s, txt: agentName(a) + (ap ? ': ' + (ap.text || tr('chiede il permesso')) : ' ' + tr('aspetta il tuo OK')), cls: 'w', ap });
+      items.push({ s, txt: agentName(a) + (ap ? ': ' + (ap.text || tr('chiede il permesso')) : a.action ? ': ' + a.action : ' ' + tr('aspetta il tuo OK')), cls: 'w', ap });
     }
     for (const al of alertsOf(s)) if (al.kind !== 'wait') items.push({ s, txt: al.text, cls: 'a' });
   }
@@ -3218,6 +3219,9 @@ window.addEventListener('keydown', e => {
   if (e.target.closest && e.target.closest('input,select,textarea')) return; // si sta scrivendo
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase();
+  // con la mappa, le squadre o il Libro aperti l'ufficio dietro non si vede: valgono solo Esc e il tasto che li chiude
+  const over = window.worldMapOpen && worldMapOpen() ? 'g' : window.teamsOpen && teamsOpen() ? 'w' : window.bottegaOpen && bottegaOpen() ? '' : null;
+  if (over !== null && k !== 'escape' && k !== over) return;
   if (k === 'd') toggleDemo();
   else if (k === 's') toggleSound();
   else if (k === 'c') toggleCrt();

@@ -1,7 +1,7 @@
 {
   "name": "platypus",
   "productName": "Platypus",
-  "version": "2.9.1",
+  "version": "2.10.0",
   "description": "Pixel-art 80s office that shows your Claude Code sessions, agents and subagents in real time.",
   "main": "src/main.js",
   "desktopName": "platypus.desktop",

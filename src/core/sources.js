@@ -10,6 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { StringDecoder } = require('string_decoder');
 
 function claudeDir() {
   return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
@@ -198,12 +199,13 @@ class TranscriptWatcher {
       fd = fs.openSync(p, 'r');
       const CH = 4 * 1024 * 1024;
       let pos = 0, rest = '';
+      const dec = new StringDecoder('utf8'); // un carattere spezzato tra due blocchi non diventa "�"
       while (pos < end) {
         const len = Math.min(CH, end - pos);
         const buf = Buffer.alloc(len);
         fs.readSync(fd, buf, 0, len, pos);
         pos += len;
-        const lines = (rest + buf.toString('utf8')).split('\n');
+        const lines = (rest + dec.write(buf)).split('\n');
         rest = lines.pop();
         for (const l of lines) {
           // token e costi, ma anche quello che serve alla mappa e alla "mente" (esiti, richieste, compattazioni)
@@ -227,20 +229,21 @@ class TranscriptWatcher {
         // Il suo passato è già nei token (accountPrefix fino a rec.offset); se il meta dice ancora "finito" è vecchio.
         if (st.size <= rec.offset) return;
         rec.ignored = false;
-        rec.partial = '';
+        rec.partial = ''; rec.dec = null;
         // il meta.json di quel momento: finché non cambia, il suo "finished" è di prima della ripresa
         rec.wokeMeta = -1;
         if (rec.metaPath) try { rec.wokeMeta = fs.statSync(rec.metaPath).mtimeMs; } catch {}
         if (rec.meta) rec.meta = { ...rec.meta, finished: false };
       }
-      if (st.size < rec.offset) { rec.offset = 0; rec.partial = ''; } // file riscritto
+      if (st.size < rec.offset) { rec.offset = 0; rec.partial = ''; rec.dec = null; } // file riscritto
       if (st.size === rec.offset) return;
       fd = fs.openSync(p, 'r');
       const len = st.size - rec.offset;
       const buf = Buffer.alloc(len);
       fs.readSync(fd, buf, 0, len, rec.offset);
       rec.offset = st.size;
-      let text = rec.partial + buf.toString('utf8');
+      if (!rec.dec) rec.dec = new StringDecoder('utf8'); // tiene i byte di un carattere UTF-8 spezzato fino alla lettura dopo
+      let text = rec.partial + rec.dec.write(buf);
       const lines = text.split('\n');
       rec.partial = lines.pop();
       if (opts.skipFirstLine) lines.shift();

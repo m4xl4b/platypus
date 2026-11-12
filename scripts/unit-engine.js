@@ -88,6 +88,42 @@ function resumedSubTests(ok) {
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 
+// lettura: un carattere accentato spezzato fra due letture del file non deve diventare «�»
+function splitCharTests(ok) {
+  const { TranscriptWatcher } = require(path.join(ROOT, 'src', 'core', 'sources'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-test-'));
+  try {
+    const pdir = path.join(tmp, 'projects', 'proj');
+    fs.mkdirSync(pdir, { recursive: true });
+    const f = path.join(pdir, 'sess-utf8-0001.jsonl');
+    const got = [];
+    const st = { sessions: new Map(), accountLine() {}, applyTranscriptLine(_s, _a, o) { got.push(o); } };
+    const L = text => Buffer.from(JSON.stringify({ type: 'user', timestamp: iso(Date.now()), sessionId: 'sess-utf8-0001', message: { role: 'user', content: text } }) + '\n');
+    const b = L('Perché non funziona più?');
+    const cut = b.indexOf(Buffer.from('é')) + 1; // a metà dei due byte di «é»
+    fs.writeFileSync(f, b.subarray(0, cut));
+    const w = new TranscriptWatcher(st, { base: tmp });
+    w.maybeTrack(f, false);
+    fs.appendFileSync(f, b.subarray(cut));
+    w.pollTracked();
+    const t = got[0] && got[0].message.content;
+    ok(t === 'Perché non funziona più?', `carattere UTF-8 spezzato fra due letture: «${t}»`);
+    // file riscritto più corto: il decodificatore riparte da zero
+    fs.writeFileSync(f, L('Già fatto'));
+    w.pollTracked();
+    ok(got[1] && got[1].message.content === 'Già fatto', 'file riscritto: si rilegge da capo');
+    // riscritto mentre il decodificatore tiene mezzo carattere: quel byte non deve sporcare la prima riga nuova
+    const b2 = L('Una riga lunga quanto basta, lasciata a metà proprio sulla è');
+    fs.writeFileSync(f, b2.subarray(0, b2.lastIndexOf(Buffer.from('è')) + 1));
+    w.pollTracked();
+    fs.writeFileSync(f, L('Sì'));
+    w.pollTracked();
+    const last = got[got.length - 1];
+    ok(got.length === 3 && last.message.content === 'Sì', `file riscritto a metà di un carattere: «${last && last.message.content}» (${got.length} righe)`);
+    w.stop();
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
 // archivio: durata e titolo di una sessione il cui file sta fra 64 e 256 KB
 function archiveTests(ok) {
   const { listArchive } = require(path.join(ROOT, 'src', 'core', 'archive'));
@@ -104,6 +140,109 @@ function archiveTests(ok) {
     const kb = Math.round(body.length / 1024), min = x ? Math.round((x.end - x.start) / 60000) : -1;
     ok(x && min === 199 && x.title === 'Nuova pagina di login' && x.start === t0, `archivio, file da ${kb} KB: durata ${min} min (vera 199) e titolo «${x && x.title}»`);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
+// archivio: la prima riga (più di 64 KB, es. un'immagine incollata) non deve far perdere inizio, titolo e cartella
+function archiveBigFirstLineTests(ok) {
+  const { listArchive } = require(path.join(ROOT, 'src', 'core', 'archive'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-test-'));
+  try {
+    const pdir = path.join(tmp, 'projects', 'proj');
+    fs.mkdirSync(pdir, { recursive: true });
+    const t0 = Date.parse('2026-10-20T09:00:00Z');
+    const m = (i, type, content) => JSON.stringify({ type, timestamp: iso(t0 + i * 60000), sessionId: 'sess-big-0001', cwd: '/p/app', message: { role: type, content } }) + '\n';
+    let body = m(0, 'user', [{ type: 'text', text: 'Guarda questa schermata' }, { type: 'image', source: { data: 'A'.repeat(80 * 1024) } }]);
+    for (let i = 1; i <= 29; i++) body += m(i, i % 2 ? 'assistant' : 'user', [{ type: 'text', text: 'ok' }]);
+    body += JSON.stringify({ type: 'ai-title', aiTitle: 'Schermata da sistemare', sessionId: 'sess-big-0001' }) + '\n';
+    fs.writeFileSync(path.join(pdir, 'sess-big-0001.jsonl'), body);
+    const x = listArchive({ base: tmp }).find(r => r.id === 'sess-big-0001');
+    ok(x && x.start === t0 && Math.round((x.end - x.start) / 60000) === 29 && x.cwd === '/p/app' && x.title === 'Schermata da sistemare', `archivio, prima riga da 80 KB: inizio ${x && x.start === t0}, durata ${x && Math.round((x.end - x.start) / 60000)} min, cartella «${x && x.cwd}»`);
+    // la prima riga enorme non porta né data né cartella (es. un'istantanea): si leggono dalle righe dopo, e il titolo dalla richiesta
+    let body2 = JSON.stringify({ type: 'file-history-snapshot', snapshot: 'B'.repeat(80 * 1024) }) + '\n';
+    const m2 = (i, type, text) => JSON.stringify({ type, timestamp: iso(t0 + i * 60000), sessionId: 'sess-big-0002', cwd: '/p/shop', message: { role: type, content: text } }) + '\n';
+    body2 += m2(0, 'user', 'Sistema il carrello');
+    for (let i = 1; i <= 12; i++) body2 += m2(i, i % 2 ? 'assistant' : 'user', 'ok');
+    fs.writeFileSync(path.join(pdir, 'sess-big-0002.jsonl'), body2);
+    const y = listArchive({ base: tmp }).find(r => r.id === 'sess-big-0002');
+    ok(y && y.start === t0 && y.cwd === '/p/shop' && /carrello/.test(y.title || ''), `archivio, prima riga enorme senza data: inizio ${y && y.start === t0}, cartella ${y && y.cwd}, titolo «${y && y.title}»`);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
+// statistiche: il titolo di una sessione Cowork arriva a lavoro iniziato, ma è sempre la stessa sessione
+function statsRenameTests(ok) {
+  const { Stats } = require(path.join(ROOT, 'src', 'core', 'stats'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-test-'));
+  try {
+    let cost = 0.8, label = 'Report';
+    const s = { id: 'sess-cw-0001', kind: 'cowork', project: 'cowork', createdAt: Date.now(), tok: { in: 1, out: 1, cr: 0, cw: 0 }, completed: 0, completedByType: {}, errByType: {}, toolsByType: {}, wByType: {}, releases: [], alerts: [] };
+    const st = { sessions: new Map([[s.id, s]]), label: () => label, costOf: () => cost, rateOf: () => 0 };
+    const stats = new Stats(st, path.join(tmp, 'stats.json'));
+    stats.collect();
+    label = 'Report trimestrale per il cliente'; cost = 1.6;
+    stats.collect();
+    const r = stats.report(Object.keys(stats.data.days)[0]);
+    const names = r.projects.map(p => p.name + ':' + p.cost.toFixed(2));
+    ok(r.projects.length === 1 && r.projects[0].name === label && Math.abs(r.projects[0].cost - 1.6) < 1e-6 && r.totals.sessions === 1, `sessione Cowork con titolo arrivato dopo: un solo progetto (${names.join(', ')}; sessioni ${r.totals.sessions})`);
+    stats.stop();
+    // due sessioni Cowork senza titolo sotto lo stesso nome, poi una riceve il titolo: restano due sessioni in tutto, non tre
+    const mk = id => ({ ...s, id });
+    const a = mk('sess-cw-000a'), b = mk('sess-cw-000b'), labels = { [a.id]: 'outputs', [b.id]: 'outputs' };
+    const st2 = { sessions: new Map([[a.id, a], [b.id, b]]), label: x => labels[x.id], costOf: () => 0.5, rateOf: () => 0 };
+    const stats2 = new Stats(st2, path.join(tmp, 'stats2.json'));
+    stats2.collect();
+    labels[b.id] = 'Report Q3';
+    stats2.collect();
+    const r2 = stats2.report(Object.keys(stats2.data.days)[0]);
+    ok(r2.totals.sessions === 2, `nome condiviso da due sessioni, una cambia titolo: ${r2.totals.sessions} sessioni in tutto (${r2.projects.map(p => p.name + ':' + p.sessions).join(', ')})`);
+    stats2.stop();
+    const again = new Stats(st, path.join(tmp, 'stats.json')); // il vecchio stats.json (senza «name») resta leggibile
+    ok(Object.keys(again.data.days).length === 1, 'stats.json riletto');
+    again.stop();
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
+// una domanda di Claude all'utente (AskUserQuestion) senza risposta: l'agente aspetta, e dopo un po' scatta l'avviso
+function askUserTests(ok) {
+  const { OfficeState } = require(path.join(ROOT, 'src', 'core', 'state'));
+  let now = Date.parse('2026-10-23T10:00:00Z');
+  const st = new OfficeState({ clock: () => now, settings: {} });
+  const S = 'sess-ask-0001', t0 = now;
+  const line = (t, type, content) => ({ type, timestamp: iso(t), cwd: '/p', message: { role: type, content, ...(type === 'assistant' ? { id: 'm' + t, usage: { input_tokens: 1, output_tokens: 1 } } : {}) } });
+  st.applyTranscriptLine(S, null, line(t0, 'assistant', [{ type: 'tool_use', id: 'q1', name: 'AskUserQuestion', input: { questions: [{ question: 'Quale?' }] } }]));
+  const s = st.sessions.get(S);
+  ok(s.main.status === 'waiting', `domanda in sospeso: lo stato è «${s.main.status}» (atteso waiting)`);
+  st.applyRegistry([{ sessionId: S, alive: true, status: 'busy', cwd: '/p' }]); // il registro dice «busy»: non la cancella
+  ok(s.main.status === 'waiting', 'il registro «busy» non toglie l\'attesa della risposta');
+  now = t0 + 4 * 60000; st.tick();
+  ok(s.alerts.some(a => a.kind === 'wait' && /risposta|answer/.test(a.text)), 'dopo qualche minuto scatta l\'avviso «aspetta una tua risposta»');
+  st.applyTranscriptLine(S, null, line(now, 'user', [{ type: 'tool_result', tool_use_id: 'q1', content: 'A' }]));
+  ok(s.main.status === 'thinking' && !s.main.userWait, 'arrivata la risposta, l\'agente torna a pensare');
+  st.tick();
+  ok(!s.alerts.some(a => a.kind === 'wait'), 'e l\'avviso sparisce');
+  // la domanda insieme ad altri strumenti nello stesso messaggio: resta in attesa finché non rispondi, in qualunque ordine
+  const use = (id, name) => ({ type: 'tool_use', id, name, input: name === 'Read' ? { file_path: '/p/a.js' } : { questions: [{ question: 'Quale?' }] } });
+  const res = id => line(now += 1000, 'user', [{ type: 'tool_result', tool_use_id: id, content: 'ok' }]);
+  st.applyTranscriptLine(S, null, line(now += 1000, 'assistant', [use('r2', 'Read'), use('q2', 'AskUserQuestion')]));
+  st.applyTranscriptLine(S, null, res('r2'));
+  ok(s.main.status === 'waiting', `Read + domanda, finisce il Read: resta in attesa (${s.main.status})`);
+  st.applyTranscriptLine(S, null, res('q2'));
+  ok(s.main.status === 'thinking' && !s.main.userWait, 'poi rispondi: torna a pensare');
+  st.applyTranscriptLine(S, null, line(now += 1000, 'assistant', [use('q3', 'AskUserQuestion'), use('r3', 'Read')]));
+  ok(s.main.status === 'waiting', `domanda + Read: il Read non copre l'attesa (${s.main.status})`);
+  st.applyTranscriptLine(S, null, res('q3')); st.applyTranscriptLine(S, null, res('r3'));
+  ok(s.main.status === 'thinking' && !s.main.userWait, 'risposte arrivate: nessuna attesa rimasta');
+  // con gli hook: il PostToolUse di un altro strumento non chiude la domanda, quello della domanda sì
+  const hook = (ev, tool) => st.applyHook({ hook_event_name: ev, session_id: S, cwd: '/p', tool_name: tool, tool_input: {} });
+  hook('PreToolUse', 'AskUserQuestion'); hook('PreToolUse', 'Read'); hook('PostToolUse', 'Read');
+  ok(s.main.status === 'waiting', `hook: finisce un altro strumento, la domanda resta aperta (${s.main.status})`);
+  hook('PostToolUse', 'AskUserQuestion');
+  ok(s.main.status === 'thinking' && !s.main.userWait, 'hook: risposta arrivata');
+  // interrotta: la domanda non vale più, e il lavoro dopo non torna «in attesa»
+  st.applyTranscriptLine(S, null, line(now += 1000, 'assistant', [use('q4', 'AskUserQuestion')]));
+  st.applyTranscriptLine(S, null, line(now += 1000, 'user', [{ type: 'text', text: '[Request interrupted by user for tool use]' }]));
+  st.applyTranscriptLine(S, null, line(now += 1000, 'assistant', [use('r4', 'Read')]));
+  ok(s.main.status === 'working' && !s.main.userWait, `dopo un'interruzione la vecchia domanda non conta (${s.main.status})`);
+  st.stop && st.stop();
 }
 
 // mappa: percorsi dei comandi Git Bash su Windows (/d/dev/... è D:\dev\...)
@@ -345,6 +484,10 @@ function run(ok) {
   quietSubTests(ok);
   resumedSubTests(ok);
   archiveTests(ok);
+  splitCharTests(ok);
+  archiveBigFirstLineTests(ok);
+  statsRenameTests(ok);
+  askUserTests(ok);
   gitBashPathTests(ok);
   shellResetTests(ok);
   bashLabelTests(ok);

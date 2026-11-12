@@ -91,6 +91,12 @@ function pathsInCommand(cmd) {
   const out = [];
   let c = String(cmd || '');
   if (/<<\s*['"]?\w+/.test(c)) c = c.split('\n')[0];
+  // sed/perl/awk: le espressioni tra virgolette ("s/a/b/g", "y/a/b/", "/x/d") non sono percorsi, nemmeno con gli spazi dentro
+  if (/(^|[\s|;&(])(sed|perl|awk|gawk)\s/.test(c)) {
+    c = c.replace(/(["'])[sy]\/(?:(?!\1).)*\/[a-zA-Z]*\1/g, ' ').replace(/(["'])\/(?:(?!\1).)*\/[dpPqQ]\1/g, ' ');
+    c = c.replace(/(^|\s)[sy]\/[^\s\/]*\/[^\s\/]*\/[a-zA-Z]*(?=\s|$)/g, ' '); // anche senza virgolette: s/vecchio/nuovo/g
+    if (/(^|[\s|;&(])g?awk\s/.test(c)) c = c.replace(/(["'])\/(?:(?!\1).)*\/\1/g, ' ');
+  }
   for (const tok of c.split(/[\s|;&<>()]+/)) {
     const x = tok.replace(/^["'`]|["'`,:]$/g, '');
     if (!x || x.startsWith('-') || /^https?:/i.test(x) || x.length > 160 || !/^[\w@.~\-\/\\:]+$/.test(x)) continue;
@@ -110,10 +116,12 @@ function mainCommand(cmd) {
   let label = w0;
   if (MULTI.test(w0) && words[1] && !words[1].startsWith('-')) label += ' ' + words[1];
   const sub = (words[1] || '').toLowerCase();
-  const look = LOOK.test(w0) || (w0 === 'sed' && !/\s-i\b/.test(seg)) || (/^git$/i.test(w0) && /^(status|log|diff|show|blame|branch|remote)$/.test(sub)) || (/^curl$/i.test(w0) && !/\s-X\s*(POST|PUT|DELETE|PATCH)/i.test(seg));
+  const sedI = w0 === 'sed' && /\s(-[a-zA-Z]*i|--in-place)\b/.test(seg.split('|')[0]); // sed -i modifica il file (non il -i di un grep più avanti nella pipe)
+  const look = LOOK.test(w0) || (w0 === 'sed' && !sedI) || (/^git$/i.test(w0) && /^(status|log|diff|show|blame|branch|remote)$/.test(sub)) || (/^curl$/i.test(w0) && !/\s-X\s*(POST|PUT|DELETE|PATCH)/i.test(seg));
   const check = /^(tsc|eslint|ruff|flake8|mypy|pylint|prettier)$/i.test(w0) || /\s--check\b|\blint\b/.test(seg) || (/^(npm|pnpm|yarn)$/i.test(w0) && /\b(build|lint|typecheck)\b/.test(seg));
-  const writes = /\s-i\b|^(mv|cp|rm|mkdir|touch|tee|move|copy|del)$/i.test(w0) || /\s>\s*\S/.test(seg);
-  return { label: (label || 'shell').slice(0, 40), look, check, writes };
+  const writes = sedI || /^(mv|cp|rm|mkdir|touch|tee|move|copy|del)$/i.test(w0) || /\s>\s*\S/.test(seg);
+  // cp/mv: solo l'ultimo percorso (la destinazione) viene scritto, gli altri sono solo visti
+  return { label: (label || 'shell').slice(0, 40), look, check, writes, toLast: /^(mv|cp|move|copy)$/i.test(w0), sedI, seg };
 }
 
 // file importati o collegati da un file letto: diventano frontiera
@@ -210,9 +218,12 @@ class AgentWorld {
         const cd = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&]+))\s*(?:&&|;|$)/.exec(cmd);
         let base = this.shellCwd || null;
         if (cd) { const d = normSlashes(cd[1] || cd[2] || cd[3]); base = /^([A-Za-z]:\/|\/|~)/.test(d) ? d : path.posix.join(base || normSlashes(cwd) || '.', d); this.shellCwd = base; }
+        // sed -i, cp e mv scrivono solo i percorsi del loro pezzo di comando (cp e mv solo l'ultimo); il resto è solo visto
+        const own = main.sedI || main.toLast ? pathsInCommand(main.sedI ? main.seg.split('|')[0] : main.seg) : null;
+        const dst = main.toLast ? own[own.length - 1] : null;
         for (const p of pathsInCommand(cmd)) {
           const full = base && !/^([A-Za-z]:[\\/]|\/|~)/.test(p) ? base + '/' + p : p;
-          this.touch(relKey(full, cwd), act === 'run' && main.writes ? LV.edit : LV.seen, t);
+          this.touch(relKey(full, cwd), act === 'run' && main.writes && (!own || (own.includes(p) && (!main.toLast || p === dst))) ? LV.edit : LV.seen, t);
         }
         sig = 'run:' + cmd.slice(0, 200);
         break;
