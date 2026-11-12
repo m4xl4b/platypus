@@ -187,7 +187,7 @@ function askUserTests(ok) {
   st.applyRegistry([{ sessionId: S, alive: true, status: 'busy', cwd: '/p' }]); // il registro dice «busy»: non la cancella
   ok(s.main.status === 'waiting', 'il registro «busy» non toglie l\'attesa della risposta');
   now = t0 + 4 * 60000; st.tick();
-  ok(s.alerts.some(a => a.kind === 'wait'), 'dopo qualche minuto scatta l\'avviso «aspetta il tuo OK»');
+  ok(s.alerts.some(a => a.kind === 'wait' && /risposta|answer/.test(a.text)), 'dopo qualche minuto scatta l\'avviso «aspetta una tua risposta»');
   st.applyTranscriptLine(S, null, line(now, 'user', [{ type: 'tool_result', tool_use_id: 'q1', content: 'A' }]));
   ok(s.main.status === 'thinking' && !s.main.userWait, 'arrivata la risposta, l\'agente torna a pensare');
   st.tick();

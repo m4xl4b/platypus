@@ -1091,7 +1091,7 @@ class OfficeState extends EventEmitter {
         if (a.finished) continue;
         const name = displayName(a);
         if (a.status === 'waiting' && t - a.statusSince > st.waitMin * 60000) {
-          out.push({ id: 'wait:' + a.id, agentId: a.id, kind: 'wait', level: 'crit', since: a.statusSince, text: tr('{name} aspetta il tuo OK da {min} min', { name, min: min(t - a.statusSince) }) });
+          out.push({ id: 'wait:' + a.id, agentId: a.id, kind: 'wait', level: 'crit', since: a.statusSince, text: a.userWait ? tr('{name} aspetta una tua risposta da {min} min', { name, min: min(t - a.statusSince) }) : tr('{name} aspetta il tuo OK da {min} min', { name, min: min(t - a.statusSince) }) });
         } else if (a.pending > 0 && a.pendingSince && !USER_TOOLS.has(a.pendingName) && t - a.pendingSince > st.stuckMin * 60000 && t - a.lastActivity > st.stuckMin * 60000) {
           out.push({ id: 'stuck:' + a.id, agentId: a.id, kind: 'stuck', level: 'warn', since: a.pendingSince, text: tr('{name} è fermo su «{what}» da {min} min', { name, what: clip(a.pendingDesc, 40), min: min(t - a.pendingSince) }) });
         }
