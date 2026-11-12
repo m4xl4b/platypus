@@ -4,6 +4,54 @@ Platypus releases (up to 2.7 it was called Agent Office), newest first.
 
 *Versione italiana: [CHANGELOG.it.md](CHANGELOG.it.md).*
 
+## 2.10: workflows and teams, zoomable maps, a security pass
+
+Platypus now shows Claude Code Workflows and agent teams, lets you zoom into the charts of the map of reality, fills the whiteboards in real use, and has had a security pass over the whole app.
+
+- **Workflows and teams** (new **TEAMS** panel, **W** key or the button on the floor's notice board):
+  - the agents of a Workflow now appear in the office, in a room for each run and phase, named by their label, and their tokens count in the cost, live, in the archive and in replays (before, they were missing);
+  - the panel lists each run with its status, agents at work, elapsed time, cost, tokens and tool calls, and a progress bar, cost and duration for each phase; failed agents are listed by name, and when a run ends you get a short analysis (longest and most expensive phase, slowest agent, failures, redone tasks) plus Claude Code's own summary;
+  - it also shows teams and departments (who is working, waiting, idle or done) and the messages agents send each other;
+  - an "n WF" tag in the lobby and in the archive shows where workflows run or ran;
+  - in the demo, floor 3 has a workflow that advances by itself and a finished one with its analysis.
+- **Zoom on the map charts** (territory, context bubble, trajectory, seismograph):
+  - the mouse wheel zooms around the cursor, up to 8x; dragging moves the view; a double-click or the "×2.0 · 1:1" chip goes back to the whole view;
+  - on the territory the tiles are redrawn larger, so file names appear as you zoom in;
+  - the two 3D charts still rotate when you drag, so they pan with Shift or the right button, and stop rotating by themselves while zoomed;
+  - the seismograph zooms on time only, keeps the agent names and shows the visible time range.
+- **Whiteboards**:
+  - plans reach the board again: current Claude Code writes the plan to a file instead of passing it along, and Platypus now follows it, in the terminal and in the Claude desktop app;
+  - task lists from the Claude desktop app fill the boss's whiteboard too, and get ticked off when the turn ends;
+  - the whiteboards now sit right under the boss's office, so on busy floors you no longer scroll to find them, and the empty plan board says the plan will show up there in plan mode;
+  - the board title is no longer clipped and long plan steps end with an ellipsis.
+- **Grandpa shows up**:
+  - he used to speak only when the command was identical to the lesson's; now `cd app && CI=1 npm test 2>&1 | tail -30` matches a lesson about `npm test`, and so does the same command with extra arguments;
+  - the Workshop book reads a project's past sessions by itself, in the background, while the project has an open session (before, only the manual button did it).
+- **Balloons**: they no longer cover the characters' faces, they no longer sit over an agent's card, and a Bash balloon without a description shows the real command instead of the `cd folder &&` in front of it.
+- **Taskbar icon on Windows**: the 80s Platypus icon is back instead of Electron's atom and name.
+- **Interface**:
+  - **Top bar**: the numbers that call for action come first (waiting, alerts, cost, working, then agents, done, sessions, live), and what doesn't fit is hidden whole instead of cut mid-word; the "?" button stays visible in narrow windows;
+  - **Options**: six sections instead of one long list, the SAVE bar always visible and saying when there are unsaved changes, and a warning before closing and losing them; "Windows notifications" is now "System notifications";
+  - **Help**: it scrolls in small windows (half of it was out of reach) and covers the map and territory and surprise and causes views, the Workshop book and the TEAMS panel;
+  - **Map of reality**: the four view tabs show their full names in small windows.
+- **Security**:
+  - Platypus now runs on Electron 44, a supported version (the old one no longer got security fixes);
+  - another page open in your browser can no longer call the office's local server (for example a dev server on another port), nor load the office in a hidden frame to trick you into clicking YES on a permission balloon;
+  - a malformed address can no longer crash the server;
+  - the window stays on the office and sends only web links to the browser;
+  - on Linux and macOS the `~/.platypus` folder (project names, commands, error excerpts) is readable by you only;
+  - "Resume" on Windows with Windows Terminal no longer runs part of a folder name containing `;` as a command.
+- **Small fixes**:
+  - **Text**: accented characters are no longer garbled when Platypus reads a line while Claude Code is still writing it;
+  - **Archive**: a session whose first message is very large (for example a pasted image) keeps its start time, length, title and folder;
+  - **Statistics**: a Cowork session that gets its title later, or is renamed, is no longer counted as two projects;
+  - **Waiting for you**: while Claude asks you a question or waits for you to approve a plan, the agent shows as waiting for you, with an alert, instead of "working";
+  - **Map of reality**: `sed -i` marks the file as edited, `cp` and `mv` no longer mark the source file as edited, and sed expressions such as `s/old/new/` are no longer shown as folders;
+  - **Workshop book on Windows**: the project name keeps its capital letters, also in the `CLAUDE.md` section;
+  - **Shortcuts**: with the map of reality, the Workshop book or the TEAMS panel open, keyboard shortcuts no longer act on the office hidden behind;
+  - **Whiteboards**: the labels under them no longer overlap the legs, and Grandpa's balloon stays near him.
+- **Before you update**: Electron 44 no longer supports macOS 12, 32-bit Windows and Linux armv7l. The desktop window needs Node.js 22.12 or later; with Node.js 20, Platypus still works in the browser with `npm run web`.
+
 ## 2.9.1: fixes
 
 Fixes for the bugs found by a debug pass over the whole app, each with an automated test.
