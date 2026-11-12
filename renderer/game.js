@@ -3218,6 +3218,9 @@ window.addEventListener('keydown', e => {
   if (e.target.closest && e.target.closest('input,select,textarea')) return; // si sta scrivendo
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase();
+  // con la mappa, le squadre o il Libro aperti l'ufficio dietro non si vede: valgono solo Esc e il tasto che li chiude
+  const over = window.worldMapOpen && worldMapOpen() ? 'g' : window.teamsOpen && teamsOpen() ? 'w' : window.bottegaOpen && bottegaOpen() ? '' : null;
+  if (over !== null && k !== 'escape' && k !== over) return;
   if (k === 'd') toggleDemo();
   else if (k === 's') toggleSound();
   else if (k === 'c') toggleCrt();
