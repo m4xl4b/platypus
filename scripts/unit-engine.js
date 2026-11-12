@@ -149,6 +149,14 @@ function archiveBigFirstLineTests(ok) {
     fs.writeFileSync(path.join(pdir, 'sess-big-0001.jsonl'), body);
     const x = listArchive({ base: tmp }).find(r => r.id === 'sess-big-0001');
     ok(x && x.start === t0 && Math.round((x.end - x.start) / 60000) === 29 && x.cwd === '/p/app' && x.title === 'Schermata da sistemare', `archivio, prima riga da 80 KB: inizio ${x && x.start === t0}, durata ${x && Math.round((x.end - x.start) / 60000)} min, cartella «${x && x.cwd}»`);
+    // la prima riga enorme non porta né data né cartella (es. un'istantanea): si leggono dalle righe dopo, e il titolo dalla richiesta
+    let body2 = JSON.stringify({ type: 'file-history-snapshot', snapshot: 'B'.repeat(80 * 1024) }) + '\n';
+    const m2 = (i, type, text) => JSON.stringify({ type, timestamp: iso(t0 + i * 60000), sessionId: 'sess-big-0002', cwd: '/p/shop', message: { role: type, content: text } }) + '\n';
+    body2 += m2(0, 'user', 'Sistema il carrello');
+    for (let i = 1; i <= 12; i++) body2 += m2(i, i % 2 ? 'assistant' : 'user', 'ok');
+    fs.writeFileSync(path.join(pdir, 'sess-big-0002.jsonl'), body2);
+    const y = listArchive({ base: tmp }).find(r => r.id === 'sess-big-0002');
+    ok(y && y.start === t0 && y.cwd === '/p/shop' && /carrello/.test(y.title || ''), `archivio, prima riga enorme senza data: inizio ${y && y.start === t0}, cartella ${y && y.cwd}, titolo «${y && y.title}»`);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 

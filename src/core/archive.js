@@ -35,7 +35,7 @@ function summarize(p, st) {
   // prima riga più lunga di 64 KB (es. un'immagine incollata): si legge fino al suo a capo, entro un limite
   if (st.size > HEAD && headText.indexOf('\n') < 0) {
     const big = readSlice(p, 0, Math.min(FIRST_LINE_MAX, st.size)), nl = big.indexOf('\n');
-    if (nl >= 0) headText = big.slice(0, nl + 1);
+    if (nl >= 0) headText = big.slice(0, nl + 1 + HEAD); // quella riga e i soliti 64 KB dopo: data, cartella e richiesta possono stare nelle righe seguenti
   }
   const head = parseLines(headText, false, st.size > HEAD);
   const tailStart = Math.max(0, st.size - TAIL);
