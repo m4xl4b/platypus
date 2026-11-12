@@ -552,6 +552,8 @@ function sedExpressionTests(ok) {
   ok(placesOf("sed -e 'y/abc/xyz/' -e '/^#/d' src/api.ts") === 'src/api.ts', 'sed y/// e /x/d: nessun luogo');
   ok(placesOf("perl -pe 's/a b/c d/' src/api.ts") === 'src/api.ts', 'perl -pe: nessun luogo');
   ok(placesOf("awk '/foo/' src/api.ts") === 'src/api.ts', 'awk /x/: nessun luogo');
+  ok(placesOf('sed -i s/getUser/fetchUser/g src/api.ts') === 'src/api.ts', 'sed senza virgolette: nessun luogo inventato: ' + placesOf('sed -i s/getUser/fetchUser/g src/api.ts'));
+  ok(placesOf('cat s/old/new/ src/api.ts').includes('s/old/new'), 'fuori da sed, s/old/new/ resta un percorso');
   ok(placesOf('ls "src/mydir/"') === 'src/mydir', 'una cartella tra virgolette resta una cartella: ' + placesOf('ls "src/mydir/"'));
   ok(placesOf('sed -i "s/a/b/" "src/mydir/"') === 'src/mydir', 'cartella vera accanto a un\'espressione sed');
 }
