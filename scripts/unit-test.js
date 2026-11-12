@@ -544,6 +544,18 @@ function shellWriteTests(ok) {
   ok(ed(w, 'out.txt'), 'redirezione: come prima');
 }
 
+// le espressioni di sed/perl/awk non sono cartelle del progetto
+function sedExpressionTests(ok) {
+  const placesOf = (cmd) => { const w = new AgentWorld(); const id = 'c' + (++seq); w.start(id, 'Bash', { command: cmd }, 1000, '', 0); w.end(id, false, { content: '' }, {}, 1100, ''); return [...w.nodes.keys()].filter(k => !k.startsWith('cmd:')).join(','); };
+  ok(placesOf('sed -i "s/old/new/" src/api.ts') === 'src/api.ts', 'sed "s/old/new/": non è un luogo: ' + placesOf('sed -i "s/old/new/" src/api.ts'));
+  ok(placesOf("sed -i 's/old value/new value/g' src/api.ts") === 'src/api.ts', 'sed con spazi nell\'espressione: nessun luogo inventato: ' + placesOf("sed -i 's/old value/new value/g' src/api.ts"));
+  ok(placesOf("sed -e 'y/abc/xyz/' -e '/^#/d' src/api.ts") === 'src/api.ts', 'sed y/// e /x/d: nessun luogo');
+  ok(placesOf("perl -pe 's/a b/c d/' src/api.ts") === 'src/api.ts', 'perl -pe: nessun luogo');
+  ok(placesOf("awk '/foo/' src/api.ts") === 'src/api.ts', 'awk /x/: nessun luogo');
+  ok(placesOf('ls "src/mydir/"') === 'src/mydir', 'una cartella tra virgolette resta una cartella: ' + placesOf('ls "src/mydir/"'));
+  ok(placesOf('sed -i "s/a/b/" "src/mydir/"') === 'src/mydir', 'cartella vera accanto a un\'espressione sed');
+}
+
 // il nome del progetto nel libro e nel CLAUDE.md conserva le maiuscole (la chiave no)
 function bottegaNameTests(ok) {
   const bt = require(path.join(ROOT, 'src', 'core', 'bottega'));
@@ -582,6 +594,7 @@ function run(ok) {
   groundingTests(ok);
   console.log('comandi di shell che scrivono');
   shellWriteTests(ok);
+  sedExpressionTests(ok);
   console.log('percorsi inventati');
   ghostTests(ok);
   console.log('affermazioni');

@@ -91,6 +91,11 @@ function pathsInCommand(cmd) {
   const out = [];
   let c = String(cmd || '');
   if (/<<\s*['"]?\w+/.test(c)) c = c.split('\n')[0];
+  // sed/perl/awk: le espressioni tra virgolette ("s/a/b/g", "y/a/b/", "/x/d") non sono percorsi, nemmeno con gli spazi dentro
+  if (/(^|[\s|;&(])(sed|perl|awk|gawk)\s/.test(c)) {
+    c = c.replace(/(["'])[sy]\/(?:(?!\1).)*\/[a-zA-Z]*\1/g, ' ').replace(/(["'])\/(?:(?!\1).)*\/[dpPqQ]\1/g, ' ');
+    if (/(^|[\s|;&(])g?awk\s/.test(c)) c = c.replace(/(["'])\/(?:(?!\1).)*\/\1/g, ' ');
+  }
   for (const tok of c.split(/[\s|;&<>()]+/)) {
     const x = tok.replace(/^["'`]|["'`,:]$/g, '');
     if (!x || x.startsWith('-') || /^https?:/i.test(x) || x.length > 160 || !/^[\w@.~\-\/\\:]+$/.test(x)) continue;
