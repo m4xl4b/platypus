@@ -532,6 +532,10 @@ function shellWriteTests(ok) {
   ok(ed(w, 'src/api.ts'), 'sed -i: il file risulta modificato');
   w = sh("sed -n 's/a/b/p' src/api.ts");
   ok(seen(w, 'src/api.ts') && !ed(w, 'src/api.ts'), 'sed senza -i: solo visto');
+  w = sh("sed -n '1,20p' src/api.ts | grep -i foo");
+  ok(seen(w, 'src/api.ts') && !ed(w, 'src/api.ts'), 'sed in sola lettura seguito da grep -i: il -i non è suo, solo visto');
+  w = sh("sed -i 's/a/b/' src/api.ts && cat src/other.ts");
+  ok(ed(w, 'src/api.ts') && seen(w, 'src/other.ts') && !ed(w, 'src/other.ts'), 'sed -i in una catena: modificato solo il suo file');
   w = sh('cp src/a.ts src/b.ts');
   ok(ed(w, 'src/b.ts') && seen(w, 'src/a.ts') && !ed(w, 'src/a.ts'), 'cp: modificata la destinazione, la sorgente solo vista');
   w = sh('mv src/a.ts src/b.ts');
