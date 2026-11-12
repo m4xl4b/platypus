@@ -524,9 +524,37 @@ function elderTests(ok) {
   ok(bt.renderSection(many, 'x').split('\n').filter(l => l.startsWith('- ')).length === 8, 'CLAUDE.md: al massimo 8 lezioni');
 }
 
+// il nome del progetto nel libro e nel CLAUDE.md conserva le maiuscole (la chiave no)
+function bottegaNameTests(ok) {
+  const bt = require(path.join(ROOT, 'src', 'core', 'bottega'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-bname-'));
+  try {
+    const b1 = new bt.Bottega(dir);
+    const win = 'C:\\Users\\me\\MyShop';
+    const les = { kind: 'ghost-path', key: 'src/old.ts', sid: 'x', t: Date.now(), agent: 'A', excerpt: '' };
+    b1.learn(win, [les]);
+    ok(b1.view(win).name === 'MyShop', 'nome del libro: ' + b1.view(win).name);
+    ok(b1.view('C:\\Users\\me\\MyShop\\').name === 'MyShop' && b1.view('C:/Users/me/MyShop/').name === 'MyShop', 'nome: barre finali e / o \\ uguali');
+    ok(bt.renderSection([{ level: 'lesson', pinned: true, weight: 1, kind: 'ghost-path', key: 'a.ts' }], b1.view(win).name).includes('(MyShop)'), 'titolo del CLAUDE.md con le maiuscole');
+    b1.stop();
+    // un libro già salvato col nome in minuscolo: alla prossima apertura prende quello giusto
+    const f = path.join(dir, bt.projectKey(win) + '.json');
+    const saved = JSON.parse(fs.readFileSync(f, 'utf8'));
+    saved.name = 'myshop';
+    fs.writeFileSync(f, JSON.stringify(saved));
+    const b2 = new bt.Bottega(dir);
+    ok(b2.list()[0].name === 'myshop', 'elenco: il nome vecchio finché non si apre con la cartella');
+    const v = b2.view(win);
+    ok(v.name === 'MyShop' && v.lessons.length === 1 && v.key === bt.projectKey(win), 'libro vecchio: nome corretto, stessa chiave, lezioni intatte');
+    b2.stop();
+    ok(JSON.parse(fs.readFileSync(f, 'utf8')).name === 'MyShop', 'il nome corretto viene salvato');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
 function run(ok) {
   console.log('libro della bottega');
   bottegaTests(ok);
+  bottegaNameTests(ok);
   elderTests(ok);
   console.log('sorprese');
   surpriseTests(ok);
