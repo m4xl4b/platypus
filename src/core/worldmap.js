@@ -110,10 +110,12 @@ function mainCommand(cmd) {
   let label = w0;
   if (MULTI.test(w0) && words[1] && !words[1].startsWith('-')) label += ' ' + words[1];
   const sub = (words[1] || '').toLowerCase();
-  const look = LOOK.test(w0) || (w0 === 'sed' && !/\s-i\b/.test(seg)) || (/^git$/i.test(w0) && /^(status|log|diff|show|blame|branch|remote)$/.test(sub)) || (/^curl$/i.test(w0) && !/\s-X\s*(POST|PUT|DELETE|PATCH)/i.test(seg));
+  const sedI = w0 === 'sed' && /\s(-[a-zA-Z]*i|--in-place)\b/.test(seg); // sed -i modifica il file
+  const look = LOOK.test(w0) || (w0 === 'sed' && !sedI) || (/^git$/i.test(w0) && /^(status|log|diff|show|blame|branch|remote)$/.test(sub)) || (/^curl$/i.test(w0) && !/\s-X\s*(POST|PUT|DELETE|PATCH)/i.test(seg));
   const check = /^(tsc|eslint|ruff|flake8|mypy|pylint|prettier)$/i.test(w0) || /\s--check\b|\blint\b/.test(seg) || (/^(npm|pnpm|yarn)$/i.test(w0) && /\b(build|lint|typecheck)\b/.test(seg));
-  const writes = /\s-i\b|^(mv|cp|rm|mkdir|touch|tee|move|copy|del)$/i.test(w0) || /\s>\s*\S/.test(seg);
-  return { label: (label || 'shell').slice(0, 40), look, check, writes };
+  const writes = sedI || /^(mv|cp|rm|mkdir|touch|tee|move|copy|del)$/i.test(w0) || /\s>\s*\S/.test(seg);
+  // cp/mv: solo l'ultimo percorso (la destinazione) viene scritto, gli altri sono solo visti
+  return { label: (label || 'shell').slice(0, 40), look, check, writes, toLast: /^(mv|cp|move|copy)$/i.test(w0), seg };
 }
 
 // file importati o collegati da un file letto: diventano frontiera
@@ -210,9 +212,10 @@ class AgentWorld {
         const cd = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&]+))\s*(?:&&|;|$)/.exec(cmd);
         let base = this.shellCwd || null;
         if (cd) { const d = normSlashes(cd[1] || cd[2] || cd[3]); base = /^([A-Za-z]:\/|\/|~)/.test(d) ? d : path.posix.join(base || normSlashes(cwd) || '.', d); this.shellCwd = base; }
+        const dst = main.toLast ? pathsInCommand(main.seg).pop() : null;
         for (const p of pathsInCommand(cmd)) {
           const full = base && !/^([A-Za-z]:[\\/]|\/|~)/.test(p) ? base + '/' + p : p;
-          this.touch(relKey(full, cwd), act === 'run' && main.writes ? LV.edit : LV.seen, t);
+          this.touch(relKey(full, cwd), act === 'run' && main.writes && (!main.toLast || p === dst) ? LV.edit : LV.seen, t);
         }
         sig = 'run:' + cmd.slice(0, 200);
         break;

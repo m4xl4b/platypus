@@ -524,6 +524,26 @@ function elderTests(ok) {
   ok(bt.renderSection(many, 'x').split('\n').filter(l => l.startsWith('- ')).length === 8, 'CLAUDE.md: al massimo 8 lezioni');
 }
 
+// i comandi di shell che scrivono: sed -i, cp, mv (solo la destinazione è modificata)
+function shellWriteTests(ok) {
+  const sh = (cmd) => { const w = new AgentWorld(); const id = 'c' + (++seq); w.start(id, 'Bash', { command: cmd }, 1000, '', 0); w.end(id, false, { content: '' }, {}, 1100, ''); return w; };
+  const ed = (w, k) => !!(w.nodes.get(k) && w.nodes.get(k).edit), seen = (w, k) => !!(w.nodes.get(k) && w.nodes.get(k).seen);
+  let w = sh("sed -i 's/getUser/fetchUser/g' src/api.ts");
+  ok(ed(w, 'src/api.ts'), 'sed -i: il file risulta modificato');
+  w = sh("sed -n 's/a/b/p' src/api.ts");
+  ok(seen(w, 'src/api.ts') && !ed(w, 'src/api.ts'), 'sed senza -i: solo visto');
+  w = sh('cp src/a.ts src/b.ts');
+  ok(ed(w, 'src/b.ts') && seen(w, 'src/a.ts') && !ed(w, 'src/a.ts'), 'cp: modificata la destinazione, la sorgente solo vista');
+  w = sh('mv src/a.ts src/b.ts');
+  ok(ed(w, 'src/b.ts') && seen(w, 'src/a.ts') && !ed(w, 'src/a.ts'), 'mv: modificata la destinazione, la sorgente solo vista');
+  w = sh('cd src && cp a.ts b.ts && cat c.ts');
+  ok(ed(w, 'src/b.ts') && !ed(w, 'src/a.ts') && !ed(w, 'src/c.ts'), 'cp in una catena: conta solo il suo segmento');
+  w = sh('rm src/a.ts src/b.ts');
+  ok(ed(w, 'src/a.ts') && ed(w, 'src/b.ts'), 'rm: tutti i percorsi modificati come prima');
+  w = sh('node gen.js > out.txt');
+  ok(ed(w, 'out.txt'), 'redirezione: come prima');
+}
+
 // il nome del progetto nel libro e nel CLAUDE.md conserva le maiuscole (la chiave no)
 function bottegaNameTests(ok) {
   const bt = require(path.join(ROOT, 'src', 'core', 'bottega'));
@@ -560,6 +580,8 @@ function run(ok) {
   surpriseTests(ok);
   console.log('mappa contro territorio');
   groundingTests(ok);
+  console.log('comandi di shell che scrivono');
+  shellWriteTests(ok);
   console.log('percorsi inventati');
   ghostTests(ok);
   console.log('affermazioni');
