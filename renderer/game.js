@@ -1623,7 +1623,7 @@ function drawBoard(g, t) {
   R(x, y, w, h, '#fbf8f0');
   R(x + 4, y + h, w - 8, 3, '#8b8a9a'); R(x + 10, y + h, 6, 2, C.red); R(x + 18, y + h, 6, 2, C.blue); R(x + 26, y + h, 6, 2, C.dgreen);
   const legTxt = g.key === 'A' ? tr('CAPO') : tr('LIBERA');
-  pixText(legTxt, x + w - 2 - legTxt.length * 4, y + h + 4, '#5F574F', 4);
+  pixText(legTxt, Math.round(x + (w - legTxt.length * 4) / 2), y + h + 6, '#5F574F', 4); // in mezzo, tra le gambe
   // contenuto disegnato a pixel (i testi sono etichette HTML)
   const ct = b.content;
   if (ct && ct.kind === 'art' && ARTS[ct.art]) {
@@ -2684,7 +2684,8 @@ function updateBalloon(c) {
   if (c._maxW !== maxW) { c.el.style.maxWidth = maxW + 'px'; c._maxW = maxW; }
   c.el.style.opacity = Math.max(0, Math.min(1, c.alpha));
   const bw = c.el.offsetWidth, bh = c.el.offsetHeight;
-  const prio = (focusId === c.id ? 10 : 0) + (status === 'waiting' ? 5 : 0) + (c.role === 'boss' ? 3 : c.role === 'manager' ? 2 : 0) + (walking ? 0 : 1);
+  // il Nonno che racconta sceglie il posto per primo: la sua lezione dura poco e deve stare vicino a lui
+  const prio = (focusId === c.id ? 10 : 0) + (c.npc === 'elder' && c.speech ? 6 : 0) + (status === 'waiting' ? 5 : 0) + (c.role === 'boss' ? 3 : c.role === 'manager' ? 2 : 0) + (walking ? 0 : 1);
   return { c, bw, bh, hx: c.x * scale, top: headTop * scale - bh - 8, prio };
 }
 
