@@ -88,6 +88,34 @@ function resumedSubTests(ok) {
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 
+// lettura: un carattere accentato spezzato fra due letture del file non deve diventare «�»
+function splitCharTests(ok) {
+  const { TranscriptWatcher } = require(path.join(ROOT, 'src', 'core', 'sources'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-test-'));
+  try {
+    const pdir = path.join(tmp, 'projects', 'proj');
+    fs.mkdirSync(pdir, { recursive: true });
+    const f = path.join(pdir, 'sess-utf8-0001.jsonl');
+    const got = [];
+    const st = { sessions: new Map(), accountLine() {}, applyTranscriptLine(_s, _a, o) { got.push(o); } };
+    const L = text => Buffer.from(JSON.stringify({ type: 'user', timestamp: iso(Date.now()), sessionId: 'sess-utf8-0001', message: { role: 'user', content: text } }) + '\n');
+    const b = L('Perché non funziona più?');
+    const cut = b.indexOf(Buffer.from('é')) + 1; // a metà dei due byte di «é»
+    fs.writeFileSync(f, b.subarray(0, cut));
+    const w = new TranscriptWatcher(st, { base: tmp });
+    w.maybeTrack(f, false);
+    fs.appendFileSync(f, b.subarray(cut));
+    w.pollTracked();
+    const t = got[0] && got[0].message.content;
+    ok(t === 'Perché non funziona più?', `carattere UTF-8 spezzato fra due letture: «${t}»`);
+    // file riscritto più corto: il decodificatore riparte da zero
+    fs.writeFileSync(f, L('Già fatto'));
+    w.pollTracked();
+    ok(got[1] && got[1].message.content === 'Già fatto', 'file riscritto: si rilegge da capo');
+    w.stop();
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
 // archivio: durata e titolo di una sessione il cui file sta fra 64 e 256 KB
 function archiveTests(ok) {
   const { listArchive } = require(path.join(ROOT, 'src', 'core', 'archive'));
@@ -345,6 +373,7 @@ function run(ok) {
   quietSubTests(ok);
   resumedSubTests(ok);
   archiveTests(ok);
+  splitCharTests(ok);
   gitBashPathTests(ok);
   shellResetTests(ok);
   bashLabelTests(ok);
