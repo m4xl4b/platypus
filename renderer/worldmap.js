@@ -81,7 +81,7 @@
         </div>
       </div>
       <div class="wm-body wm-mind">
-        <div class="wm-bub"><div class="wm-cap">${esc(tr('BOLLA DEL CONTESTO'))} <span class="dim">${esc(tr('che cosa ha in testa'))}</span> <span class="wm-exp">${esc(tr('SPERIMENTALE'))}</span></div><canvas></canvas><div class="wm-tip" hidden></div></div>
+        <div class="wm-bub"><div class="wm-cap">${esc(tr('BOLLA DEL CONTESTO'))} <span class="dim">${esc(tr('che cosa ha in testa'))}</span> <span class="wm-exp">${esc(tr('SPERIMENTALE'))}</span><span class="wm-src"></span></div><canvas></canvas><div class="wm-tip" hidden></div></div>
         <div class="wm-side">
           <div class="wm-star"><div class="wm-cap">${esc(tr('STELLA POLARE'))} <span class="dim">${esc(tr('quanto resta sul compito'))}</span></div><canvas></canvas><div class="wm-starinfo"></div></div>
           <div class="wm-comp"><div class="wm-cap">${esc(tr('DI COSA È FATTO IL CONTESTO'))}</div><div class="wm-compbody"></div></div>
@@ -170,6 +170,8 @@
       if (d && d.ok) W.data = d;
       if (W.view === 'mind') {
         const m = await (await fetch('/api/agentmind?' + q)).json();
+        // la fonte dei vettori è cambiata: lo si dice, e la vista riparte con i numeri nuovi (mai un misto)
+        if (m && m.ok && W.mind && W.mind.src && m.src && W.mind.src !== m.src) W.srcChange = { from: W.mind.src, to: m.src, t: Date.now() };
         if (m && m.ok) W.mind = m;
       }
       if (usesGround()) {
@@ -815,6 +817,7 @@
     const { ctx, w, h } = fitCanvas(cv);
     ctx.fillStyle = '#04030a'; ctx.fillRect(0, 0, w, h);
     const m = W.mind;
+    srcLabel(e, m);
     if (!m || m.empty || !m.pieces) { ctx.fillStyle = '#83769C'; ctx.font = '18px VT, monospace'; ctx.fillText(m && m.empty ? tr('Ancora niente nel contesto di questo agente.') : tr('Carico la mappa…'), 12, 24); return; }
     W.pz = zoomOf('bub');
     if (!W.drag && W.pz.k === 1) W.yaw += 0.002;
@@ -905,6 +908,16 @@
     ctx.fillStyle = col; ctx.beginPath();
     for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.45 : r; const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
     ctx.closePath(); ctx.fill();
+  }
+  // da dove vengono i vettori della bolla: un'etichetta onesta, «affino…» mentre arrivano quelli neurali, e il cambio di fonte
+  function srcLabel(e, m) {
+    const box = e.querySelector('.wm-src');
+    if (!box) return;
+    const lab = window.embedSourceLabel ? embedSourceLabel((m && m.src) || 'tfidf') : '';
+    const ch = W.srcChange && Date.now() - W.srcChange.t < 8000 ? W.srcChange : null;
+    const html = !m || !m.src ? '' : '· ' + esc(lab) + (m.refining ? ` <span class="ref">${esc(tr('affino…'))}</span>` : '') +
+      (ch ? ` <span class="ref">${esc(tr('fonte cambiata: si riparte'))}</span>` : '');
+    if (box._h !== html) { box.innerHTML = html; box._h = html; box.classList.toggle('neural', !!(m && m.src && m.src !== 'tfidf')); }
   }
   // allineamento relativo: 1 = parla del compito come all'inizio. La regola e le soglie (per fonte dei vettori) sono
   // quelle del motore: drift-rule.js, con le soglie che arrivano da /api/agentmind (th)

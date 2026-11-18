@@ -127,7 +127,7 @@ Today's thresholds are valid for TF-IDF, not for neural vectors, which have much
   - The base floor `Math.max(0.03, …)` in `alignment` belongs to the same table.
 - **Requirement:** the neural source must beat TF-IDF on the test set. If it does not, write it down and leave TF-IDF as the default.
 
-## E6 · Interface  [ ]
+## E6 · Interface  [x]
 
 - **Options** (`DEFAULT_SETTINGS` in `src/core/state.js`, panel in `renderer/game.js`): a section "Meaning engine" with:
   - the choice between automatic, Ollama, ONNX and lexical only;
@@ -273,3 +273,21 @@ This is on paper: E5 measures it only if the real model is installed.
 - `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing.
 
 **Decision for Max.** To measure a real model: permission to start Ollama (the models are already on disk) and run `node scripts/embed-eval.js --source ollama --model bge-m3` (and the others), or to install the ONNX model. If one beats TF-IDF, its row goes into `drift-rule.js` and the default can become `auto`.
+
+### 2026-11-18 · E6 · Interface
+
+**Done.**
+- **Options, "Meaning engine" section** (new `renderer/embed-ui.js`; `game.js` gets three one-line hooks in `toggleSettings`: the HTML, the binding, and collecting the values on save; `index.html` loads the module before `game.js`):
+  - the choice: lexical only (TF-IDF, the default), automatic (Ollama, then ONNX, then lexical), Ollama, ONNX; the Ollama model (empty = automatic) and address (loopback only, explained in the tooltip);
+  - the state of each source when the panel opens (ready / not found / not installed / error / not checked yet), the model, "in use", the command to get it (`ollama pull …`, `npm run embed:onnx:install`) shown as text and never run, the detail of the error; a red line when a chosen source is not available and lexical is used instead; the cache size (vectors in memory, bytes on disk) and the **CLEAR THE CACHE** button;
+  - a line saying that Platypus never downloads models on its own.
+- **Engine.** `POST /api/embed {action: 'probe'}` checks every source without changing the one in use, through a new light `check()` of the providers: Ollama reads only `/api/tags` (no model is loaded into memory just because the options were opened), ONNX checks the packages and the model marker without starting the worker. `POST /api/embed {action: 'clear'}` clears the cache. `/api/agentmind` also says `active` (the source chosen), `refining` (that source is not complete yet, so TF-IDF is shown meanwhile, or pieces are still pending) and `fallback`.
+- **Bubble and star view** (`renderer/worldmap.js`): next to the bubble's caption an honest label, "lexical (TF-IDF): compares words, not concepts" or "meaning: Ollama · <model>" / "meaning: ONNX · <model>"; a yellow "refining…" while the neural vectors arrive (the TF-IDF picture is on screen meanwhile, never an empty one); when the source of the snapshot changes, "source changed: starting again" for 8 seconds. Every snapshot is drawn on its own (positions are not interpolated), so two sources are never mixed. The star panel says "not measurable: this meaning source is not calibrated yet" for a neural source without a row in the table (E5).
+- 33 new strings in `src/i18n/locales/en/embed.json`; small styles in `renderer/style.css`.
+
+**Checks.**
+- Tests: `check()` of the Ollama provider reads only `/api/tags`; in the smoke test the options probe shows Ollama `ready` with its model and ONNX `not-installed` without any request other than `/api/tags`; switching to the fake Ollama the bubble first answers with TF-IDF and `refining`, then with the neural source and `refining: false`; clearing the cache empties memory and disk.
+- Interface, in the built-in browser with the engine in web mode (temporary home, port 47840, demo) and a fake Ollama started for the purpose: the options section shows the three sources (Ollama "not found" on the real default address, which is not running; ONNX "not installed" with the command; lexical "ready · in use"), the cache and the button; after switching to the fake Ollama the bubble's label went "lexical … → lexical … refining… → meaning: Ollama · nomic-embed-text refining… source changed: starting again → meaning: Ollama · nomic-embed-text", and the star said "CAN'T TELL · this meaning source is not calibrated yet". No console errors. Settings put back to TF-IDF, engine and fake Ollama stopped by their PIDs, temporary home deleted.
+- `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing.
+
+**Note.** Opening the options checks `127.0.0.1:11434` (or the configured address) once: a loopback request that only lists the models. On this computer Ollama is not running, so it answers "not found"; nothing is started.

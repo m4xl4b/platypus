@@ -340,6 +340,12 @@ async function ollamaTests(ok) {
   const st = new OfficeState({ settings: {} });
   st.setSettings({ ollamaUrl: 'http://localhost:11500' });
   st.setSettings({ ollamaUrl: 'http://example.com:11434', embedEngine: 'boh', embedModel: 'bge-m3 ; rm -rf' });
+  // per le opzioni: check() guarda solo /api/tags, senza caricare il modello
+  const srv2 = await fakeOllama();
+  const pc = ollama.create({ ollamaUrl: srv2.url });
+  const rc = await pc.check();
+  ok(rc && pc.state === 'ready' && pc.model === 'nomic-embed-text:latest' && pc.dim === 0 && srv2.log.every(x => x.url === '/api/tags'), 'embedding E6: il controllo per le opzioni legge solo /api/tags (nessun modello caricato)');
+  await srv2.close();
   ok(st.settings.ollamaUrl === 'http://localhost:11500' && st.settings.embedEngine === 'tfidf' && st.settings.embedModel === 'bge-m3rm-rf', `embedding E3: le opzioni rifiutano un host esterno (resta ${st.settings.ollamaUrl}) e ripuliscono motore e modello`);
   st.stop && st.stop();
 }

@@ -491,6 +491,13 @@ body.widget #widget { display: block; flex: 1; padding: 6px 8px; overflow: hidde
 #settings .stat { margin-top: 10px; padding: 8px; border: 2px dashed #2a2440; font-size: 16px; line-height: 1.1; color: var(--ink); }
 #settings .stat p { margin: 0 0 6px; word-break: break-word; }
 #settings .stat button { font-size: 7px; }
+#settings .embedopts > p { margin: 4px 0; font-size: 15px; color: var(--ink); }
+#settings .embedstate code { font-family: 'VT', monospace; color: var(--yellow); }
+#settings .embedstate .on { color: var(--green, #00E436); }
+#settings .embedstate .bad { color: #FF004D; }
+#worldmap .wm-src { font-family: 'VT'; font-size: 15px; color: #83769C; margin-left: 6px; }
+#worldmap .wm-src.neural { color: #29ADFF; }
+#worldmap .wm-src .ref { color: var(--yellow); }
 #settings .fbhooks { min-width: 0; } /* un fieldset si allarga quanto il suo contenuto: il blocco di codice deve scorrere, non allargarlo */
 #settings .fbhooks p { margin: 4px 0 6px; font-size: 16px; line-height: 1.1; color: var(--ink); word-break: break-word; }
 #settings .fbhooks p.dim { color: #83769c; }

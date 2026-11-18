@@ -126,12 +126,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const fo = await require('./unit-embed').fakeOllama();
     const em0 = JSON.parse((await get(port, '/api/embed')).body);
     ok(mind.src === 'tfidf' && mind.engine === 'lexical' && em0.engine === 'tfidf' && em0.active === 'tfidf', 'significato: con «solo lessicale» la bolla è TF-IDF');
+    // E6 · le opzioni guardano le fonti senza caricare modelli (solo /api/tags)
+    await get(port, '/api/settings', 'POST', JSON.stringify({ ollamaUrl: fo.url }));
+    const pr = JSON.parse((await get(port, '/api/embed', 'POST', JSON.stringify({ action: 'probe' }))).body);
+    ok(pr.active === 'tfidf' && pr.sources.ollama.state === 'ready' && pr.sources.ollama.model === 'nomic-embed-text:latest' && ['not-installed', 'ready'].includes(pr.sources.onnx.state) && fo.log.length && fo.log.every(x => x.url === '/api/tags'), `opzioni del significato: Ollama ${pr.sources.ollama.state} (${pr.sources.ollama.model}), ONNX ${pr.sources.onnx.state}, senza caricare il modello`);
     await get(port, '/api/settings', 'POST', JSON.stringify({ embedEngine: 'ollama', ollamaUrl: fo.url }));
-    let nm = null;
-    for (let i = 0; i < 40 && !(nm && nm.src !== 'tfidf' && !nm.pending); i++) { nm = JSON.parse((await get(port, `/api/agentmind?sid=${sid}&aid=main`)).body); await sleep(50); }
+    let nm = null, sawRefining = false;
+    for (let i = 0; i < 40 && !(nm && nm.src !== 'tfidf' && !nm.pending); i++) { nm = JSON.parse((await get(port, `/api/agentmind?sid=${sid}&aid=main`)).body); if (nm.refining && nm.pieces.length) sawRefining = true; await sleep(50); }
+    ok(sawRefining && nm.active === nm.src && nm.refining === false, 'bolla: mentre arrivano i vettori si vede subito il TF-IDF con «affino…», poi la fonte neurale');
     const em1 = JSON.parse((await get(port, '/api/embed')).body);
     ok(nm && nm.src === 'ollama:nomic-embed-text:latest' && nm.engine === 'neural' && nm.pending === 0 && nm.pieces.length === mind.pieces.length && em1.active === nm.src && em1.sources.ollama.state === 'ready' && em1.cache.vectors > 0, `significato: con l'Ollama finto la bolla passa a ${nm && nm.src} (${em1.cache.vectors} vettori in cache)`);
     ok(fo.log.filter(x => x.url === '/api/embed').every(x => x.body.input.length <= 16) && fs.readdirSync(path.join(tmp, 'embed-cache')).some(f => f.endsWith('.bin')), 'significato: lotti di al massimo 16 testi, cache su disco accanto alle opzioni');
+    const cl = JSON.parse((await get(port, '/api/embed', 'POST', JSON.stringify({ action: 'clear' }))).body);
+    ok(cl.cache.vectors === 0 && cl.cache.diskBytes === 0, 'opzioni del significato: «svuota la cache» toglie vettori in memoria e su disco');
     await fo.close();
     await get(port, '/api/settings', 'POST', JSON.stringify({ embedEngine: 'ollama', ollamaUrl: 'http://192.168.1.5:11434' }));
     const em2 = JSON.parse((await get(port, '/api/embed')).body);

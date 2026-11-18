@@ -327,6 +327,16 @@ class Embedder {
     this.setProvider(tfidf, this.settings.embedEngine === 'auto' ? null : { source: k, state: 'error', detail: p.detail });
     this.resolve().catch(() => {}); // in automatico la catena passa alla fonte dopo
   }
+  activeId() { return this.provider.id; }
+  // per le opzioni: guarda ogni fonte senza cambiare quella in uso (con check(), che non carica modelli, se c'è)
+  async probe() {
+    await Promise.all(CHAIN.map(async k => {
+      const p = this.sources[k];
+      if (!p || this.isSuspended(k)) return;
+      try { await withTimeout(p.check ? p.check() : p.ready(), this.timeoutMs, k); } catch (e) { p.state = 'not-found'; p.detail = e.message; }
+    }));
+    return this.status();
+  }
   // per le opzioni: lo stato di ogni fonte, quella in uso, la cache
   status() {
     const sources = { tfidf: { state: 'ready', model: '' } };

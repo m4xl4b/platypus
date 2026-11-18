@@ -126,8 +126,20 @@ function create(settings = {}, { timeoutMs = 5000 } = {}) {
     Object.assign(p, { state: 'ready', detail: '', hint: '' });
     return true;
   };
+  // per le opzioni: c'è, e con quale modello? Solo /api/tags, senza caricare il modello in memoria
+  p.check = async () => {
+    if (p.state === 'ready' && p.dim) return true;
+    if (!base) return fail('error', 'not a loopback address: ' + String(settings.ollamaUrl || ''), '');
+    let tags;
+    try { tags = await request(base, 'GET', '/api/tags', null, timeoutMs); } catch (e) { return fail('not-found', 'Ollama is not answering at ' + base + ' (' + e.message + ')', ''); }
+    const model = tags.status === 200 && tags.json ? pickModel(Array.isArray(tags.json.models) ? tags.json.models : [], settings.embedModel) : null;
+    const want = String(settings.embedModel || '').trim();
+    if (!model) return fail('not-found', tags.status !== 200 ? 'Ollama at ' + base + ': /api/tags ' + tags.status : want ? 'model not found: ' + want : 'no embedding model', tags.status === 200 ? 'ollama pull ' + (want || SUGGESTED) : '');
+    Object.assign(p, { model, id: 'ollama:' + model, state: 'ready', detail: '', hint: '' });
+    return true;
+  };
   p.embed = async (texts, kind) => {
-    if (p.state !== 'ready') throw new Error('ollama: not ready');
+    if (p.state !== 'ready' || !p.dim) throw new Error('ollama: not ready');
     const out = await embedRaw(texts, kind);
     if (out.some(v => v.length !== p.dim)) throw new Error('ollama: the model changed dimension');
     return out;

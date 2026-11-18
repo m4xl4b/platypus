@@ -61,7 +61,7 @@ function create(settings = {}, { modelsDir, transformers, timeoutMs = 5000, mode
   p.ready = async () => {
     if (!installed(transformers)) return fail('not-installed', 'the npm packages of optional/embed-onnx are not installed', 'npm run embed:onnx:install');
     if (!hasModel(modelsDir, model)) return fail('not-installed', 'model not downloaded: ' + model, 'npm run embed:onnx:install');
-    if (p.state === 'ready' && p.worker) return true;
+    if (p.state === 'ready' && p.worker && p.dim) return true;
     try {
       const [v] = await ask([prefix('query') + 'ping'], LOAD_MS);
       loaded = true;
@@ -69,8 +69,15 @@ function create(settings = {}, { modelsDir, transformers, timeoutMs = 5000, mode
       return true;
     } catch (e) { return fail('error', e.message); }
   };
+  // per le opzioni: installato e con il modello? Senza avviare il worker
+  p.check = async () => {
+    if (!installed(transformers)) return fail('not-installed', 'the npm packages of optional/embed-onnx are not installed', 'npm run embed:onnx:install');
+    if (!hasModel(modelsDir, model)) return fail('not-installed', 'model not downloaded: ' + model, 'npm run embed:onnx:install');
+    if (p.state !== 'ready') Object.assign(p, { state: 'ready', detail: '', hint: '' });
+    return true;
+  };
   p.embed = async (texts, kind) => {
-    if (p.state !== 'ready') throw new Error('onnx: not ready');
+    if (p.state !== 'ready' || !p.worker) throw new Error('onnx: not ready');
     return ask(texts.map(t => prefix(kind) + t), loaded ? timeoutMs : LOAD_MS);
   };
   p.stop = () => { if (p.worker) { const w = p.worker; p.worker = null; w.terminate().catch(() => {}); } };

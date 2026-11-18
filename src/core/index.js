@@ -376,7 +376,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     try {
       const space = semantic.pickSpace(minds.map(m => m.mind), s.corpus, [embedder.space(0)]);
       const v = semantic.snapshotMinds(minds, s.corpus, (q.get('replay') ? 'r:' : '') + s.id + ':' + aid, 0, space);
-      return { ok: true, sid: s.id, aid, now: st.now(), names: Object.fromEntries(minds.map(m => [m.id, m.name])), ctxNow: Object.fromEntries(minds.map(m => [m.id, m.ctx])), ...v };
+      const active = embedder.activeId(); // la fonte scelta: finché non ha tutti i vettori si mostra il TF-IDF e si "affina"
+      return { ok: true, sid: s.id, aid, now: st.now(), active, refining: active !== 'tfidf' && (v.src !== active || v.pending > 0), fallback: embedder.fallback, names: Object.fromEntries(minds.map(m => [m.id, m.name])), ctxNow: Object.fromEntries(minds.map(m => [m.id, m.ctx])), ...v };
     } catch (e) { return { ok: false, error: e.message }; }
   }
 
@@ -505,6 +506,11 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         const on = typeof j.on === 'boolean' ? j.on : !demo.on;
         on ? demo.start() : demo.stop();
         return json(res, 200, { demo: demo.on });
+      }
+      case '/api/embed': { // il motore del significato: guarda le fonti (probe) o svuota la cache (clear)
+        if (j.action === 'clear') { await embedder.clearCache(); return json(res, 200, embedder.status()); }
+        if (j.action === 'probe') return json(res, 200, await embedder.probe());
+        return json(res, 400, { ok: false });
       }
       case '/api/settings': {
         const before = { city: state.settings.weatherCity, dirs: state.settings.coworkDirs, lang: state.settings.lang };
