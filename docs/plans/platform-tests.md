@@ -90,7 +90,9 @@ Follow the rules for the Windows PC above: record Max's entries first, restore t
 - **Mini mode:** with two screens, if there are any.
 - **At the end** remove everything you created, and check that Max's own entries are as they were.
 
-### W3 · Real windows and sessions  [ ] [win]
+### W3 · Real windows and sessions  [!] [win]
+
+Blocked on the real session: the Claude Code CLI on this PC is not logged in (`Invalid API key · Please run /login`), see the Journal (Windows). Done with simulated sessions: focus of cmd, PowerShell and Windows Terminal windows.
 
 At least one real Claude Code session is needed: ask Max to open one, or open it yourself in a test folder, if he agrees (and see the rule: never run `claude` without Max saying so at that moment).
 
@@ -101,7 +103,9 @@ At least one real Claude Code session is needed: ask Max to open one, or open it
   - sessions launched inside WSL show up;
   - with the normal network the hooks inside WSL do not arrive; with the mirrored network they do, if Max wants to try it.
 
-### W4 · Permissions from the balloon, and feedback hooks  [ ] [win]
+### W4 · Permissions from the balloon, and feedback hooks  [!] [win]
+
+Blocked on the real session (CLI not logged in). Done with a simulated hook client that runs the exact command from the hooks installed by Platypus: balloon YES / ALWAYS / NO, two at once, wait longer than `approveWaitSec`, Platypus closed. Not done: what Claude Code really does with the answers, and the 2.11 feedback check (`scripts/feedback-check.js`).
 
 - **With Max's permission:**
   1. install the hooks;
@@ -283,5 +287,24 @@ How it was run: the window was started from the test clone with the temporary ho
   - `focusSession` with `CI=true` on the macOS runner really activated Terminal (`{"ok":true,"how":"app","app":"Terminal"}`): harmless on a runner, which is why it is not run by default locally.
   - Mini mode on macOS: `380x150`, always on top, `check-mini-log.js` ok. Screenshots looked at: `snapshot-mini-macOS.png` is the strip with the two alerts (F1 stuck test runner, F2 cost over budget); `snapshot-map-macOS.png` is the "MAP OF REALITY" panel (territory treemap, trajectory cube, 7-dimension radar), same as on Windows.
   - Only annotation: GitHub says `ubuntu-latest` will move to Ubuntu 26 on 2026-10-19 (already past; no action). I did not touch the YAML pins of the actions.
+
+### 2026-11-18 · W3 and W4 · Real session (Max allowed a real session and the hooks) · partly done, blocked on the CLI login
+
+- **What stopped the real session:** `claude -p ...` (Claude Code 2.1.11, `%USERPROFILE%\.local\bin\claude.exe`) answers `Invalid API key · Please run /login`, also with every `CLAUDE_*` / `ANTHROPIC_*` variable of the desktop app removed from its environment: the CLI's own login is missing or expired (Max uses the desktop app's built-in Claude Code, whose authentication is not available to a child process). Three attempts, then I stopped, as the plan says. No model call was made, so nothing was spent. **Max has to run `claude` once in a terminal and `/login`**, or tell me to use another way (an API key is not something I may enter).
+- **Precautions taken:**
+  - hooks were installed only in the throwaway project `C:\Platypus Tests\w4-project\.claude\settings.json` (with `hooks.install({ port: 47850, base })`, the repository's own installer) and the CLI was started with `--setting-sources project`, because Max's real `~\.claude\settings.json` **already contains 17 Platypus hook lines** (port 47800): without this the test session would have shown up in Max's office. His `settings.json` hash was the same before and after (`291FEEC0...`); it was not read beyond counting the hook lines, and not modified;
+  - the test Platypus ran with the temporary home, so no real session was read; `--no-session-persistence`, so no transcript went into `~\.claude\projects` (checked: no `Platypus-Tests` folder there).
+- **What the real CLI did show:** even without authentication, the real Claude Code 2.1.11 on Windows fired the project's hooks and they reached Platypus through `curl.exe`: `SessionStart`, `UserPromptSubmit`, `Stop`, `SessionEnd` (seen in the test Platypus's debug log). So the hook command (`curl.exe -s -m 2 -X POST ... --data-binary "@-"`) works from Claude Code on Windows.
+- **`curl.exe`:** in PowerShell `curl` is the alias of `Invoke-WebRequest`, but the hooks call `curl.exe`, which resolves to `C:\Windows\system32\curl.exe` (8.22). Inside Git Bash `which curl.exe` gives `/ucrt64/bin/curl.exe` (MSYS2 8.23), which prints "WARNING: this libcurl is Debug-enabled" on stderr; harmless here (exit code 0), noted in case a user sees it.
+- **W4, simulated client** (a script spawns `bash -c "<the PermissionRequest command from settings.json>"` with a `PermissionRequest` JSON on stdin, which is what Claude Code does on Windows, and answers from the real balloon: the Platypus window is moved to the session's floor and the real `SÌ/YES`, `SEMPRE/ALWAYS`, `NO` button is clicked in the page):
+  - YES → `{"behavior":"allow"}`, 1.7 s; ALWAYS → `allow` plus `updatedPermissions` (the suggestion Claude Code sent), 1.7 s; NO → `deny` with the message "The user denied this request from the office (Platypus).", 1.7 s; the speech bubble then reads "Permission denied from th…" (screenshot looked at);
+  - two permissions at once (two sessions): both balloons pending; answering B first (NO) and A second (YES) gave B `deny` and A `allow`: answers do not get crossed;
+  - nobody answers, `approveWaitSec` set to 5: the hook gets an empty 204 after 5.1 s, so Claude Code asks in the terminal as usual (the setting was put back to 120);
+  - Platypus closed **while** a hook waits: `curl` ends with exit code 56 after 0.9 s; Platypus already closed: exit code 7 after 84 ms. Both are non-zero but not 2, so Claude Code treats them as a non-blocking hook error and goes on with its own question (documented behaviour; not seen with the real model, which was not available).
+  - **Not verified:** that the real Claude Code takes the `updatedPermissions` of ALWAYS and stops asking; that it prints the deny message; the 600 s `curl -m` limit with a real wait.
+- **Feedback hooks / `2.11-real-check.md`:** not run. It needs the same real session (the model has to repeat the `PLATY-*` markers). `node scripts/feedback-check.js` uses a fixed folder `%TEMP%\platypus-feedback-check` that already exists on this PC (it deletes it at start), and port 47811, which is in use by another process: when it runs, use `TEMP`/`TMP` on an empty folder and `--port 47850`.
+- **W3, simulated sessions** (fake `sessions\<pid>.json` in the temporary home plus a `SessionStart` hook, a real terminal window, then `POST /api/focus` from another window): `cmd`, `powershell` and `wt.exe` (Windows Terminal 1.25 is installed, it is Windows 11's default terminal, but `wt.exe` is not in the PATH of this shell) each ended with the right window in front, each answer was `{"ok":true,"how":"app","app":"WindowsTerminal","approx":true}`. `approx` means the window was chosen by process name and title, not by the process tree: in the test the shell's parent was my script, not Windows Terminal, so this is a limit of the test; with a real `claude` started in a tab the tree is different. **Doubt for Max:** with several Windows Terminal windows open the "approximate" pick could take the wrong one; to be confirmed with real sessions.
+- **Not done for W3:** VS Code (not in the default path), Resume, Open folder, agents/subagents with model, age and effort (they need a real transcript), WSL (a `rocky` distribution exists but has no Node and no `claude`; I did not install anything). The terminals I opened were closed, the fake session files removed, the test Platypus stopped (no process under `C:\Platypus Tests`, port 47850 free).
+- **Cost to keep in mind:** none of this spent tokens.
 
 ## Journal (Linux)
