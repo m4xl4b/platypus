@@ -5,7 +5,7 @@
 //
 //   node scripts/embed-eval.js                         TF-IDF
 //   node scripts/embed-eval.js --source ollama [--url http://127.0.0.1:11434] [--model bge-m3]
-//   node scripts/embed-eval.js --source onnx           (dopo npm run embed:onnx:install)
+//   node scripts/embed-eval.js --source onnx [--model onnx-community/Qwen3-Embedding-0.6B-ONNX]   (dopo npm run embed:onnx:install)
 //   node scripts/embed-eval.js --source fake           il provider finto della demo (un dizionario di sinonimi, non un modello)
 //   node scripts/embed-eval.js --json                  i numeri in JSON
 //
@@ -159,7 +159,7 @@ if (require.main === module) {
     if (source === 'tfidf') r = evaluate('tfidf', x => sem.tfidfSpace(x.corpus));
     else {
       const settings = { ollamaUrl: arg('--url') || undefined, embedModel: arg('--model') || '' };
-      const p = source === 'fake' ? require(path.join(ROOT, 'src', 'core', 'embed', 'fake')).create() : source === 'onnx' ? require(path.join(ROOT, 'src', 'core', 'embed', 'onnx')).create(settings, { modelsDir: path.join(require(path.join(ROOT, 'src', 'paths')).dataDir(), 'models'), timeoutMs: 60000 })
+      const p = source === 'fake' ? require(path.join(ROOT, 'src', 'core', 'embed', 'fake')).create() : source === 'onnx' ? require(path.join(ROOT, 'src', 'core', 'embed', 'onnx')).create(settings, { modelsDir: path.join(require(path.join(ROOT, 'src', 'paths')).dataDir(), 'models'), timeoutMs: 60000, ...(arg('--model') ? { model: arg('--model') } : {}) })
         : require(path.join(ROOT, 'src', 'core', 'embed', source)).create(settings, { timeoutMs: 60000 });
       if (!(await p.ready())) { console.error(`${source}: ${p.state} ${p.detail || ''} ${p.hint ? '→ ' + p.hint : ''}`); process.exit(1); }
       const spaceOf = await neuralSpaces(p);

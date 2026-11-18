@@ -30,7 +30,7 @@ function ask(q) {
   say('Significato più preciso (facoltativo): il modello ' + onnx.MODEL + ' gira sul tuo computer, in un thread a parte.');
   say('More precise meaning (optional): the model ' + onnx.MODEL + ' runs on your computer, in a separate thread.');
   say('Scarica · downloads:');
-  say('  - i pacchetti npm di ' + path.relative(ROOT, DIR) + ' (@huggingface/transformers e onnxruntime-node, circa 200 MB · about 200 MB)');
+  say('  - i pacchetti npm di ' + path.relative(ROOT, DIR) + ' (@huggingface/transformers e onnxruntime-node, circa 380 MB · about 380 MB)');
   say('  - il modello (' + onnx.DTYPE + ', circa ' + onnx.SIZE_MB + ' MB · about ' + onnx.SIZE_MB + ' MB) in ' + modelsDir);
   say('Da registry.npmjs.org e huggingface.co. Non manda niente delle tue sessioni · Nothing from your sessions is sent.');
   const a = await ask('Procedo? · Go ahead? [s/y/N] ');
