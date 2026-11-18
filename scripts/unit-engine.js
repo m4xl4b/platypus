@@ -491,6 +491,55 @@ function run(ok) {
   gitBashPathTests(ok);
   shellResetTests(ok);
   bashLabelTests(ok);
+  feedbackTests(ok);
+}
+
+// feedback agli agenti (2.11, A1): dall'evento di un hook alla risposta per Claude Code, senza mai lanciare
+function feedbackTests(ok) {
+  const fb = require(path.join(ROOT, 'src', 'core', 'feedback'));
+  const inp = (ev, extra = {}) => ({ hook_event_name: ev, session_id: 'sess-fb-0001', cwd: '/p', ...extra });
+  const one = (ev, rule) => ({ [ev]: [rule] });
+  const lesson = () => ({ feature: 'elder', text: 'npm test is flaky here (12 and 18 October): rerun it once before investigating.', lessonId: 'L1' });
+  // con qualcosa da dire: la forma giusta per ogni evento
+  let r = fb.decide(inp('PostToolUse', { tool_name: 'Bash' }), {}, one('PostToolUse', lesson));
+  let a = r && fb.answer('PostToolUse', r.message);
+  ok(a && a.hookSpecificOutput.hookEventName === 'PostToolUse' && /^Platypus: npm test is flaky/.test(a.hookSpecificOutput.additionalContext) && r.message.lessonId === 'L1', 'feedback: dopo uno strumento, contesto in più firmato «Platypus»');
+  ok(!('decision' in a) && !('permissionDecision' in a.hookSpecificOutput) && !('updatedInput' in a.hookSpecificOutput), 'feedback: mai una decisione sui permessi né un input riscritto');
+  r = fb.decide(inp('SessionStart', { source: 'startup' }), {}, one('SessionStart', lesson));
+  ok(r && fb.answer('SessionStart', r.message).hookSpecificOutput.hookEventName === 'SessionStart', 'feedback: a inizio sessione');
+  r = fb.decide(inp('PostToolUseFailure', { tool_name: 'Bash' }), {}, one('PostToolUseFailure', lesson));
+  ok(r && fb.answer('PostToolUseFailure', r.message).hookSpecificOutput.additionalContext, 'feedback: dopo uno strumento fallito');
+  // a fine turno si può solo chiedere di continuare, e mai due volte di fila
+  const claim = () => ({ feature: 'claims', text: 'you said the tests pass, but none ran in this turn.', block: true });
+  r = fb.decide(inp('Stop'), {}, one('Stop', claim));
+  a = r && fb.answer('Stop', r.message);
+  ok(a && a.decision === 'block' && /^Platypus: you said/.test(a.reason), 'feedback: a fine turno chiede di continuare con il motivo');
+  ok(fb.decide(inp('Stop', { stop_hook_active: true }), {}, one('Stop', claim)) === null, 'feedback: mai un secondo blocco mentre Claude Code sta già continuando');
+  ok(fb.decide(inp('Stop'), {}, one('Stop', lesson)) === null, 'feedback: a fine turno un messaggio senza «block» non si manda');
+  ok(fb.decide(inp('PostToolUse'), {}, one('PostToolUse', claim)).message.block === false, 'feedback: «block» fuori da Stop non conta');
+  // niente da dire
+  ok(fb.decide(inp('PostToolUse'), {}) === null && fb.decide(inp('PostToolUse'), {}, one('PostToolUse', () => null)) === null, 'feedback: senza regole o senza messaggio, niente');
+  ok(fb.answer('PostToolUse', null) === null && fb.answer('PreToolUse', { text: 'x' }) === null, 'feedback: nessuna risposta per gli eventi che non usiamo');
+  // input rotti: mai un errore
+  const bad = [null, undefined, 'x', 42, [], {}, { hook_event_name: 'PostToolUse' }, { hook_event_name: 7, session_id: 's' }, { hook_event_name: 'Boh', session_id: 's' }, { hook_event_name: 'PostToolUse', session_id: '' }];
+  ok(bad.every(x => fb.decide(x, {}, one('PostToolUse', lesson)) === null), 'feedback: input malformati → niente, senza errori');
+  // una regola che lancia non ferma le altre
+  r = fb.decide(inp('PostToolUse'), {}, { PostToolUse: [() => { throw new Error('rotta'); }, lesson] });
+  ok(r && r.message.feature === 'elder', 'feedback: una regola rotta non ferma la successiva');
+  ok(fb.decide(inp('PostToolUse'), {}, one('PostToolUse', () => { throw new Error('rotta'); })) === null, 'feedback: solo regole rotte → niente');
+  // tempo scaduto: le regole dopo non partono
+  let clock = 1000, ran = 0;
+  const slow = () => { clock += 500; return null; }, late = () => { ran++; return lesson(); };
+  ok(fb.decide(inp('PostToolUse'), { now: () => clock, deadline: 1300 }, { PostToolUse: [slow, late] }) === null && ran === 0, 'feedback: oltre il tempo massimo non si risponde');
+  // testo: una riga, firmata una volta sola, entro il limite
+  ok(fb.say('Platypus: già firmato') === 'Platypus: già firmato' && fb.say('  due\n righe ') === 'Platypus: due righe' && fb.say('') === '', 'feedback: firma e spazi');
+  const long = fb.say('x'.repeat(2000));
+  ok(long.length === fb.MAX_TEXT && long.endsWith('…'), `feedback: testo lungo tagliato a ${fb.MAX_TEXT} caratteri (${long.length})`);
+  ok(Object.values(fb.RULES).every(l => Array.isArray(l) && l.length === 0), 'feedback: in A1 nessuna regola è ancora accesa');
+  // la prova su una sessione vera: un marcatore per evento, e un solo blocco a fine turno
+  const ck = ev => fb.checkAnswer(inp(ev));
+  ok(/PLATY-PRE/.test(ck('PreToolUse').hookSpecificOutput.additionalContext) && /PLATY-FAIL/.test(ck('PostToolUseFailure').hookSpecificOutput.additionalContext) && ck('Notification') === null && fb.checkAnswer(null) === null, 'feedback, prova reale: un marcatore per evento');
+  ok(ck('Stop').decision === 'block' && fb.checkAnswer(inp('Stop', { stop_hook_active: true })) === null, 'feedback, prova reale: a fine turno un solo blocco');
 }
 
 // il fumetto di un comando senza descrizione mostra il comando vero, non il "cd" davanti

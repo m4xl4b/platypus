@@ -182,6 +182,28 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(hook.status === 204, 'hook ricevuto → ' + hook.status);
   const perm = await get(port, '/platypus-hook/permission', 'POST', JSON.stringify({ session_id: 'smoke-1', hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } }));
   ok(perm.status === 204, 'permesso senza finestre aperte: decide il terminale → ' + perm.status);
+  // feedback agli agenti (2.11): l'hook sincrono risponde sempre, e quando non ha niente da dire Claude Code non riceve nulla
+  const fbMod = require(path.join(__dirname, '..', 'src', 'core', 'feedback'));
+  const fbIn = (ev, extra = {}) => JSON.stringify({ session_id: 'fb-none', hook_event_name: ev, cwd: tmp, tool_name: 'Bash', tool_input: { command: 'npm test' }, ...extra });
+  const fb0 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUse'));
+  ok(fb0.status === 204 && fb0.body === '', 'feedback senza regole: 204 e corpo vuoto → ' + fb0.status);
+  ok(!JSON.parse((await get(port, '/api/state')).body).sessions.some(s => s.id === 'fb-none'),'feedback: l\'hook non crea sessioni né tocca lo stato');
+  const fbRule = () => ({ feature: 'elder', text: 'npm test is flaky here: rerun it once before investigating.' });
+  fbMod.RULES.PostToolUseFailure.push(fbRule);
+  const fb1 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUseFailure', { error: 'Exit code 1' }));
+  let fb1j = {}; try { fb1j = JSON.parse(fb1.body); } catch {}
+  ok(fb1.status === 200 && fb1j.hookSpecificOutput && fb1j.hookSpecificOutput.hookEventName === 'PostToolUseFailure' && /^Platypus: npm test is flaky/.test(fb1j.hookSpecificOutput.additionalContext), 'feedback con una regola: il contesto arriva nella forma di Claude Code → ' + fb1.status);
+  fbMod.RULES.PostToolUseFailure.length = 0;
+  fbMod.RULES.PostToolUse.push(() => { throw new Error('regola rotta'); });
+  const fb2 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUse'));
+  fbMod.RULES.PostToolUse.length = 0;
+  ok(fb2.status === 204, 'feedback, una regola che lancia: 204, mai un errore → ' + fb2.status);
+  fbMod.RULES.PostToolUse.push(() => { const t = Date.now(); while (Date.now() - t < 350); return fbRule(); }); // più lenta del tempo massimo
+  const fb3 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUse'));
+  fbMod.RULES.PostToolUse.length = 0;
+  ok(fb3.status === 204 && core.feedbackStats.late === 1, `feedback oltre i 300 ms: la risposta in ritardo non si manda → ${fb3.status} (in ritardo: ${core.feedbackStats.late})`);
+  const fb4 = await get(port, '/platypus-hook/feedback', 'POST', 'non è json {');
+  ok(fb4.status === 204, 'feedback con un corpo che non è JSON: 204 → ' + fb4.status);
   const bad = await new Promise(resolve => {
     const req = http.request({ host: '127.0.0.1', port, path: '/api/state', headers: { Host: 'evil.example' } }, res => resolve(res.statusCode));
     req.on('error', () => resolve(0)); req.end();

@@ -3,6 +3,7 @@
 //   GET  /                   la pagina dell'ufficio
 //   GET  /events             stream SSE dello stato (evento "replay" per il seminterrato)
 //   POST /platypus-hook      eventi dagli hook di Claude Code (anche il vecchio /agent-office-hook)
+//   POST /platypus-hook/feedback  hook sincrono: quello che Platypus dice all'agente (o 204), sempre entro un tempo massimo
 //   POST /api/demo           {on}
 //   POST /api/cowork         {on}
 //   GET/POST /api/settings   soglie degli avvisi, budget, prezzo di stima
@@ -43,6 +44,7 @@ const { listArchive, findSessionFile, Replay } = require('./archive');
 const osint = require('./osint');
 const { Stats } = require('./stats');
 const hooks = require('./hooks');
+const feedback = require('./feedback');
 
 const DEFAULT_PORT = Number(process.env.PLATYPUS_PORT) || 47800;
 const RENDERER = path.join(__dirname, '..', '..', 'renderer');
@@ -195,6 +197,42 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     return true;
   }
 
+  // ---- feedback agli agenti: risposta sincrona agli hook. Mai un errore, mai un'attesa: se non c'è niente di pronto, 204
+  // e Claude Code prosegue come se Platypus non ci fosse.
+  const FEEDBACK_MS = 300;
+  const feedbackStats = { calls: 0, said: 0, late: 0, errors: 0 };
+  // PLATYPUS_FEEDBACK_CHECK=1: solo per la prova su una sessione vera (docs/plans/2.11-real-check.md)
+  const FEEDBACK_CHECK = process.env.PLATYPUS_FEEDBACK_CHECK === '1';
+  function feedbackHook(j, res, req) {
+    const t0 = Date.now();
+    let out = null;
+    feedbackStats.calls++;
+    if (FEEDBACK_CHECK) {
+      let a = null;
+      try { a = feedback.checkAnswer(j); } catch {}
+      console.log('[feedback-check]', (j && j.hook_event_name) || '?', (j && j.tool_name) || '-', 'agent=' + ((j && j.agent_id) || 'main'), 'origin=' + ((req && req.headers.origin) || '-'), a ? '→ ' + (a.decision || 'context') : '→ 204');
+      try { if (a) json(res, 200, a); else { res.writeHead(204); res.end(); } } catch {}
+      return;
+    }
+    try {
+      const ev = j && j.hook_event_name;
+      // a fine turno le ultime righe del transcript possono non essere ancora lette: servono per giudicare il turno
+      if (ev === 'Stop' || ev === 'SubagentStop') { try { watcher.pollTracked(); } catch {} }
+      const s = (j && state.sessions.get(j.session_id)) || null;
+      const r = feedback.decide(j, {
+        now: Date.now, deadline: t0 + FEEDBACK_MS, session: s, cwd: (j && j.cwd) || (s && s.cwd) || '', settings: state.settings,
+        lessons: cwd => { try { return bottega.view(cwd).lessons; } catch { return []; } },
+      });
+      if (r) out = feedback.answer(ev, r.message);
+    } catch { feedbackStats.errors++; out = null; }
+    // calcolata tardi: non la mandiamo (la regola del tempo massimo vale anche per noi)
+    if (out && Date.now() - t0 > FEEDBACK_MS) { feedbackStats.late++; out = null; }
+    try {
+      if (out) { feedbackStats.said++; json(res, 200, out); }
+      else { res.writeHead(204); res.end(); }
+    } catch {}
+  }
+
   let hooksCache = { t: 0, v: false };
   function hooksInstalled() {
     if (Date.now() - hooksCache.t > 5000) hooksCache = { t: Date.now(), v: hooks.status({ base }) };
@@ -311,6 +349,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
           state.applyHook(j);
         } catch {}
         res.writeHead(204); return res.end(); // nessun output: Claude Code non deve ricevere nulla
+      case hooks.MARK + '/feedback':
+        return feedbackHook(j, res, req);
       case hooks.MARK + '/permission':
       case hooks.LEGACY + '/permission': {
         // hook sincrono: se l'ufficio è aperto e lo vuoi, tieni la richiesta finché non rispondi
@@ -536,7 +576,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     server.close();
   }
 
-  return { state, stats, bottega, learnLive, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
+  return { state, stats, bottega, learnLive, feedbackStats, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
     install: () => hooks.install({ port, base }),
     uninstall: () => hooks.uninstall({ base }),
     status: () => hooks.status({ base }),
