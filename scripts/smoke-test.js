@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { spawnSync } = require('child_process');
+const { spawnSync, spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 let failed = 0;
@@ -543,6 +543,24 @@ function shellEvents(port, headers = {}) {
   ok(ru.removed && !hooks.feedbackStatus({ base }) && hooks.status({ base }) && others(cur) === before && cur.hooks.PostToolUse.some(g => g.hooks.some(h => h.command === 'echo mio')), 'tolti gli hook di feedback: il resto è com\'era');
   ok(hooks.uninstallFeedback({ base }).removed === false, 'toglierli due volte: niente da fare');
   hooks.uninstall({ base });
+
+  // il guscio Tauri avvia il motore come processo figlio e ne tiene aperto lo stdin: quando il guscio si chiude
+  // (anche in modo brusco) il motore deve salvare e uscire da solo. Home e dati finti: mai le sessioni vere
+  console.log('motore avviato da un guscio (--parent-stdin)');
+  {
+    const home = path.join(tmp, 'home-guscio');
+    fs.mkdirSync(path.join(home, '.claude', 'projects'), { recursive: true });
+    const sp = 47990 + Math.floor(Math.random() * 9);
+    const env = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: path.join(home, 'AppData', 'Roaming'), LOCALAPPDATA: path.join(home, 'AppData', 'Local'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), PLATYPUS_DATA_DIR: path.join(home, '.platypus'), PLATYPUS_PORT: String(sp) };
+    const child = spawn(process.execPath, [path.join(ROOT, 'src', 'standalone.js'), '--no-open', '--parent-stdin'], { env, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+    const exited = new Promise(r => child.on('exit', code => r(code)));
+    let up = false;
+    for (let k = 0; k < 75 && !up; k++) { up = (await get(sp, '/api/state')).status === 200; if (!up) await sleep(200); }
+    child.stdin.end();
+    const code = await Promise.race([exited, sleep(5000).then(() => 'ancora acceso')]);
+    if (code !== 0) try { child.kill(); } catch {}
+    ok(up && code === 0, `il motore risponde, e quando il guscio chiude lo stdin esce da solo → ${up ? 'acceso' : 'non risponde'}, uscita ${code}`);
+  }
 
   console.log('finestra della sessione (Windows)');
   const osint = require(path.join(ROOT, 'src', 'core', 'osint'));

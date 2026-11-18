@@ -68,7 +68,7 @@ Today it is Electron that decides when to send a notification, by listening to t
 - The engine exposes `GET /api/shell/events`: an SSE stream of notifications and counters only, protected by the same Host and Origin checks. It is a separate small stream: the engine already has the general SSE stream `/events` and the 2.11 feedback route `/platypus-hook/feedback`, and neither of them changes or is reused for this.
 - **Electron's behaviour must not change:** add a test in `scripts/smoke-test.js` that makes a permission appear in the demo and receives the notification from the stream. This task is pure Node: it needs no Rust.
 
-## T3 · Skeleton of the shell  [ ]
+## T3 · Skeleton of the shell  [x]
 
 - Create `shells/tauri/`:
   - `package.json` with `@tauri-apps/cli` 2.x and the `dev` and `build` scripts;
@@ -260,3 +260,35 @@ Poi una volta `npm run tauri:build` (la prima compilazione richiede alcuni minut
 ```
 
 The commands `npm run tauri:build` and `--shell tauri` come with T3 and T6: check the draft against them before pasting it.
+
+### 2026-11-18 · Rust installed (Max's permission)
+
+- Max allowed installing Rust and the Microsoft C++ Build Tools ("Sì, installa", given in the Tauri session's chat).
+- Checked first: WebView2 runtime 157.0.4341.60 already present; **Visual Studio Build Tools 2022 17.14 already installed**, with the C++ workload (MSVC 14.44.35207) and the Windows 10/11 SDK 10.0.26100.0. So nothing was installed for them.
+- Installed: `rustup-init.exe` (12.8 MB, from `https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe`, SHA-256 checked against the published `.sha256`), run as `rustup-init.exe -y --default-toolchain stable --profile minimal --default-host x86_64-pc-windows-msvc`. Result: rustup 1.29.3, rustc 1.100.0, cargo 1.100.0, toolchain `stable-x86_64-pc-windows-msvc`. Files: `%USERPROFILE%\.rustup` (about 600 MB) and `%USERPROFILE%\.cargo` (bin and the crate cache); `%USERPROFILE%\.cargo\bin` added to the user `PATH`.
+- To remove it: `rustup self uninstall` (removes both folders and the `PATH` entry). The build output of the shell is in `shells/tauri/src-tauri/target` (about 2 GB after a debug build), deleted with the worktree or by `cargo clean` there.
+- Note for every check: the engine runs with a temporary home, but `cargo` needs the real one, so builds get `CARGO_HOME` and `RUSTUP_HOME` pointing to the real folders.
+
+### 2026-11-18 · T3 · Skeleton of the shell
+
+- Done:
+  - `shells/tauri/`: `package.json` with only `@tauri-apps/cli` 2.12.5 and the scripts `dev` (`tauri dev -- -- --demo`) and `build` (`tauri build --no-bundle`: only the program, no installer), its own `.gitignore`, a placeholder `frontend/index.html` (Tauri wants a frontend folder; the window never shows it).
+  - `src-tauri/`: `Cargo.toml` (tauri 2.12.7, `tauri-plugin-opener`, `tauri-plugin-dialog` for the error and confirmation windows, serde, `sys-locale`; release profile with LTO, `opt-level = "s"`, strip), `Cargo.lock`, `build.rs` (the app manifest with the shell's commands), `tauri.conf.json` (identifier `com.platypus.desktop`, the same as Electron's AppUserModelID; no windows in the config, `withGlobalTauri: false`), icons made with `tauri icon` from `build/icon.png` (only the desktop ones kept).
+  - `src/engine.rs`: finds `node` (`PLATYPUS_NODE` or `PATH`) and the repository (`PLATYPUS_ROOT`, or the first parent of the program with `src/standalone.js`, or the source tree), chooses the port (`PLATYPUS_PORT`, else 47800), probes it with `GET /api/state` (Free / Platypus / Other), and starts `node src/standalone.js --no-open --parent-stdin [--demo]` with no console window, waiting 15 s at most (it fails early if the engine exits).
+  - `src/office.rs`: the window and the whole `officeApp` contract (`minimize`, `close`, `toggleMaximize`, `isMaximized`, `onMaximized`, `togglePin`, `getPin`, `setCounts`, `setWidget`, `onGoto`), the mini mode, the navigation rules (the same as `src/urls.js`), and a snapshot mode for checks (`PLATYPUS_SNAPSHOT`, `PLATYPUS_SNAPSHOT_JS`, `PLATYPUS_SNAPSHOT_DELAY`, like Electron's; it prints the window state instead of an image).
+  - `src/standalone.js`: new `--parent-stdin`. The engine stops cleanly (saves, closes pending permissions) when the shell closes its stdin, also if the shell crashes, so no engine is left running alone. On exit the shell closes the stdin, waits 3 s, then kills the process.
+- Decisions:
+  - **`close` quits** the app (and the engine, if this shell started it), as in Electron. The tray (T4) keeps "Show the office" but the window is not hidden in the tray: the two shells behave the same, which is what the measurements compare.
+  - The T1 security design is implemented as decided, with the **capability built at start-up with the exact origin** (`CapabilityBuilder` with `local(false)`, `remote("http://127.0.0.1:<port>/*")`, window `main`, one `allow-<command>` each). Tauri's own source (`webview/mod.rs`) confirms that a remote origin always goes through the ACL, so no static capability file exists. A debug-only `report` command is granted only when `PLATYPUS_SNAPSHOT_JS` is set.
+  - The window is created hidden and shown when the page has loaded (no white flash), like Electron's `ready-to-show`.
+  - With `PLATYPUS_DATA_DIR` the shell's preferences go in `<dir>/tauri/config.json` and the WebView2 data in `<dir>/tauri/webview`; otherwise in the app's config folder.
+  - The few messages written before the engine runs (node missing, port taken, engine not starting) are in Italian or English in Rust, chosen like `resolveLang` (the `lang` of the engine's settings, else the system locale): the engine cannot translate them because it is not running yet.
+- Checked (temporary home, port 47830, `PLATYPUS_DATA_DIR`, the shell started and stopped by its PID):
+  - first debug build: 54 s on this PC (crates already downloaded).
+  - `npm run dev` in `shells/tauri`: builds, starts `platypus.exe --demo`, the engine starts with the demo (4 floors, 42 agents counted through `setCounts`), the window becomes visible; on exit the engine stops and port 47830 is free.
+  - title bar from the page (snapshot JS clicking `#btn-max` and calling `officeApp`): full screen on and off, with `onMaximized` delivering `[true, false]`; maximized window 2560×1540 on a 2560×1600 screen (the taskbar stays visible); pin toggles and comes back; mini mode is 380×150 logical (475×187 at 125 %) at the bottom right of the work area, always on top. Screenshots looked at: the office maximized, and the mini strip with its three waiting items.
+  - security from the page: `window.__TAURI__` is undefined; `plugin:opener|open_url`, `plugin:event|listen`, `plugin:window|close` and `plugin:dialog|message` are all denied; a navigation to another origin is blocked (the page stays on `http://127.0.0.1:47830/`).
+  - attaching: with an engine already on 47830 the shell attaches (`attached: true`) and leaves it running on exit (I then stopped my engine by its PID).
+  - `PLATYPUS_NODE` pointing to a missing file: a clear error window ("Node.js (node) was not found in the PATH…", screenshot looked at) and exit code 1.
+  - `npm test`: "Tutto a posto.", with a new check that `--parent-stdin` makes the engine exit by itself (the child gets its own fake home); `npm run i18n:check`: 0 missing.
+- Not checked yet: the Linux and macOS builds (T8), the remembered position (T5).

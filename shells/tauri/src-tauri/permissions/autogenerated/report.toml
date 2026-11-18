@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-report"
+description = "Enables the report command without any pre-configured scope."
+commands.allow = ["report"]
+
+[[permission]]
+identifier = "deny-report"
+description = "Denies the report command without any pre-configured scope."
+commands.deny = ["report"]

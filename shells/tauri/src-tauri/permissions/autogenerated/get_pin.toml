@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-pin"
+description = "Enables the get_pin command without any pre-configured scope."
+commands.allow = ["get_pin"]
+
+[[permission]]
+identifier = "deny-get-pin"
+description = "Denies the get_pin command without any pre-configured scope."
+commands.deny = ["get_pin"]
