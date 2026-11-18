@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { DIM } = require('../semantic');
+const rule = require('../drift-rule');
 const { loopbackUrl, DEFAULT_URL } = require('./ollama');
 
 const ENGINES = ['auto', 'ollama', 'onnx', 'tfidf', 'fake']; // 'fake': nascosto, solo per la demo (fake.js)
@@ -155,6 +156,14 @@ async function resolveChain(engine, sources, { skip = () => false, timeoutMs = T
     const p = sources[k];
     if (!p) continue;
     if (skip(k)) { reason = reason || { source: k, state: 'error', detail: 'suspended' }; continue; }
+    // in automatico solo le fonti calibrate (con la loro riga in drift-rule.js): una fonte non calibrata direbbe
+    // "non misurabile" per la deriva, peggio del TF-IDF. Si guarda con check(), che non carica il modello.
+    if (wanted === 'auto' && p.check) {
+      let seen = false;
+      try { seen = await withTimeout(p.check(), timeoutMs, k); } catch (e) { p.state = 'not-found'; p.detail = e.message; }
+      if (seen && !rule.thresholdsFor(p.id).calibrated) { p.uncalibrated = true; reason = reason || { source: k, state: 'uncalibrated', detail: p.id }; continue; }
+      if (!seen) { reason = reason || { source: k, state: p.state || 'not-found', detail: p.detail || '' }; continue; }
+    }
     let okp = false;
     // ready() può dover caricare il modello: il provider dice quanto può durare (readyTimeoutMs)
     try { okp = await withTimeout(p.ready(), Math.max(timeoutMs, p.readyTimeoutMs || 0), k); } catch (e) { p.state = 'error'; p.detail = e.message; }
@@ -350,7 +359,7 @@ class Embedder {
     const sources = { tfidf: { state: 'ready', model: '' } };
     for (const k of CHAIN) {
       const p = this.sources[k] || {};
-      sources[k] = { state: this.isSuspended(k) ? 'error' : (p.state || 'unknown'), model: p.model || '', detail: p.detail || '', hint: p.hint || '' };
+      sources[k] = { state: this.isSuspended(k) ? 'error' : (p.state || 'unknown'), model: p.model || '', detail: p.detail || '', hint: p.hint || '', calibrated: String(p.id || '').includes(':') ? rule.thresholdsFor(p.id).calibrated : null };
       if (this.isSuspended(k)) sources[k].until = this.suspended.get(k);
     }
     let disk = 0;

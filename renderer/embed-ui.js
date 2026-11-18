@@ -36,6 +36,7 @@
       const x = r.sources[k] || {}, inUse = r.active === 'tfidf' ? k === 'tfidf' : String(r.active).split(':')[0] === k;
       return `<p><b>${esc(N[k])}</b>: <span class="${x.state === 'ready' ? 'on' : x.state === 'error' ? 'bad' : 'dim'}">${esc(S[x.state] || x.state)}</span>` +
         (x.model ? ' · ' + esc(x.model) : '') + (inUse ? ' · <b>' + esc(tr('in uso')) + '</b>' : '') +
+        (x.calibrated === false && x.state === 'ready' ? `<br><small class="dim">${esc(tr('non calibrato: in automatico non si usa, e scelto a mano non giudica la deriva'))}</small>` : '') +
         (x.hint ? `<br><span class="dim">${esc(tr('per averlo:'))}</span> <code>${esc(x.hint)}</code>` : '') +
         (x.detail && x.state !== 'ready' ? `<br><small class="dim">${esc(x.detail)}</small>` : '') + '</p>';
     };

@@ -37,12 +37,14 @@ function ask(q) {
   if (!['s', 'si', 'sì', 'y', 'yes'].includes(a)) { say('Annullato: non ho scaricato niente · Cancelled: nothing was downloaded.'); process.exit(1); }
 
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const r = spawnSync(npm, [lock ? 'ci' : 'install', '--no-audit', '--no-fund', '--omit=dev'], { cwd: DIR, stdio: 'inherit', shell: process.platform === 'win32' });
+  // su Windows npm è un .cmd e va lanciato con la shell: allora un comando solo, senza argomenti a parte (sono fissi)
+  const args = [lock ? 'ci' : 'install', '--no-audit', '--no-fund', '--omit=dev'];
+  const r = process.platform === 'win32' ? spawnSync(npm + ' ' + args.join(' '), { cwd: DIR, stdio: 'inherit', shell: true }) : spawnSync(npm, args, { cwd: DIR, stdio: 'inherit' });
   if (r.status !== 0) { say('npm non è riuscito · npm failed (' + (r.status ?? r.error) + ').'); process.exit(1); }
   try {
     const info = await onnx.download(modelsDir, { log: say });
-    say('Fatto: ' + info.model + ', ' + info.dim + ' dimensioni. Nelle opzioni, «Motore del significato» su automatico o ONNX.');
-    say('Done: ' + info.model + ', ' + info.dim + ' dimensions. In the options, set "Meaning engine" to automatic or ONNX.');
+    say('Fatto: ' + info.model + ', ' + info.dim + ' dimensioni. Nelle opzioni, «Motore del significato» su ONNX (in automatico si usa solo una fonte calibrata).');
+    say('Done: ' + info.model + ', ' + info.dim + ' dimensions. In the options, set "Meaning engine" to ONNX (automatic mode uses calibrated sources only).');
   } catch (e) {
     say('Il modello non si è scaricato · the model download failed: ' + e.message);
     process.exit(1);

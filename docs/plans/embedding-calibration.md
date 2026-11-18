@@ -26,7 +26,7 @@ Measured on 2026-11-18.
 | `ollama:nomic-embed-text-v2-moe` (0.96 GB) | 0.960 | 0.928 | 0.729 | 0.218 | 0.04 | 0.81 (1.0 / 0) | **0.78** (1.0 / 0) | | **0.227** |
 | `ollama:bge-m3` (1.16 GB) | 0.950 | 0.922 | 0.750 | 0.399 | 0.14 | 0.70 (1.0 / 0) | **0.66** (1.0 / 0) | | **0.186** |
 | `ollama:nomic-embed-text:v1.5` (0.27 GB) | 0.761 | 0.579 | 0 | 0.509 | 0 | 0.86 (0.8 / 0) | 0.86, none reaches 90% | | 0.03 — **does not beat TF-IDF, no row** |
-| `onnx:Xenova/multilingual-e5-small` | not measured | | | | | | | | |
+| `onnx:Xenova/multilingual-e5-small` (q8, 130 MB) | 0.845 | 0.689 | 0 | 0.806 | 0.11 (not separated: 0 / 0.11) | 0.91 (0.8 / 0) | 0.91, none reaches 90% | | 0.031 — **does not beat TF-IDF on drift, no row** |
 
 The table of `drift-rule.js` has two rows: `tfidf` (`rel` 0.35, `run` 6, `weak` 0.031, `warn` 0.6, `floor` 0.03, `zero` 0, `widen` 0) and `fake:synonyms` (`rel` 0.53, `run` 6, `weak` 0.309, `warn` 0.78, `floor` 0.03, `zero` 0.621, `widen` 0.381). `warn` (the yellow band) is `rel` + 0.25. A test recomputes the `fake:synonyms` row from the measure and fails if the table and the measure disagree.
 
@@ -49,7 +49,15 @@ With Max's permission Ollama 0.40.14 was started on this computer (loopback only
 - End-to-end check with the real engine (web mode, demo, `embedEngine = ollama`, model chosen automatically): `qwen3-embedding:0.6b`, 1024 dimensions, the bubble switched to it after about 1 s. The "synonyms" scene went from "drifting for 10 actions" (TF-IDF) to "leaving · 72%", not drifting; the Plan subagent that really drifts into the UI components stayed "drifting for 13 actions".
 - That check found a real bug that the fake Ollama could not show: loading a model the first time takes more than 5 s; the request was cut at 5 s, which made Ollama cancel the load, and after three tries the source was suspended. Now a "cold" model gets up to 60 s (for `ready()` and the first batch), Ollama is asked to keep it loaded for 10 minutes (`keep_alive`), and while it is warm the 5 s limit applies again. The ONNX provider had the same problem in the queue and is fixed the same way.
 
-The commands, to measure again or to measure the ONNX model:
+## The ONNX model, measured on 2026-11-18
+
+At Max's request `npm run embed:onnx:install` was run (53 npm packages, `@huggingface/transformers` 3.7.6, 378 MB in `optional/embed-onnx/node_modules`; the model `Xenova/multilingual-e5-small` q8, 130 MB, in the data folder of the development loop) and the model was measured.
+
+- It separates better than TF-IDF (AUC 0.845 against 0.785, synonyms 0.689 against 0.547), but **it does not beat TF-IDF on drift**: 80% of the drifts caught, as TF-IDF with its threshold in use and less than TF-IDF's best (86.7%), and no threshold reaches 90%. All its similarities sit in a narrow band (background 0.806), and on the Italian tasks whose actions use other words or English it does not separate at all (worst task 0: "I totali dei documenti di vendita non tornano di un centesimo"; all scores between 0.76 and 0.85). Checked task by task: it is the model, not the measure.
+- So it has no row: it is "not calibrated". Since an uncalibrated source would make the drift rule say "not measurable", worse than TF-IDF, **`auto` now uses only calibrated sources**: with Ollama off and only the ONNX model installed, automatic mode stays lexical, without starting the model. Chosen by hand (`embedEngine = onnx`) it is used for the bubble, and the options say "not calibrated: automatic mode skips it, and chosen by hand it does not judge drift".
+- End to end in the real engine: chosen by hand, the worker loaded the model and the bubble switched to `onnx:Xenova/multilingual-e5-small` (384 dimensions) in about 1.6 s; in `auto` with Ollama off the engine stayed on TF-IDF.
+
+The commands, to measure again:
 
 ```
 node scripts/embed-eval.js --source ollama --model qwen3-embedding:0.6b
@@ -60,5 +68,5 @@ The script measures the background and `widen`, uses them as the engine would, a
 
 Still true:
 
-- a neural source without a row in the table (the ONNX model, `nomic-embed-text:v1.5`, any other model) is "not calibrated": the bubble and the north star show its geometry, but the drift rule says "not measurable" (engine, feedback and map alike) instead of guessing;
+- a neural source without a row in the table (the ONNX model, `nomic-embed-text:v1.5`, any other model) is "not calibrated": in `auto` it is skipped (the chain moves on, down to TF-IDF, and it is not even loaded); chosen by hand it is used, and the bubble and the north star show its geometry, but the drift rule says "not measurable" (engine, feedback and map alike) instead of guessing;
 - **the default engine is `auto`** (`embedEngine` in `DEFAULT_SETTINGS`), as the plan allows once a neural source beats TF-IDF, and decided by Max on 2026-11-18. On a computer where Ollama runs with an embedding model, Platypus uses it on its own (snippets of the agents' text go to that local Ollama, which keeps the model loaded for 10 minutes); without Ollama nothing changes, it stays lexical. `tfidf` in the options turns it off.

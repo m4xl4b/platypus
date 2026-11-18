@@ -32,5 +32,6 @@
   "Cache del significato svuotata": "Meaning cache cleared",
   "affino…": "refining…",
   "fonte cambiata: si riparte": "source changed: starting again",
-  "Sistema il login: gli utenti non riescono più a entrare": "Fix the login: users can no longer get in"
+  "Sistema il login: gli utenti non riescono più a entrare": "Fix the login: users can no longer get in",
+  "non calibrato: in automatico non si usa, e scelto a mano non giudica la deriva": "not calibrated: automatic mode skips it, and chosen by hand it does not judge drift"
 }

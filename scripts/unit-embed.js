@@ -250,6 +250,13 @@ async function providerTests(ok) {
     const snap = sem.snapshotMinds([{ id: 'plan1', name: 'PLAN', mind: plan }], s.corpus, 'unit-embed-e2', 0, emb.space(0));
     ok(before.src === 'tfidf' && after.src === 'onnx:fake' && snap0.pending > 0 && snap.src === 'onnx:fake' && snap.pending === 0 && snap.align.length === plan.pieces.filter(p => p.kind === 'action').length, `embedding E2: la bolla parte col TF-IDF e passa a ${after.src} quando i vettori ci sono tutti`);
     st.stop && st.stop();
+    // in automatico solo fonti calibrate: un modello di Ollama con la sua riga sì, uno senza no
+    const withCheck = id => { const q = fakeProvider('ollama', { model: id }); q.check = async () => { q.state = 'ready'; return true; }; return q; };
+    const embC = new embed.Embedder({ settings: { embedEngine: 'auto' }, factories: facts({ ollama: withCheck('qwen3-embedding:0.6b'), onnx: gone }) });
+    const embU = new embed.Embedder({ settings: { embedEngine: 'auto' }, factories: facts({ ollama: withCheck('nomic-embed-text:v1.5'), onnx: gone }) });
+    const embM = new embed.Embedder({ settings: { embedEngine: 'ollama' }, factories: facts({ ollama: withCheck('nomic-embed-text:v1.5'), onnx: gone }) });
+    for (const e of [embC, embU, embM]) { e.space(1); await settle(e); }
+    ok(embC.status().active === 'ollama:qwen3-embedding:0.6b' && embU.status().active === 'tfidf' && embU.status().sources.ollama.calibrated === false && embM.status().active === 'ollama:nomic-embed-text:v1.5', 'embedding E5: in automatico solo fonti calibrate (qwen3-embedding sì, nomic-embed-text:v1.5 no); scelta a mano si usa comunque');
     // un provider che dice di essere "freddo" ha più tempo, sia per ready() sia per la prima richiesta
     const slowCold = { ...fakeProvider('ollama'), readyTimeoutMs: 1000, timeoutFor: () => 1000 };
     slowCold.ready = async () => { await new Promise(r => setTimeout(r, 150)); slowCold.state = 'ready'; return true; };
@@ -418,12 +425,15 @@ async function onnxTests(ok) {
     let err = ''; try { await p.embed(['BOOM'], 'document'); } catch (e) { err = e.message; }
     const after = await p.embed(['ancora'], 'document');
     ok(/fake failure/.test(err) && after.length === 1, 'embedding E4: un errore del modello arriva come errore, e il worker resta in piedi');
-    // nella catena: Ollama spento, ONNX installato → ONNX
-    const emb = new embed.Embedder({ settings: { embedEngine: 'auto' }, factories: { ollama: () => fakeProvider('ollama', { up: false }), onnx: (s, deps) => onnxLoader.create(s, deps) }, deps: { modelsDir: models, transformers: fake } });
-    stops.push(emb);
-    emb.space(1); await settle(emb, 10000);
-    const st = emb.status();
-    ok(st.active === 'onnx:Xenova/multilingual-e5-small' && st.sources.onnx.state === 'ready' && st.sources.ollama.state === 'not-found', 'embedding E4: in automatico, con Ollama spento, la catena prende l\'ONNX installato');
+    // nella catena: Ollama spento, ONNX installato. Scelto a mano → ONNX. In automatico no: il modello ONNX misurato non
+    // batte il TF-IDF e non ha una riga in drift-rule.js, quindi si resta lessicali (senza nemmeno avviare il worker)
+    const mkEmb = engine => new embed.Embedder({ settings: { embedEngine: engine }, factories: { ollama: () => fakeProvider('ollama', { up: false }), onnx: (s, deps) => onnxLoader.create(s, deps) }, deps: { modelsDir: models, transformers: fake } });
+    const emb = mkEmb('onnx'), embA = mkEmb('auto');
+    stops.push(emb, embA);
+    emb.space(1); embA.space(1); await settle(emb, 10000); await settle(embA, 10000);
+    const st = emb.status(), stA = embA.status();
+    ok(st.active === 'onnx:Xenova/multilingual-e5-small' && st.sources.onnx.state === 'ready' && st.sources.onnx.calibrated === false, 'embedding E4: scelto a mano, con Ollama spento, si usa il modello ONNX installato (non calibrato)');
+    ok(stA.active === 'tfidf' && !stA.fallback && stA.sources.onnx.state === 'ready' && stA.sources.onnx.calibrated === false && !embA.sources.onnx.worker && stA.sources.ollama.state === 'not-found', 'embedding E4: in automatico il modello ONNX non calibrato si salta (lessicale), senza avviarlo');
     // nel motore vero di questa cartella, senza installazione: non installato
     if (!mod.installed()) {
       const real = onnxLoader.create({}, { modelsDir: models });
