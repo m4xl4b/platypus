@@ -3,7 +3,10 @@
 // Il motore decide QUANDO c'è qualcosa da dire (un agente che aspetta, un avviso nuovo, il report del giorno);
 // la shell decide SE mostrarlo (la sua opzione "Notifiche per i permessi", la finestra già in primo piano).
 //   evento 'notify': { kind: 'wait'|'alert'|'report', title, body, sid, key }
-//   GET /api/shell/events: stream SSE con soli due eventi, 'counts' (quando cambiano) e 'notify'
+//   GET /api/shell/events: stream SSE per i gusci esterni (Tauri), con tre eventi:
+//     'counts' {sessions, agents, busy, waiting, label, tooltip}  quando cambiano (testi già tradotti)
+//     'menu'   {texts, hooks, demo, cowork, base}                 i testi del menu dell'icona e lo stato delle voci
+//     'notify' {kind, title, body, sid, key, n}
 
 const { EventEmitter } = require('events');
 const fs = require('fs');
@@ -14,25 +17,52 @@ function agentLabel(a) {
   return String(a.name || a.type || tr('agente')).toUpperCase() + (!a.name && a.seq > 1 ? '-' + a.seq : '');
 }
 function sessionLabel(s) { return s.wing === 'cowork' ? (s.title || s.project) + ' (Cowork)' : s.project; }
+// i testi del menu dell'icona, come in buildTrayMenu() di src/main.js, per i gusci che non hanno le traduzioni (Rust)
+function menuTexts() {
+  return {
+    show: tr('Mostra l\'ufficio'), pin: tr('Sempre in primo piano'), demo: tr('Modalità demo'),
+    notify: tr('Notifiche per i permessi'), cowork: tr('Mostra le sessioni Cowork'),
+    hooksOff: tr('Scollega da Claude Code (rimuovi hook)'), hooksOn: tr('Collega a Claude Code (installa hook)…'),
+    report: tr('Report di oggi'), browser: tr('Apri nel browser'), folder: tr('Apri la cartella di Claude Code'),
+    login: tr('Avvia all\'accesso al computer'), quit: tr('Esci'),
+    // la conferma prima di collegare gli hook, e l'esito (come askHooksOnce e installHooks)
+    askTitle: tr('Collegare Platypus a Claude Code?'),
+    askDetail: tr('L\'ufficio funziona già leggendo i file locali di Claude Code.') + '\n\n' +
+      tr('Se lo colleghi (aggiungo degli hook in ~/.claude/settings.json) vedi anche in tempo reale quando un agente aspetta il tuo permesso, e puoi rispondere dai fumetti. Puoi scollegarlo quando vuoi dal menu dell\'icona.'),
+    askYes: tr('Collega'), askLater: tr('Più tardi'),
+    done: tr('Collegato a Claude Code'), doneDetail: tr('Valgono per le sessioni di Claude Code aperte da adesso in poi: chiudi e riapri quelle già aperte.'),
+    failed: tr('Non sono riuscito a modificare le impostazioni di Claude Code:\n{error}', { error: '{error}' }),
+  };
+}
+// la prima voce del menu e il suggerimento dell'icona, come in buildTrayMenu()
+function countsTexts(c) {
+  return {
+    label: tr('Sessioni: {s}  ·  Agenti: {a}', { s: c.sessions, a: c.agents }) + (c.waiting ? '  ·  ' + trn('{n} in attesa', '{n} in attesa', c.waiting) : ''),
+    tooltip: 'Platypus — ' + trn('{n} agente', '{n} agenti', c.agents) + ', ' + trn('{n} al lavoro', '{n} al lavoro', c.busy) + (c.waiting ? ', ' + trn('{n} ti aspetta', '{n} ti aspettano', c.waiting) : ''),
+  };
+}
 const isoDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 class Notifier extends EventEmitter {
   // file: dove ricordare il giorno dell'ultimo report (accanto alle opzioni), così non torna dopo un riavvio
-  constructor(state, { stats, file, now = () => new Date() } = {}) {
+  // shellInfo: () => {hooks, demo, cowork, base}, lo stato delle voci del menu dei gusci (lo conosce index.js)
+  constructor(state, { stats, file, now = () => new Date(), shellInfo = () => ({}) } = {}) {
     super();
-    this.state = state; this.stats = stats; this.file = file; this.now = now;
+    this.state = state; this.stats = stats; this.file = file; this.now = now; this.shellInfo = shellInfo;
     this.notified = new Set(); this.primed = false;
     this.alertSeen = new Set(); this.alertsPrimed = false;
     this.reportDay = '';
     try { this.reportDay = String(JSON.parse(fs.readFileSync(file, 'utf8')).reportDay || ''); } catch {}
     this.shells = new Set(); // le risposte SSE aperte su /api/shell/events
-    this.lastCounts = '';
+    this.lastCounts = ''; this.lastMenu = '';
     this.timer = null; this.reportTimer = null; this.pingTimer = null;
-    this.onChange = () => { this.schedule(); this.pushCounts(); };
+    this.onChange = () => { this.schedule(); this.pushCounts(); this.pushMenu(); };
+    this.onLang = () => { this.pushCounts(); this.pushMenu(); }; // lingua cambiata: i testi nuovi
   }
 
   start() {
     this.state.on('change', this.onChange);
+    this.state.on('lang', this.onLang);
     this.reportTimer = setInterval(() => { try { this.checkReport(); } catch {} }, 60000);
     this.reportTimer.unref && this.reportTimer.unref();
     this.pingTimer = setInterval(() => { for (const r of this.shells) try { r.write(': ping\n\n'); } catch {} }, 20000);
@@ -42,6 +72,7 @@ class Notifier extends EventEmitter {
 
   stop() {
     this.state.off('change', this.onChange);
+    this.state.off('lang', this.onLang);
     clearTimeout(this.timer); clearInterval(this.reportTimer); clearInterval(this.pingTimer);
     for (const r of this.shells) try { r.end(); } catch {}
     this.shells.clear();
@@ -147,18 +178,32 @@ class Notifier extends EventEmitter {
   // il giorno del report già mostrato da una shell più vecchia (Electron lo teneva nel suo config.json)
   seenReport(day) { if (day && day === this.now().toDateString() && this.reportDay !== day) this.reportDay = day; }
 
-  // ---- lo stream per le shell esterne: contatori e notifiche, nient'altro (lo stato intero resta su /events)
+  // ---- lo stream per le shell esterne: contatori, menu e notifiche, nient'altro (lo stato intero resta su /events)
+  countsData() { const c = this.state.counts(); return JSON.stringify({ ...c, ...countsTexts(c) }); }
+  menuData() {
+    let info = {};
+    try { info = this.shellInfo() || {}; } catch {}
+    return JSON.stringify({ texts: menuTexts(), hooks: !!info.hooks, demo: !!info.demo, cowork: info.cowork !== false, base: info.base || '' });
+  }
   pushCounts() {
     if (!this.shells.size) return;
-    const c = JSON.stringify(this.state.counts());
+    const c = this.countsData();
     if (c === this.lastCounts) return;
     this.lastCounts = c;
     for (const r of this.shells) try { r.write('event: counts\ndata: ' + c + '\n\n'); } catch {}
   }
+  pushMenu() {
+    if (!this.shells.size) return;
+    const m = this.menuData();
+    if (m === this.lastMenu) return;
+    this.lastMenu = m;
+    for (const r of this.shells) try { r.write('event: menu\ndata: ' + m + '\n\n'); } catch {}
+  }
   attach(req, res) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.write('retry: 1500\n\n');
-    res.write('event: counts\ndata: ' + JSON.stringify(this.state.counts()) + '\n\n');
+    res.write('event: counts\ndata: ' + (this.lastCounts = this.countsData()) + '\n\n');
+    res.write('event: menu\ndata: ' + (this.lastMenu = this.menuData()) + '\n\n');
     const send = ev => { try { res.write('event: notify\ndata: ' + JSON.stringify(ev) + '\n\n'); } catch {} };
     this.shells.add(res);
     this.on('notify', send);
@@ -166,4 +211,4 @@ class Notifier extends EventEmitter {
   }
 }
 
-module.exports = { Notifier, agentLabel, sessionLabel };
+module.exports = { Notifier, agentLabel, sessionLabel, menuTexts, countsTexts };

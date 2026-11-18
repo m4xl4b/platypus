@@ -91,7 +91,7 @@ Today it is Electron that decides when to send a notification, by listening to t
 - **Navigation:** the window stays on the office pages; any other page does not get the `invoke` permission, and external `http`/`https` links open in the browser.
 - **Check:** `npm run dev` in `shells/tauri` opens the office with the demo (`--demo` passed to the engine) and the title bar buttons work, full screen included.
 
-## T4 · Tray and notifications  [ ]
+## T4 · Tray and notifications  [x]
 
 - Menu with the same items as `buildTrayMenu()`. The actions go through the engine's APIs:
   - demo: `/api/demo`;
@@ -292,3 +292,26 @@ The commands `npm run tauri:build` and `--shell tauri` come with T3 and T6: chec
   - `PLATYPUS_NODE` pointing to a missing file: a clear error window ("Node.js (node) was not found in the PATH…", screenshot looked at) and exit code 1.
   - `npm test`: "Tutto a posto.", with a new check that `--parent-stdin` makes the engine exit by itself (the child gets its own fake home); `npm run i18n:check`: 0 missing.
 - Not checked yet: the Linux and macOS builds (T8), the remembered position (T5).
+
+### 2026-11-18 · T4 · Tray and notifications
+
+- Done:
+  - Engine (`src/core/notify.js`, small hook in `index.js`): the shell stream now also carries the tray texts, already translated, so the Rust shell never translates anything. `counts` gained `label` (the first menu item) and `tooltip`, built exactly as in `buildTrayMenu()`; a new `menu` event carries `texts` (every menu item, plus the texts of the "connect to Claude Code" confirmation and its result), `hooks`, `demo`, `cowork` and `base` (the Claude Code folder). It is sent at connection and whenever it changes, also when the language changes in the options (`lang` event). `index.js` passes a `shellInfo()` function with those four values. No new keys: all texts already existed for Electron, so `tauri.json` is still not needed.
+  - Shell (`shells/tauri/src-tauri/src/tray.rs`, `engine.rs`): the tray icon (from `build/tray@2x.png`) with the same items as Electron: counters (disabled), show the office, always on top, demo mode, notifications for permissions, show Cowork sessions, connect / disconnect Claude Code, today's report, open in the browser, open the Claude Code folder, quit. Left click shows the window or minimises it if it is in front. Actions: demo and Cowork through `POST /api/demo` and `POST /api/cowork`, report and browser through the opener plugin, the folder with `open_path`. "Start at login" comes with T5.
+  - Connect to Claude Code: a confirmation window (the same texts as `askHooksOnce`), then `node src/hooks-cli.js install` for the engine's port, and a window with what it printed; disconnect runs `uninstall`. Asked once at first start, like Electron (once per shell: the two shells keep separate preferences). In the automatic checks only `status` runs.
+  - Notifications: a reader thread on `/api/shell/events` (plain HTTP/1.0, reconnects after 1.5 s), the `notification` plugin, and Electron's rules (`notify` option of the shell; no wait/alert toast while the window is visible and focused). A wait also flashes the window if it is not in front.
+  - The icon gets a red dot while someone is waiting (the plan asked for it; Electron keeps a fixed icon and only changes tooltip and menu).
+  - The shell's preferences gained `notify`, `show_cowork` (passed to the engine as `--no-cowork` when this shell starts it) and `asked_hooks`.
+- Decisions and limits:
+  - Instead of `GET /api/i18n?keys=…` or `/i18n.js`, the texts travel on the shell stream (`menu` and `counts`). It is one place, it follows the language at once, and the keys stay in a `.js` file, so `npm run i18n:check` still sees them.
+  - A click on a desktop notification cannot be intercepted with `tauri-plugin-notification`. So the floor of the last wait or alert is remembered, and the next time the window is opened from the tray (within two minutes) the page goes there (`onGoto`). It is not the same as Electron's click, but close.
+  - On Windows, from a build that is not installed, the toast shows "Windows PowerShell" as its sender (seen on screen). The Start menu shortcut with our AppUserModelID is T6's job.
+  - On Linux the tray has no click event and no tooltip (Tauri docs): there, everything is in the menu. Not tested yet (`[linux]`).
+- Checked (temporary home, port 47830, `PLATYPUS_DATA_DIR`, snapshot mode with `PLATYPUS_SNAPSHOT_MENU` choosing items by id):
+  - the menu is built with the engine's texts and counters ("Sessions: 4 · Agents: 44"), and follows them as the demo runs, including "1 waiting" with its tooltip;
+  - chosen from the menu: Cowork off (engine and saved option), notifications off and on again, Claude Code `status` through `hooks-cli` ("Platypus hooks: not installed / Feedback hooks: not installed": nothing installed), demo off (the engine stops the demo and the menu shows it);
+  - a permission posted to the engine during the run reaches the shell and is shown as a real Windows toast with `PLATYPUS_NOTIFY_TEST=1` (looked at on screen, then the capture was deleted because it showed other windows too);
+  - language: `POST /api/settings {"lang":"it"}` turns the menu, counters and tooltip into Italian at once, and `auto` brings them back to English;
+  - `cargo test`: the waiting icon has the red dot in the corner and the rest is unchanged;
+  - `npm test`: "Tutto a posto.", with two new checks on the `menu` event and on the counters' texts; `npm run i18n:check`: 0 missing.
+- Not checked: really installing or removing the hooks (not in the tests, by the plan's rule); Linux and macOS.

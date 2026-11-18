@@ -74,7 +74,11 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const stats = new Stats(state, statsPath || path.join(path.dirname(settingsPath), 'stats.json'));
   const bottega = new Bottega(bottegaDir || path.join(path.dirname(settingsPath), 'bottega'));
   // le notifiche (attese, avvisi, report): le decide il motore, le mostra la shell
-  const notifier = new Notifier(state, { stats, file: path.join(path.dirname(settingsPath), 'notify.json') }).start();
+  // (shellInfo: le voci del menu dei gusci esterni; si chiama solo più tardi, quando hook e demo esistono già)
+  const notifier = new Notifier(state, {
+    stats, file: path.join(path.dirname(settingsPath), 'notify.json'),
+    shellInfo: () => ({ hooks: hooksInstalled(), demo: demo.on, cowork: !!state.includeCowork, base: base || claudeDir() }),
+  }).start();
   // il libro impara dalle sessioni aperte: gli stessi fatti della mappa, una volta al minuto
   // (i casi già visti non contano due volte; la demo ha il suo libro finto)
   // e, per ogni progetto aperto, rilegge da sé le sessioni passate (una volta ogni 6 ore: quelle già lette non si rileggono)

@@ -8,6 +8,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::ipc::CapabilityBuilder;
@@ -36,11 +37,18 @@ const PAGE_COMMANDS: &[&str] = &[
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct Config {
+    /// always on top
     pub pin: bool,
+    /// the tray option "Notifications for permission requests" (per shell, like Electron's `cfg.notify`)
+    pub notify: bool,
+    /// the tray option "Show Cowork sessions": passed to the engine when this shell starts it
+    pub show_cowork: bool,
+    /// already asked once whether to connect to Claude Code
+    pub asked_hooks: bool,
 }
 impl Default for Config {
     fn default() -> Self {
-        Config { pin: true }
+        Config { pin: true, notify: true, show_cowork: true, asked_hooks: false }
     }
 }
 
@@ -62,6 +70,13 @@ pub struct Shell {
     maximized: AtomicBool,
     shown: AtomicBool,
     pub counts: Mutex<Counts>,
+    /// the tray menu's state and texts, from the engine
+    pub menu: Mutex<crate::tray::MenuState>,
+    /// the floor of the last notification: shown the next time the window is opened (a click on a toast
+    /// cannot be intercepted)
+    pub pending_goto: Mutex<Option<(String, Instant)>>,
+    /// false once the app is quitting: the stream reader stops
+    pub alive: AtomicBool,
 }
 
 impl Shell {
@@ -79,6 +94,9 @@ impl Shell {
             maximized: AtomicBool::new(false),
             shown: AtomicBool::new(false),
             counts: Mutex::new(Counts::default()),
+            menu: Mutex::new(Default::default()),
+            pending_goto: Mutex::new(None),
+            alive: AtomicBool::new(true),
         }
     }
     pub fn port(&self) -> u16 {
@@ -282,7 +300,14 @@ pub fn is_maximized(window: WebviewWindow) -> bool {
 }
 
 #[tauri::command]
-pub fn toggle_pin(window: WebviewWindow, shell: State<'_, Shell>) -> bool {
+pub fn toggle_pin(app: AppHandle, window: WebviewWindow, shell: State<'_, Shell>) -> bool {
+    let on = toggle_pin_window(&window, &shell);
+    crate::tray::rebuild(&app); // the tray's checkbox follows
+    on
+}
+
+/// PIN from the page or from the tray menu: saved, and applied unless the window is the mini strip.
+pub fn toggle_pin_window(window: &WebviewWindow, shell: &Shell) -> bool {
     let on = {
         let mut c = shell.cfg.lock().unwrap();
         c.pin = !c.pin;
@@ -293,6 +318,22 @@ pub fn toggle_pin(window: WebviewWindow, shell: State<'_, Shell>) -> bool {
         let _ = window.set_always_on_top(on);
     }
     on
+}
+
+/// Bring the office to the front (tray, second start). If a notification arrived in the last two minutes,
+/// go to its floor, like a click on the toast in Electron.
+pub fn show_window(app: &AppHandle) {
+    let Some(w) = app.get_webview_window(LABEL) else { return };
+    let _ = w.unminimize();
+    let _ = w.show();
+    let _ = w.set_focus();
+    let shell = app.state::<Shell>();
+    let goto = shell.pending_goto.lock().unwrap().take();
+    if let Some((sid, t)) = goto {
+        if t.elapsed() < Duration::from_secs(120) {
+            emit(&w, "goto", serde_json::Value::String(sid));
+        }
+    }
 }
 
 #[tauri::command]

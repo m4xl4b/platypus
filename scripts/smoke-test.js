@@ -247,6 +247,11 @@ function shellEvents(port, headers = {}) {
   await shellSt.ready;
   const c0 = await shellSt.wait(e => e.event === 'counts');
   ok(shellSt.status() === 200 && c0 && typeof c0.data.waiting === 'number' && c0.data.sessions >= 4, `stream delle shell: contatori subito (${c0 ? JSON.stringify(c0.data) : '-'})`);
+  // T4: il menu dell'icona di Tauri, con i testi già tradotti e lo stato delle voci
+  const m0 = await shellSt.wait(e => e.event === 'menu');
+  const mt = (m0 && m0.data.texts) || {};
+  ok(m0 && m0.data.demo === true && m0.data.hooks === false && m0.data.base === base && ['show', 'pin', 'demo', 'notify', 'cowork', 'hooksOn', 'hooksOff', 'report', 'browser', 'folder', 'quit', 'askTitle', 'askYes'].every(k => typeof mt[k] === 'string' && mt[k]) && mt.failed.includes('{error}'), `stream delle shell: il menu (demo accesa, hook no, cartella di Claude Code) → «${mt.show}», «${mt.hooksOn}»`);
+  ok(c0 && typeof c0.data.label === 'string' && c0.data.label.includes(String(c0.data.sessions)) && /^Platypus — /.test(c0.data.tooltip), `stream delle shell: la prima voce e il suggerimento dell'icona → «${c0 && c0.data.label}»`);
   const perm = await get(port, '/platypus-hook/permission', 'POST', JSON.stringify({ session_id: 'smoke-1', hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } }));
   ok(perm.status === 204, 'permesso senza finestre aperte: decide il terminale (lo stream delle shell non conta come finestra) → ' + perm.status);
   const nWait = await shellSt.wait(e => e.event === 'notify' && e.data.kind === 'wait' && e.data.sid === 'smoke-1');

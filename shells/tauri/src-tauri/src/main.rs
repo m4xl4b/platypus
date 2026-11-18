@@ -4,6 +4,7 @@
 
 mod engine;
 mod office;
+mod tray;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -19,6 +20,7 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             office::minimize,
             office::close,
@@ -45,7 +47,13 @@ fn main() {
                 if let Err(e) = office::open_window(&handle) {
                     eprintln!("[platypus] window: {e}");
                     handle.exit(1);
+                    return;
                 }
+                if let Err(e) = tray::create(&handle) {
+                    eprintln!("[platypus] tray: {e}");
+                }
+                tray::listen(&handle);
+                tray::snapshot_menu(&handle);
             });
             Ok(())
         })
@@ -56,6 +64,7 @@ fn main() {
         if let RunEvent::Exit = event {
             // the engine is stopped only if this shell started it
             if let Some(shell) = app.try_state::<Shell>() {
+                shell.alive.store(false, std::sync::atomic::Ordering::SeqCst);
                 if let Some(e) = shell.engine.lock().unwrap().take() {
                     e.stop();
                 }
@@ -106,7 +115,8 @@ fn start_engine(app: &tauri::AppHandle, demo: bool) -> Result<(), String> {
             "The Platypus folder (src/standalone.js) was not found. Set it with PLATYPUS_ROOT.".to_string()
         }
     })?;
-    let mut e = Engine::start(&node, &root, port, demo).map_err(|err| {
+    let cowork = shell.cfg.lock().unwrap().show_cowork;
+    let mut e = Engine::start(&node, &root, port, demo, cowork).map_err(|err| {
         if it {
             format!("Non riesco ad avviare il motore ({}): {err}", node.display())
         } else {
