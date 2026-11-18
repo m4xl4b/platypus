@@ -6,12 +6,15 @@
 //   ctx.hasSection(cwd)   il CLAUDE.md del progetto ha già la sezione di Platypus
 //   ctx.agent(input)      l'agente che ha mandato l'hook, come lo vede l'ufficio: { id, steps, nodes, goals } (null se non lo conosciamo)
 //   ctx.team()            tutti gli agenti della sessione: [{ id, name, nodes }]
+//   ctx.waiting(input)    quell'agente ha una domanda all'utente (o un piano da approvare) ancora senza risposta
 
 const i18n = require('../i18n');
 const feedback = require('./feedback');
-const { lessonLines, elderLine, sameCmd, errorPattern } = require('./bottega');
+const { lessonLines, elderLine, sameCmd, cmdCore, errorPattern } = require('./bottega');
 const { classifyFailure, errorExcerpt } = require('./surprise');
 const { relKey, isProjectFile } = require('./worldmap');
+const { extractClaims, judgeClaim } = require('./grounding');
+const { isTestCommand } = require('./releases');
 
 const en = fn => i18n.withLang('en', fn);
 
@@ -176,6 +179,56 @@ function stale(input, ctx) {
   };
 }
 
+// ---- B5 · affermazioni senza prove a fine turno: l'agente sta per fermarsi dicendo «i test passano» o «ho verificato»,
+// ma in questo turno, dopo la sua ultima modifica, non ha lanciato niente (senza prove), oppure l'ultimo esito è un
+// fallimento (smentita). Le affermazioni vengono dall'ultimo messaggio che l'hook porta con sé, le prove dai passi del
+// turno. Chiederebbe di continuare (block): nella 2.11 la funzione resta in ombra, quindi lo registra soltanto.
+// Solo «tests» e «verified»: per «sistemato» e «fatto» le prove sono meno affidabili.
+const CHECKED = new Set(['tests', 'verified']);
+const ASKS = new Set(['AskUserQuestion', 'ExitPlanMode']);
+const clip = (s, n) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s);
+const isTestStep = s => s.act === 'verify' && isTestCommand(String(s.sig || '').replace(/^run:/, ''));
+function claims(input, ctx) {
+  const said = String(input.last_assistant_message || '');
+  if (!said || !ctx.agent) return null;
+  const me = ctx.agent(input);
+  if (!me || !Array.isArray(me.steps)) return null;
+  if (ctx.waiting && ctx.waiting(input)) return null; // il turno finisce con una domanda all'utente: non si giudica
+  const now = ctx.now ? ctx.now() : Date.now();
+  // il turno: dall'ultima richiesta dell'utente (il principale) o dall'inizio del compito (un sottoagente)
+  const from = input.agent_id ? 0 : Math.max(0, ...(me.goals || []).map(g => g.t || 0).filter(t => t <= now));
+  const turn = me.steps.filter(s => s.t >= from);
+  const open = turn[turn.length - 1];
+  if (open && open.err === null && ASKS.has(open.tool)) return null;
+  const edited = turn.some(s => s.act === 'edit' && s.err === false);
+  let pick = null;
+  for (const c of extractClaims(said)) {
+    if (!CHECKED.has(c.kind)) continue;
+    const j = judgeClaim(c, me.steps, from, Infinity, null);
+    // smentita: l'ultimo test (o, per «verificato», l'ultimo controllo: non un comando qualunque) è fallito
+    if (j.status === 'contradicted' && (c.kind === 'tests' || j.step.act === 'verify')) { pick = { c, j }; break; }
+    // senza prove: conta solo se nel turno ha cambiato qualcosa. Chi risponde a una domanda, o ha solo letto, non deve prove
+    if (j.status === 'ungrounded' && edited && !pick) pick = { c, j };
+  }
+  if (!pick) return null;
+  const { c, j } = pick;
+  let why, then;
+  if (j.status === 'contradicted' && c.kind === 'tests') {
+    why = `the last test run failed (at ${hhmm(j.step.t)})`; then = 'Fix it and run the tests again, or say that they fail.';
+  } else if (j.status === 'contradicted') {
+    why = `the last check you ran failed (\`${clip(cmdCore(j.step.sig), 60)}\` at ${hhmm(j.step.t)})`; then = 'Run it again, or say that it is not verified.';
+  } else if (c.kind === 'tests') {
+    const last = me.steps.filter(s => s.err !== null && isTestStep(s)).pop();
+    why = 'no test ran after your last edit' + (last ? ` (last run: ${last.err ? 'failed' : 'passed'} at ${hhmm(last.t)})` : ''); then = 'Run them, or say that it is not verified.';
+  } else {
+    why = 'nothing was run after your last edit to check it'; then = 'Run a check, or say that it is not verified.';
+  }
+  return {
+    text: `you said «${clip(c.text, 100)}», but ${why}. ${then}`,
+    block: true, once: 'claims|' + (input.agent_id || 'main') + '|' + from, tag: c.kind + '/' + j.status,
+  };
+}
+
 // le regole entrano in RULES una volta sola, nell'ordine in cui devono parlare. Dopo un fallimento il Nonno viene prima:
 // quello che il progetto ha già imparato (dove l'errore è stato sistemato, che il comando è instabile) è più preciso
 // dell'avviso generico; se poi l'agente insiste, al fallimento dopo tocca al giro in tondo. Dopo una modifica riuscita
@@ -184,6 +237,7 @@ const ALL = [
   ['SessionStart', 'sessionLessons', sessionLessons],
   ['PostToolUseFailure', 'elder', elder], ['PostToolUseFailure', 'loop', loop],
   ['PostToolUse', 'stale', stale], ['PostToolUse', 'elder', elder],
+  ['Stop', 'claims', claims], ['SubagentStop', 'claims', claims],
 ];
 function register(rules = feedback.RULES) {
   for (const [ev, feature, run] of ALL) if (!rules[ev].some(r => r.run === run)) rules[ev].push({ feature, run });
@@ -191,4 +245,4 @@ function register(rules = feedback.RULES) {
 }
 register();
 
-module.exports = { register, sessionLessons, elder, loop, stale, MAX_START };
+module.exports = { register, sessionLessons, elder, loop, stale, claims, MAX_START };

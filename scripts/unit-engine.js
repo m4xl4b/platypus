@@ -790,6 +790,77 @@ function staleRuleTests(ok, fb, inp, rules, AgentWorld) {
   ok(!r1.out && r1.entry && r1.entry.mode === 'shadow' && r1.entry.feature === 'stale' && /^Platypus: you just rewrote/.test(r1.entry.text), 'memoria non aggiornata: anche «accesa» resta in ombra, con la riga nel registro');
   clock += fb.AGENT_GAP_MS + 1000;
   ok(go({ fbStale: 'shadow' }).entry === null, 'memoria non aggiornata: lo stesso cambiamento non torna allo stesso agente');
+  claimsRuleTests(ok, fb, inp, rules, AgentWorld);
+}
+
+// B5 · affermazioni senza prove a fine turno: «i test passano» senza averli lanciati dopo l'ultima modifica
+function claimsRuleTests(ok, fb, inp, rules, AgentWorld) {
+  const now = Date.parse('2026-11-18T10:00:00Z'), T0 = now - 60000;
+  // un turno: la richiesta dell'utente a T0, poi i passi [strumento, input, esito (null = in corso), errore?]
+  const turn = (list, { goals = [{ t: T0 }], start = T0 } = {}) => {
+    const w = new AgentWorld();
+    let t = start, k = 0;
+    for (const [name, input, out, isErr] of list) {
+      const id = 'tu' + (++k);
+      w.start(id, name, input, t += 1000, '/p', 0);
+      if (out !== null) w.end(id, !!isErr, { content: out }, null, t += 1000, '/p');
+    }
+    return { id: 'main', steps: w.steps, nodes: w.nodes, goals, w };
+  };
+  const edit = ['Edit', { file_path: '/p/src/cart.ts', old_string: 'a', new_string: 'b' }, 'ok'];
+  const pass = ['Bash', { command: 'npm test' }, 'PASS src/cart.test.ts\nTests: 12 passed, 12 total'];
+  const fail = ['Bash', { command: 'npm test' }, 'Exit code 1\nFAIL src/cart.test.ts\nTests: 1 failed', true];
+  const stop = (me, said, extra = {}, ctx = {}) => rules.claims(inp('Stop', { last_assistant_message: said, ...extra }), { now: () => now, agent: () => me, ...ctx });
+  const SAID = 'Fixed the rounding in the cart. All tests pass.';
+  // senza prove: ha modificato e non ha lanciato i test
+  let m = stop(turn([edit]), SAID);
+  ok(m && m.block === true && m.tag === 'tests/ungrounded' && m.text === 'you said «All tests pass.», but no test ran after your last edit. Run them, or say that it is not verified.', 'affermazioni, senza prove: «' + (m && m.text) + '»');
+  m = stop(turn([fail, edit]), SAID);
+  ok(m && /but no test ran after your last edit \(last run: failed at \d\d:\d\d\)\. Run them/.test(m.text), 'affermazioni, senza prove: dice com\'era finito l\'ultimo lancio, prima della modifica');
+  ok(stop(turn([edit, pass, edit]), SAID).tag === 'tests/ungrounded', 'affermazioni: un test passato prima dell\'ultima modifica non è una prova');
+  // con le prove: niente
+  ok(stop(turn([edit, pass]), SAID) === null && stop(turn([fail, edit, pass]), SAID) === null, 'affermazioni con le prove (test lanciati e passati dopo l\'ultima modifica): niente');
+  // smentita: l'ultimo lancio è fallito
+  m = stop(turn([edit, pass, fail]), SAID);
+  ok(m && m.block && m.tag === 'tests/contradicted' && /^you said «All tests pass\.», but the last test run failed \(at \d\d:\d\d\)\. Fix it and run the tests again, or say that they fail\.$/.test(m.text), 'affermazioni, smentita: «' + (m && m.text) + '»');
+  ok(stop(turn([fail]), 'The tests pass now.').tag === 'tests/contradicted', 'affermazioni: la smentita vale anche senza modifiche nel turno');
+  // un turno senza affermazioni, o con affermazioni che non si giudicano qui
+  ok(stop(turn([edit]), 'I changed the rounding in src/cart.ts.') === null && stop(turn([edit]), 'I fixed the bug. Done.') === null, 'affermazioni: un turno senza «test» o «verificato» non si giudica (nemmeno «sistemato» e «fatto»)');
+  ok(stop(turn([edit]), 'I\'ll run the tests next.') === null && stop(turn([edit]), 'Do the tests pass on your machine?') === null && stop(turn([edit]), 'The tests do not pass yet.') === null, 'affermazioni: intenzioni, domande e negazioni non sono affermazioni');
+  ok(stop(turn([edit]), '') === null && stop(turn([edit]), undefined) === null && stop(null, SAID) === null, 'affermazioni: senza ultimo messaggio o senza agente, niente');
+  // chi risponde a una domanda, o ha solo letto, non deve prove
+  ok(stop(turn([]), 'Yes, all tests pass.') === null && stop(turn([['Read', { file_path: '/p/src/cart.ts' }, 'x']]), 'I verified that the function is used in two places.') === null, 'affermazioni: senza modifiche nel turno non si chiedono prove');
+  // «verificato»
+  m = stop(turn([edit]), 'I verified that the fix works.');
+  ok(m && m.tag === 'verified/ungrounded' && /but nothing was run after your last edit to check it\. Run a check, or say that it is not verified\.$/.test(m.text), 'affermazioni, «verificato» senza aver lanciato niente: «' + (m && m.text) + '»');
+  ok(stop(turn([edit, ['Bash', { command: 'node scripts/try.js' }, 'ok']]), 'I verified that the fix works.') === null, 'affermazioni, «verificato»: un comando riuscito dopo la modifica è una prova');
+  m = stop(turn([edit, ['Bash', { command: 'npm run lint' }, 'Exit code 1\nerror: unused variable', true]]), 'I verified that the fix works.');
+  ok(m && m.tag === 'verified/contradicted' && /the last check you ran failed \(`npm run lint` at \d\d:\d\d\)/.test(m.text), 'affermazioni, «verificato» con l\'ultimo controllo fallito: «' + (m && m.text) + '»');
+  ok(stop(turn([edit, pass, ['Bash', { command: 'git push' }, 'Exit code 1\nfatal: no upstream', true]]), 'I verified that the fix works.') === null, 'affermazioni, «verificato»: un comando qualunque fallito dopo (git push) non è una smentita');
+  // conta solo il turno in corso
+  const two = list => turn(list, { goals: [{ t: T0 - 600000 }, { t: T0 + 4500 }], start: T0 });
+  ok(stop(two([edit, pass, edit]), SAID).tag === 'tests/ungrounded' && /last run: passed/.test(stop(two([edit, pass, edit]), SAID).text) && stop(two([edit, edit, pass]), SAID) === null, 'affermazioni: le prove sono quelle del turno in corso');
+  ok(stop(two([edit, pass]), SAID) === null, 'affermazioni: se in questo turno non ha modificato niente, il test del turno prima basta');
+  // mai su una domanda all'utente
+  ok(stop(turn([edit, ['AskUserQuestion', { questions: [] }, null]]), SAID) === null && stop(turn([edit, ['ExitPlanMode', { plan: 'x' }, null]]), SAID) === null && stop(turn([edit]), SAID, {}, { waiting: () => true }) === null, 'affermazioni: un turno che finisce con una domanda o un piano da approvare non si giudica');
+  // i sottoagenti: dall'inizio del compito
+  m = rules.claims(inp('SubagentStop', { agent_id: 'sub-1', last_assistant_message: 'Tutti i test passano.' }), { now: () => now, agent: () => turn([edit], { goals: [] }) });
+  ok(m && m.tag === 'tests/ungrounded' && /«Tutti i test passano\.»/.test(m.text) && /\|sub-1\|/.test(m.once), 'affermazioni: vale per i sottoagenti, e in italiano');
+  // la risposta che bloccherebbe, come funzione pura; e mai due volte di fila
+  const real = { Stop: fb.RULES.Stop.filter(r => r.run === rules.claims), SubagentStop: fb.RULES.SubagentStop.filter(r => r.run === rules.claims) };
+  ok(real.Stop.length === 1 && real.SubagentStop.length === 1 && real.Stop[0].feature === 'claims', 'affermazioni: registrata per Stop e SubagentStop');
+  const me = turn([edit]);
+  const d = fb.decide(inp('Stop', { last_assistant_message: SAID }), { now: () => now, agent: () => me }, real);
+  const a = d && fb.answer('Stop', d.message);
+  ok(a && a.decision === 'block' && /^Platypus: you said «All tests pass\.», but no test ran/.test(a.reason) && a.reason.length <= fb.MAX_TEXT, 'affermazioni: la risposta che chiederebbe di continuare (decision: block, con il motivo)');
+  ok(fb.decide(inp('Stop', { last_assistant_message: SAID, stop_hook_active: true }), { now: () => now, agent: () => me }, real) === null, 'affermazioni: mai mentre Claude Code sta già continuando per un blocco');
+  // nel giro completo: nella 2.11 al massimo in ombra (niente a Claude Code), una volta per turno
+  const gate = new fb.Gate({ now: () => now });
+  const go = settings => fb.respond(inp('Stop', { last_assistant_message: SAID }), { cwd: '/p', now: () => now, settings, agent: () => me }, gate, real);
+  ok(go({ fbClaims: 'off' }).entry === null, 'affermazioni: spenta di base, niente');
+  const r1 = go({ fbClaims: 'on' });
+  ok(r1.out === null && r1.entry && r1.entry.mode === 'shadow' && r1.entry.feature === 'claims' && r1.entry.event === 'Stop' && r1.entry.tag === 'tests/ungrounded', 'affermazioni: anche «accesa» resta in ombra: niente a Claude Code, nel registro con che cosa ha trovato');
+  ok(go({ fbClaims: 'shadow' }).entry === null, 'affermazioni: una volta sola per turno');
 }
 
 // feedback (2.11, A3): i tre modi di ogni funzione, i limiti di frequenza, il progetto zittito e il registro

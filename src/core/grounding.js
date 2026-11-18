@@ -295,4 +295,4 @@ function checkClaims(session, agents, cwd, { only = null } = {}) {
   return { claims: claims.slice(0, MAX_ITEMS), score: claims.length ? { grounded, total: claims.length, pct: Math.round(100 * grounded / claims.length) } : null };
 }
 
-module.exports = { checkStale, findGhosts, checkClaims, extractClaims, pathsInReply, SLACK, DISK_TTL };
+module.exports = { checkStale, findGhosts, checkClaims, extractClaims, judgeClaim, pathsInReply, SLACK, DISK_TTL };

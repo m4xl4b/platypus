@@ -234,6 +234,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         hasSection: cwd => claudemd.hasSection(cwd),
         // i passi già visti dell'agente che ha mandato l'hook (il principale, o il sottoagente con quell'identificativo)
         agent: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a && a.world ? { id: a.id, steps: a.world.steps, nodes: a.world.nodes, goals: (a.mind && a.mind.goals) || [] } : null; },
+        waiting: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return !!(a && state.userPending(s, a, i.agent_id || null)); },
         // tutti gli agenti della sessione, con il nome che hanno in ufficio (serve a dire chi ha cambiato un file)
         team: () => (s ? [s.main, ...s.subs.values()].filter(a => a && a.world).map(a => ({ id: a.id, name: displayName(a), nodes: a.world.nodes })) : []),
         log: s && s.demo ? null : feedbackLog, // la demo non lascia righe nel registro vero

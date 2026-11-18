@@ -292,6 +292,31 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const fbStE = core.feedbackLog.recent(fakeCwd).find(e => e.sid === fbStSid && e.feature === 'stale');
   ok(core.state.settings.fbStale === 'shadow' && fbStOwn.status === 204 && fbSt.status === 204 && fbStE && fbStE.mode === 'shadow' && fbStE.agent === 'main' && /^Platypus: you just rewrote `src\/carrello\.ts`, but EXPLORE changed it at \d\d:\d\d/.test(fbStE.text), 'memoria non aggiornata: chi l\'ha cambiato viene dallo stato dell\'ufficio, e resta in ombra → ' + fbSt.status + ' «' + (fbStE ? fbStE.text.slice(0, 70) : '-') + '…»');
   core.state.setSettings({ fbStale: 'off' });
+  // B5 · affermazioni senza prove a fine turno: una modifica, nessun test, e l'agente si ferma dicendo «All tests pass».
+  // Nella 2.11 resta in ombra: a Claude Code non arriva niente (nessun blocco), nel registro c'è che cosa avrebbe chiesto.
+  const fbClT0 = Date.now() - 20000;
+  const fbClTurn = (sid, withTest) => {
+    const line = (k, role, content) => ({ type: role, timestamp: new Date(fbClT0 + k * 1000).toISOString(), sessionId: sid, cwd: fakeCwd, message: role === 'assistant' ? { id: sid + k, role, content, usage: { input_tokens: 10, output_tokens: 10 } } : { role, content } });
+    core.state.applyTranscriptLine(sid, null, line(0, 'user', 'Sistema gli arrotondamenti del carrello'));
+    core.state.applyTranscriptLine(sid, null, line(1, 'assistant', [{ type: 'tool_use', id: sid + '-e', name: 'Edit', input: { file_path: path.join(fakeCwd, 'src', 'carrello.ts'), old_string: 'a', new_string: 'b' } }]));
+    core.state.applyTranscriptLine(sid, null, line(2, 'user', [{ type: 'tool_result', tool_use_id: sid + '-e', content: 'The file has been updated.' }]));
+    if (!withTest) return;
+    core.state.applyTranscriptLine(sid, null, line(3, 'assistant', [{ type: 'tool_use', id: sid + '-t', name: 'Bash', input: { command: 'npm test' } }]));
+    core.state.applyTranscriptLine(sid, null, line(4, 'user', [{ type: 'tool_result', tool_use_id: sid + '-t', content: 'PASS src/carrello.test.ts\nTests: 12 passed, 12 total' }]));
+  };
+  fbClTurn('fb-claims-0001', false);
+  fbClTurn('fb-claims-0002', true);
+  const fbClIn = (sid, extra = {}) => get(port, '/platypus-hook/feedback', 'POST', JSON.stringify({ session_id: sid, hook_event_name: 'Stop', cwd: fakeCwd, stop_hook_active: false, last_assistant_message: 'Fixed the rounding in the cart. All tests pass.', ...extra }));
+  const fbClOff = await fbClIn('fb-claims-0001');
+  ok(fbClOff.status === 204 && !core.feedbackLog.recent(fakeCwd).some(e => e.feature === 'claims'), 'affermazioni a fine turno: spente di base, niente nemmeno nel registro');
+  core.state.setSettings({ fbClaims: 'on' });
+  const fbClAct = await fbClIn('fb-claims-0001', { stop_hook_active: true });
+  const fbCl = await fbClIn('fb-claims-0001');
+  const fbClOk = await fbClIn('fb-claims-0002');
+  const fbClLog = core.feedbackLog.recent(fakeCwd).filter(e => e.feature === 'claims');
+  ok(core.state.settings.fbClaims === 'shadow' && fbClAct.status === 204 && fbCl.status === 204 && fbCl.body === '' && fbClOk.status === 204, `affermazioni a fine turno: nella 2.11 nessun blocco arriva a Claude Code → ${fbCl.status}`);
+  ok(fbClLog.length === 1 && fbClLog[0].sid === 'fb-claims-0001' && fbClLog[0].mode === 'shadow' && fbClLog[0].event === 'Stop' && fbClLog[0].tag === 'tests/ungrounded' && /^Platypus: you said «All tests pass\.», but no test ran after your last edit/.test(fbClLog[0].text), 'affermazioni a fine turno: nel registro solo il turno senza prove, con che cosa avrebbe chiesto «' + (fbClLog[0] ? fbClLog[0].text.slice(0, 80) : '-') + '…»');
+  core.state.setSettings({ fbClaims: 'off' });
   const fb4 = await get(port, '/platypus-hook/feedback', 'POST', 'non è json {');
   ok(fb4.status === 204, 'feedback con un corpo che non è JSON: 204 → ' + fb4.status);
   // gli hook di feedback dal pannello delle opzioni: prima le righe da vedere, poi si scrive solo con la conferma
