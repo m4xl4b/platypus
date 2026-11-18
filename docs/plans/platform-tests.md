@@ -73,7 +73,7 @@ The `[win]` tasks run on the development computer, next to Max's own Platypus, w
 - **Second start:** it must not run `npm ci` again. Also try with the repository updated after a simulated `git pull` (change `package-lock.json` in a test branch).
 - **Without Electron:** `npm run web` must work even if Electron was never installed.
 
-### W2 · System  [ ] [win]
+### W2 · System  [x] [win]
 
 Follow the rules for the Windows PC above: record Max's entries first, restore them at the end.
 
@@ -206,6 +206,7 @@ Like W3 and W4, with the Linux terminals (GNOME Terminal, Konsole, the one in VS
 | # | System | Problem | Commit | Automatic test |
 |---|---|---|---|---|
 | 1 | Windows | With Node 24 the launcher printed the `DEP0190` deprecation warning ("Passing args to a child process with shell option true") every time it ran `npm ci` | `7b8ac9f` | `scripts/smoke-test.js`: "avvio: nessun argomento separato con shell" |
+| 2 | Windows | Turning "Start when I log in" on or off never removed the start-up value that Agent Office wrote before the rename (`com.agentoffice.desktop` in `HKCU\...\Run`); only the macOS and Linux old entries were cleaned | `39f1831` | `scripts/smoke-test.js`: "Windows: la vecchia voce di avvio «com.agentoffice.desktop» viene tolta" |
 
 ### X2 · Documents  [ ]
 
@@ -238,5 +239,25 @@ Conventions of this loop (Windows PC, Max's own computer, port 47850): every run
 - **Not a bug, noted:** in this harness `cmd /c start.cmd` says "'start.cmd' is not recognized" because `NoDefaultCurrentDirectoryInExePath=1` is set in the process environment (cmd then does not look in the current folder). Double-click and `.\start.cmd` work. The install guides could say `.\start.cmd` for PowerShell users (see X2).
 - **Incident, no damage:** my first `start.cmd` attempt ran without the wrapper's environment (the shell does not keep variables between commands). The launcher reached `startElectron` with Max's real environment, so it **emptied `~\.platypus\launch.log`** (it opens it with `w`) and its Electron exited at once because of the single-instance lock. Max's Platypus (PID 56192, port 47800) kept running; his `settings.json` and data were not touched (timestamps checked). The log held only launcher messages. From then on every command sets the environment itself.
 - **State before the system tests (for W2):** `HKCU\...\Run` has `OneDrive`, `OpenVPN-GUI`, `Adobe Acrobat Synchronizer` and `Docker Desktop`; **no Platypus / Agent Office key**. Start menu: Max already has `Programs\Platypus.lnk`. Desktop: no `Platypus.lnk`. A system test that writes the Start menu entry **would overwrite Max's `Platypus.lnk`** (same name): W2 must be done with `APPDATA` on the temporary home, or ask Max.
+
+### 2026-11-18 · W2 · System
+
+How it was run: the window was started from the test clone with the temporary home, port 47850, `PLATYPUS_DEBUG=1` and `PLATYPUS_NOTIFY_TEST=1`, plus `--inspect=9250` so that a small script could talk to the main process (to click the tray menu items and read window bounds). The "session that waits" was a fake transcript written into the temporary home's `.claude\projects` (an unanswered `AskUserQuestion`), because demo sessions never notify (`checkWaiting` skips `s.demo`).
+
+- **Before (Max's entries, recorded and exported):**
+  - `HKCU\...\Run`: `OneDrive`, `OpenVPN-GUI`, `Adobe Acrobat Synchronizer`, `Docker Desktop` (no Platypus / Agent Office value);
+  - `...\Explorer\StartupApproved\Run`: four values (Edge, OneDrive, OpenVPN-GUI, Docker Desktop);
+  - Start menu `Programs`: 29 files, including Max's own `Platypus.lnk` (target `D:\dev\platypus`); Desktop: no Platypus shortcut.
+- **Start menu entry:** the window creates `Programs\Platypus.lnk` under the `APPDATA` of the test (the temporary home, so Max's `Platypus.lnk` was never overwritten). Checked with the shell properties: `System.AppUserModel.ID = com.platypus.desktop`, the toast activator CLSID is set, target is the test clone's `electron.exe` with the clone folder as argument, icon `build\icon.ico`.
+- **Notifications:** a fake waiting session produced a real Windows toast ("Platypus · CLAUDE is waiting for you / Floor 3 · progetto-finto / Waiting for your answer", with the Platypus icon; screenshot of the corner looked at). Windows registered it under `com.platypus.desktop` (`LastNotificationAddedTime` moved). Clicking the toast with the mouse brought the window to the right floor, twice (floor 4, then floor 5 after going back to the lobby). Note: the toast uses the AppUserModelID of Max's own Platypus too (same ID), so it shows as "Platypus"; it is shown by the test process because the process stays alive and handles the click itself.
+- **Tray icon:**
+  - every menu item was run through its click handler (menu captured from `Tray.setContextMenu`, `shell.openExternal`/`openPath` replaced by a recorder so that Max's browser and Explorer were not opened): Show the office (restores a minimized window and focuses it), Always on top (on/off/on, `isAlwaysOnTop` follows), Demo mode (4 demo floors appear and go away), Notifications (the checkbox flips off and back on; `config.json` ended with `notify: true`), Show Cowork sessions (`includeCowork` true/false/true), Today's report (`/report` on port 47850), Open in browser (`/`), Open the Claude Code folder (the temporary `.claude`), Start when I log in (see below), Quit (the whole process tree is gone within 4 s, port 47850 free);
+  - **not run:** "Connect to Claude Code (install hooks)": it writes hooks, so it waits for Max's permission (W4); and a real right-click on the native tray icon (the menu was checked through its handlers, the native popup was not driven);
+  - **the icon does not change with the waits:** the image is fixed (`build\tray.png`). What changes is the tooltip ("Platypus — 5 agents, 0 working, 5 waiting for you"), the first menu line ("Sessions: 5 · Agents: 5 · 5 waiting") and the taskbar button flashing. The plan sentence "the icon changes with the waits" describes a feature that does not exist; I left the code as it is. Decision for Max: do you want a tray icon with a badge?
+- **Start when I log in:** on → value `com.platypus.desktop` = `"<clone>\node_modules\electron\dist\electron.exe" "<clone>"` in `HKCU\...\Run` (Electron names the value after the AppUserModelID); off → the value disappears and `StartupApproved\Run` is as before. **Bug found:** a value with the old Agent Office name was never removed on Windows (the old app's value was `com.agentoffice.desktop`, found from the rename commit). Fixed in `src/autostart.js` (a `setLoginItemSettings` call with the old `name`), checked by hand with a fake `com.agentoffice.desktop` value of my own (removed after on/off) and by a new automatic test. Concern for Max: because the value name is the AppUserModelID, every Platypus on the PC (a test clone, the packaged app) shares one start-up entry; switching it on in one and off in another overwrites it. Not changed.
+- **`npm run shortcut`:** in the temporary home (whose Desktop was a new empty folder) it created `Desktop\Platypus.lnk`: target the clone's `electron.exe`, argument the clone folder, working directory the clone, icon `build\icon.ico,0` (the file exists), description "Platypus". Double-clicking it (Start-Process on the .lnk) opened the window, engine on 47850 only. Max's real Desktop was not touched.
+- **Mini mode, three screens** (2048x1280 at 125 %, 1920x1080 right, 1920x1080 left): with the window on each screen in turn, MINI put the strip (about 380x150) in the bottom-right corner of the work area of the same screen, always on top; leaving mini mode restored the previous bounds. (After `setBounds` between screens with different scaling Electron resized the window itself; that is Electron, not Platypus.)
+- **After (everything restored):** `Run.reg` and `StartupApproved\Run` exports are byte-identical to the "before" exports; the Start menu hashes (29 files, including Max's `Platypus.lnk`) and the Desktop listing are identical; no process under `C:\Platypus Tests` is left, ports 47850 free; Max's Platypus (PID 56192, since 15:11) and his `~\.platypus` files were not touched.
+- **Doubts for Max:** tray badge (above); the first-run question "Connect Platypus to Claude Code?" appears at every first start of a new data folder and it was left unanswered (the test process was stopped); the shared start-up value name (above).
 
 ## Journal (Linux)
