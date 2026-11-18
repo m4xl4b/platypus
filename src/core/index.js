@@ -2,6 +2,7 @@
 // Avvia il "cuore" dell'ufficio: stato + fonti + server HTTP locale (solo 127.0.0.1).
 //   GET  /                   la pagina dell'ufficio
 //   GET  /events             stream SSE dello stato (evento "replay" per il seminterrato)
+//   GET  /api/shell/events   stream SSE per le shell: solo contatori e notifiche (notify.js)
 //   POST /platypus-hook      eventi dagli hook di Claude Code (anche il vecchio /agent-office-hook)
 //   POST /platypus-hook/feedback  hook sincrono: quello che Platypus dice all'agente (o 204), sempre entro un tempo massimo
 //   GET  /api/feedback/hooks  gli hook di feedback: installati o no, e le righe che l'installazione scriverebbe
@@ -53,6 +54,7 @@ const hooks = require('./hooks');
 const feedback = require('./feedback');
 const { FeedbackLog, MemoryFeedbackLog } = require('./feedbacklog');
 const outcomes = require('./outcomes');
+const { Notifier } = require('./notify');
 require('./feedback-rules'); // aggiunge le regole a feedback.RULES
 
 const DEFAULT_PORT = Number(process.env.PLATYPUS_PORT) || 47800;
@@ -73,6 +75,12 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const state = new OfficeState({ settings: initialSettings });
   const stats = new Stats(state, statsPath || path.join(path.dirname(settingsPath), 'stats.json'));
   const bottega = new Bottega(bottegaDir || path.join(path.dirname(settingsPath), 'bottega'));
+  // le notifiche (attese, avvisi, report): le decide il motore, le mostra la shell
+  // (shellInfo: le voci del menu dei gusci esterni; si chiama solo più tardi, quando hook e demo esistono già)
+  const notifier = new Notifier(state, {
+    stats, file: path.join(path.dirname(settingsPath), 'notify.json'),
+    shellInfo: () => ({ hooks: hooksInstalled(), demo: demo.on, cowork: !!state.includeCowork, base: base || claudeDir() }),
+  }).start();
   // il libro impara dalle sessioni aperte: gli stessi fatti della mappa, una volta al minuto
   // (i casi già visti non contano due volte; la demo ha il suo libro finto)
   // e, per ogni progetto aperto, rilegge da sé le sessioni passate (una volta ogni 6 ore: quelle già lette non si rileggono)
@@ -601,6 +609,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       req.on('close', () => clients.delete(res));
       return;
     }
+    if (url.pathname === '/api/shell/events') return notifier.attach(req, res);
     if (url.pathname === '/api/state') return json(res, 200, state.snapshot());
     if (url.pathname === '/i18n.js') { // traduzioni per la pagina (la lingua scelta nelle opzioni)
       const lang = i18n.getLang();
@@ -696,6 +705,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     for (const id of [...approvals.keys()]) finishApproval(id, null);
     if (replay) replay.stop();
     stats.stop();
+    notifier.stop();
     clearInterval(learnTimer); clearTimeout(learnSoon); clearInterval(judgeTimer);
     bottega.stop();
     embedder.stop();
@@ -704,7 +714,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     server.close();
   }
 
-  return { state, stats, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
+  return { state, stats, notify: notifier, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
     install: () => hooks.install({ port, base }),
     uninstall: () => hooks.uninstall({ base }),
     status: () => hooks.status({ base }),

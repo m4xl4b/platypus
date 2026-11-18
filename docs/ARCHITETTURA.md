@@ -32,6 +32,7 @@ Solo moduli di Node.js, nessun pacchetto npm: per questo la modalità browser pa
 | `archive.js` | archivio e replay con orologio virtuale |
 | `osint.js` | integrazione con il sistema: finestra in primo piano, riprendi sessione, apri cartella (Windows / macOS / Linux) |
 | `stats.js` | statistiche per giorno e settimana, report |
+| `notify.js` | quando c'è qualcosa da notificare (un agente che aspetta, un avviso nuovo, il report del giorno), uguale per tutti i gusci; lo stream `/api/shell/events` |
 | `worldmap.js` | mappa della realtà: territorio, frontiera, traiettoria a 7 dimensioni |
 | `semantic.js` | bolla del contesto e stella polare (TF-IDF, PCA, gruppi, allineamento), con vettori di qualsiasi lunghezza e di qualsiasi fonte ("spazi di significato") |
 | `drift-rule.js` | la regola della deriva della stella polare e le sue soglie per fonte, scritte una volta sola: le usano il motore, il feedback "ritorno al compito" e, come `/drift-rule.js`, la mappa |
@@ -54,6 +55,7 @@ Tutto ciò che dipende dal sistema operativo sta in tre punti: `osint.js`, `sour
 | Metodo e percorso | Cosa fa |
 |---|---|
 | `GET /events` | stream SSE dello stato (e dei fotogrammi del replay) |
+| `GET /api/shell/events` | stream SSE per un guscio che fa girare il motore in un processo a parte: solo `counts` (sessioni, agenti, al lavoro, in attesa) e `notify` (`{kind, title, body, sid, key}`); non conta come una finestra dell'ufficio aperta |
 | `GET /api/state`, `/api/settings` | stato e opzioni |
 | `POST /api/settings` | salva le opzioni |
 | `POST /platypus-hook` | eventi degli hook (asincroni) |
@@ -116,25 +118,35 @@ Pagina statica: `index.html`, `style.css`, `game.js` (palazzo, piani, fumetti), 
 
 Avvia il motore nello stesso processo, apre una finestra senza cornice su `http://127.0.0.1:<porta>/`, gestisce:
 - icona e menu nella barra di sistema;
-- notifiche (permessi, avvisi, report);
+- notifiche (permessi, avvisi, report): quando lo decide il motore (`core.notify`, da `notify.js`), se mostrarle lo decide il guscio (la sua opzione "notifiche", la finestra già in primo piano);
 - modalità mini;
 - avvio all'accesso (`src/autostart.js`);
 - su Windows, voce nel menu Start con l'AppUserModelID per le notifiche;
 - su macOS, menu dell'app e icona nel Dock;
 - su Linux, app_id/`desktopName` `platypus` (combacia con `platypus.desktop`) e Wayland: in nativo non esistono primo piano e posizione della finestra, quindi `getPin()` restituisce `false` e `PIN` propone di riavviare con `--ozone-platform=x11` (XWayland). La scelta è `x11` nel `config.json` dell'app, letto anche da `scripts/launch.js`.
 
-## Passare a Tauri (o a un altro guscio)
+## Guscio Tauri (sperimentale)
 
-Il motore e l'interfaccia non cambiano. Un guscio Tauri dovrebbe:
+Il guscio predefinito resta Electron. Accanto si sta costruendo un secondo guscio in Tauri 2, in `shells/tauri/`, per misurare dimensioni, memoria e tempo di avvio e poi decidere con i numeri. Il piano, con il suo diario, è [`plans/tauri-shell.md`](plans/tauri-shell.md) (in inglese); questa sezione descrive il progetto deciso lì e si aggiorna man mano che i compiti si chiudono.
 
-1. **avviare il motore**, in due modi possibili:
-   - come processo esterno con Node.js (`node src/standalone.js --no-open`), oppure compilato in un eseguibile unico (`node --experimental-sea-config`, Bun o Deno);
-   - in alternativa portarlo in Rust un modulo alla volta, mantenendo le stesse API HTTP;
-2. **aprire una webview** su `http://127.0.0.1:<porta>/`;
-3. **offrire `window.officeApp`** con le stesse funzioni della tabella sopra, implementate come comandi Tauri (`invoke`);
-4. **rifare in Rust le parti del guscio**: icona nella barra (`tray`), notifiche (`tauri-plugin-notification`), avvio all'accesso (`tauri-plugin-autostart`), finestra in primo piano e modalità mini.
+**Com'è fatto**
 
-Il vantaggio sarebbero programmi compilati molto più piccoli (circa 10 MB invece di 150) e meno memoria. Il costo: chi parte dai sorgenti deve installare Rust e le librerie di sistema per compilare. Per questo, finché la distribuzione è "clona e lancia", il guscio resta Electron.
+- **Una cartella tutta sua:** `shells/tauri/` ha il suo `package.json` (solo `@tauri-apps/cli`) e il suo `Cargo.toml`. Il `package.json` principale non riceve dipendenze nuove: chi usa Electron non scarica niente di nuovo.
+- **Il motore resta Node:** il guscio cerca `node` nel `PATH` e avvia `node src/standalone.js --no-open` come processo figlio sulla porta scelta (`PLATYPUS_PORT`, oppure 47800). Se su quella porta risponde già un Platypus (`GET /api/state`), si collega a quello. All'uscita chiude il motore solo se l'ha avviato lui.
+- **La finestra** è una webview di Tauri su `http://127.0.0.1:<porta>/`, senza cornice (la barra dei titoli la disegna la pagina), come quella di Electron. La navigazione resta sulle pagine del motore; i link esterni `http`/`https` si aprono nel browser.
+- **`window.officeApp`** ha le stesse funzioni di Electron (tabella sopra). Uno script di inizializzazione, costruito con la porta vera, la definisce sopra `invoke` di Tauri, e solo sull'origine del motore. A quella pagina sono permessi solo i comandi del guscio (un permesso per comando, niente `core:default`, nessun permesso dei plugin); l'API completa `window.__TAURI__` non è esposta. Nessun comando accetta un percorso, un URL o una riga di comando. I messaggi dal guscio alla pagina (`onMaximized`, `onGoto`) sono semplici chiamate nella pagina.
+- **Notifiche e contatori** arrivano dallo stream `/api/shell/events` del motore (`notify.js`), quindi i due gusci notificano le stesse cose. Il menu dell'icona ha le stesse voci di Electron; le sue azioni passano dalle API del motore (demo, Cowork, opzioni), e "collega a Claude Code" esegue `node src/hooks-cli.js` dopo una conferma.
+- **Plugin:** `single-instance`, `autostart` (con lo stesso nome della voce di Electron, così i due non sono mai attivi insieme), `notification` (macOS e Linux), `opener`, `dialog`. Si chiamano solo da Rust, mai dalla pagina. La posizione della finestra si ricorda con la stessa regola di Electron (`src/bounds.js`); chiudere la finestra chiude l'app, come in Electron.
+- **Per avviarlo:** una volta `npm run tauri:build`, poi `node scripts/launch.js --shell tauri` (senza compilazione il lanciatore spiega come farla e apre Electron). `npm run tauri:dev` lo fa partire dai sorgenti con la demo.
+
+**Limiti** (dalla documentazione di Tauri 2; da confermare con le misure e le prove):
+
+- Compilare dai sorgenti richiede Rust 1.90+ e le librerie di sistema: su Windows i Microsoft C++ Build Tools (WebView2 c'è già in Windows 10 1803+ e 11), su Linux `webkit2gtk-4.1` e `libayatana-appindicator`, su macOS gli Xcode Command Line Tools. Node.js serve comunque per il motore.
+- Su Windows il guscio mostra le sue notifiche con l'ID `com.platypus.desktop`, registrato per l'utente, così dicono "Platypus" e un clic apre il piano, anche dai sorgenti. Su macOS e Linux il plugin delle notifiche non segnala il clic: il piano dell'ultima notifica si mostra la volta dopo che si apre la finestra.
+- Su Linux l'icona nella barra non ha l'evento del clic né il suggerimento: tutto sta nel suo menu.
+- Su Wayland WebKitGTK ha gli stessi limiti di Electron (niente primo piano, niente posizione della finestra).
+
+**Misure** ([`plans/tauri-measurements.md`](plans/tauri-measurements.md), in inglese, con il metodo per ripeterle): su Windows il guscio Tauri occupa circa 5 MB sul disco invece di circa 370, mentre la memoria (circa 600 MB con la demo, quasi tutta del Chromium che disegna l'ufficio in tutti e due) e il tempo di avvio (circa 1 s) sono gli stessi. Linux è ancora da misurare.
 
 ## Dati sul disco
 
@@ -143,6 +155,7 @@ Il vantaggio sarebbero programmi compilati molto più piccoli (circa 10 MB invec
 | `~/.claude/` | di Claude Code: letto, mai modificato, tranne gli hook in `settings.json` se li installi |
 | `~/.platypus/settings.json` | opzioni dell'ufficio |
 | `~/.platypus/stats.json` | statistiche per giorno e settimana |
+| `~/.platypus/notify.json` | il giorno dell'ultima notifica del report giornaliero, condiviso dai gusci |
 | `~/.platypus/bottega/<chiave>.json` | il Libro della bottega di ogni progetto (un file per cartella di progetto) |
 | `~/.platypus/feedback/<chiave>.jsonl` | i messaggi agli agenti di ogni progetto, mandati e in ombra, con i loro esiti (oltre 5 MB passa a `<chiave>.1.jsonl`) |
 | `~/.platypus/launch.log` | messaggi dell'ultimo avvio della finestra |

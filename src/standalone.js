@@ -1,6 +1,6 @@
 'use strict';
 // Modalità browser: avvia solo il server e apre l'ufficio nel browser predefinito.
-//   node src/standalone.js [--no-open] [--demo]
+//   node src/standalone.js [--no-open] [--demo] [--parent-stdin]
 const { exec } = require('child_process');
 const { startCore } = require('./core');
 const { tr } = require('./i18n');
@@ -20,3 +20,11 @@ core.ready.then(({ port }) => {
   process.exit(1);
 });
 process.on('SIGINT', () => { core.stop(); process.exit(0); });
+// --parent-stdin: avviato da un guscio (Tauri) che tiene aperto il nostro stdin. Quando il guscio si chiude, anche
+// in modo brusco, lo stdin finisce: salviamo e usciamo, invece di restare acceso senza nessuno
+if (process.argv.includes('--parent-stdin')) {
+  const quit = () => { try { core.stop(); } catch {} process.exit(0); };
+  process.stdin.on('end', quit);
+  process.stdin.on('error', quit);
+  process.stdin.resume();
+}

@@ -16,6 +16,8 @@
     "web": "node scripts/launch.js --web",
     "web:demo": "node scripts/launch.js --web --demo",
     "electron": "electron .",
+    "tauri:dev": "npm --prefix shells/tauri install --no-audit --no-fund && npm --prefix shells/tauri run dev",
+    "tauri:build": "npm --prefix shells/tauri install --no-audit --no-fund && npm --prefix shells/tauri run build",
     "shortcut": "node scripts/launch.js --shortcut",
     "hooks:install": "node src/hooks-cli.js install",
     "hooks:uninstall": "node src/hooks-cli.js uninstall",

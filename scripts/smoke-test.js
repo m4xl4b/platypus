@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { spawnSync } = require('child_process');
+const { spawnSync, spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 let failed = 0;
@@ -50,6 +50,29 @@ function get(port, p, method = 'GET', body) {
   });
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// lo stream delle shell (/api/shell/events): raccoglie gli eventi e aspetta quello che serve
+function shellEvents(port, headers = {}) {
+  const events = [];
+  let status = 0, req = null, buf = '';
+  const ready = new Promise(resolve => {
+    req = http.get({ host: '127.0.0.1', port, path: '/api/shell/events', headers }, res => {
+      status = res.statusCode;
+      resolve();
+      res.on('data', c => {
+        buf += c;
+        let k;
+        while ((k = buf.indexOf('\n\n')) >= 0) {
+          const block = buf.slice(0, k); buf = buf.slice(k + 2);
+          const ev = /^event: (.*)$/m.exec(block), data = /^data: (.*)$/m.exec(block);
+          if (ev && data) try { events.push({ event: ev[1], data: JSON.parse(data[1]) }); } catch {}
+        }
+      });
+    });
+    req.on('error', () => resolve());
+  });
+  const wait = async (pred, ms = 3000) => { for (let t = 0; t < ms; t += 50) { const e = events.find(pred); if (e) return e; await sleep(50); } return null; };
+  return { events, ready, wait, status: () => status, close: () => { try { req.destroy(); } catch {} } };
+}
 
 (async () => {
   console.log(`Platypus smoke test · ${process.platform} ${process.arch} · Node ${process.versions.node}`);
@@ -70,6 +93,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   require('./unit-surprise').run(ok);
   require('./unit-engine').run(ok);
   await require('./unit-embed').run(ok);
+  require('./unit-notify').run(ok);
 
   console.log('motore');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-test-'));
@@ -247,8 +271,36 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(away && away.cause === 'elsewhere' && away.chain.fix && /Menu\.tsx$/.test(away.chain.fix.target), 'scenario: l\'errore cita migrate.ts, il PLAN modifica Menu.tsx (cerca altrove)');
   const hook = await get(port, '/platypus-hook', 'POST', JSON.stringify({ session_id: 'smoke-1', hook_event_name: 'PreToolUse', cwd: tmp, tool_name: 'Read', tool_input: { file_path: 'a.txt' } }));
   ok(hook.status === 204, 'hook ricevuto → ' + hook.status);
+  // T2 (Tauri): le notifiche le decide il motore. Electron le ascolta nel suo processo (core.notify), Tauri dallo stream
+  // /api/shell/events: un permesso chiesto mentre la demo gira deve arrivare a tutti e due, una volta sola
+  const inProc = [];
+  const onNotify = e => inProc.push(e);
+  core.notify.on('notify', onNotify);
+  const shellSt = shellEvents(port);
+  await shellSt.ready;
+  const c0 = await shellSt.wait(e => e.event === 'counts');
+  ok(shellSt.status() === 200 && c0 && typeof c0.data.waiting === 'number' && c0.data.sessions >= 4, `stream delle shell: contatori subito (${c0 ? JSON.stringify(c0.data) : '-'})`);
+  // T4: il menu dell'icona di Tauri, con i testi già tradotti e lo stato delle voci
+  const m0 = await shellSt.wait(e => e.event === 'menu');
+  const mt = (m0 && m0.data.texts) || {};
+  ok(m0 && m0.data.demo === true && m0.data.hooks === false && m0.data.base === base && ['show', 'pin', 'demo', 'notify', 'cowork', 'hooksOn', 'hooksOff', 'report', 'browser', 'folder', 'quit', 'askTitle', 'askYes'].every(k => typeof mt[k] === 'string' && mt[k]) && mt.failed.includes('{error}'), `stream delle shell: il menu (demo accesa, hook no, cartella di Claude Code) → «${mt.show}», «${mt.hooksOn}»`);
+  ok(c0 && typeof c0.data.label === 'string' && c0.data.label.includes(String(c0.data.sessions)) && /^Platypus — /.test(c0.data.tooltip), `stream delle shell: la prima voce e il suggerimento dell'icona → «${c0 && c0.data.label}»`);
   const perm = await get(port, '/platypus-hook/permission', 'POST', JSON.stringify({ session_id: 'smoke-1', hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } }));
-  ok(perm.status === 204, 'permesso senza finestre aperte: decide il terminale → ' + perm.status);
+  ok(perm.status === 204, 'permesso senza finestre aperte: decide il terminale (lo stream delle shell non conta come finestra) → ' + perm.status);
+  const nWait = await shellSt.wait(e => e.event === 'notify' && e.data.kind === 'wait' && e.data.sid === 'smoke-1');
+  ok(nWait && nWait.data.key === 'wait:smoke-1:main' && /CLAUDE/.test(nWait.data.title) && /ls/.test(nWait.data.body), 'stream delle shell: la notifica del permesso → ' + (nWait ? nWait.data.title + ' | ' + nWait.data.body.replace(/\n/g, ' / ') : '-'));
+  ok(inProc.filter(e => e.sid === 'smoke-1').length === 1 && inProc[0].title === (nWait && nWait.data.title), 'Electron: la stessa notifica nel suo processo, una volta sola');
+  ok(!!(await shellSt.wait(e => e.event === 'counts' && e.data.waiting >= 1)), 'stream delle shell: i contatori vedono l\'attesa');
+  await sleep(700);
+  ok(shellSt.events.filter(e => e.event === 'notify' && e.data.sid === 'smoke-1').length === 1, 'nessun doppione della notifica');
+  core.notify.off('notify', onNotify);
+  shellSt.close();
+  const shellBad = shellEvents(port, { Origin: 'http://127.0.0.1:1' });
+  await shellBad.ready;
+  const shellHost = shellEvents(port, { Host: 'evil.example:' + port });
+  await shellHost.ready;
+  ok(shellBad.status() === 403 && shellHost.status() === 403, `stream delle shell: un'altra origine → ${shellBad.status()}, un altro Host → ${shellHost.status()}`);
+  shellBad.close(); shellHost.close();
   // feedback agli agenti (2.11): l'hook sincrono risponde sempre, e quando non ha niente da dire Claude Code non riceve nulla
   const fbMod = require(path.join(__dirname, '..', 'src', 'core', 'feedback'));
   const fbIn = (ev, extra = {}) => JSON.stringify({ session_id: 'fb-none', hook_event_name: ev, cwd: tmp, tool_name: 'Bash', tool_input: { command: 'npm test' }, ...extra });
@@ -552,6 +604,24 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(ru.removed && !hooks.feedbackStatus({ base }) && hooks.status({ base }) && others(cur) === before && cur.hooks.PostToolUse.some(g => g.hooks.some(h => h.command === 'echo mio')), 'tolti gli hook di feedback: il resto è com\'era');
   ok(hooks.uninstallFeedback({ base }).removed === false, 'toglierli due volte: niente da fare');
   hooks.uninstall({ base });
+
+  // il guscio Tauri avvia il motore come processo figlio e ne tiene aperto lo stdin: quando il guscio si chiude
+  // (anche in modo brusco) il motore deve salvare e uscire da solo. Home e dati finti: mai le sessioni vere
+  console.log('motore avviato da un guscio (--parent-stdin)');
+  {
+    const home = path.join(tmp, 'home-guscio');
+    fs.mkdirSync(path.join(home, '.claude', 'projects'), { recursive: true });
+    const sp = 47990 + Math.floor(Math.random() * 9);
+    const env = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: path.join(home, 'AppData', 'Roaming'), LOCALAPPDATA: path.join(home, 'AppData', 'Local'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), PLATYPUS_DATA_DIR: path.join(home, '.platypus'), PLATYPUS_PORT: String(sp) };
+    const child = spawn(process.execPath, [path.join(ROOT, 'src', 'standalone.js'), '--no-open', '--parent-stdin'], { env, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+    const exited = new Promise(r => child.on('exit', code => r(code)));
+    let up = false;
+    for (let k = 0; k < 75 && !up; k++) { up = (await get(sp, '/api/state')).status === 200; if (!up) await sleep(200); }
+    child.stdin.end();
+    const code = await Promise.race([exited, sleep(5000).then(() => 'ancora acceso')]);
+    if (code !== 0) try { child.kill(); } catch {}
+    ok(up && code === 0, `il motore risponde, e quando il guscio chiude lo stdin esce da solo → ${up ? 'acceso' : 'non risponde'}, uscita ${code}`);
+  }
 
   console.log('finestra della sessione (Windows)');
   const osint = require(path.join(ROOT, 'src', 'core', 'osint'));

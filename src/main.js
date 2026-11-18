@@ -8,7 +8,7 @@ const { startCore } = require('./core');
 const autostart = require('./autostart');
 const { fitBounds } = require('./bounds');
 const { isOwnUrl, isExternalUrl } = require('./urls');
-const { tr, trn, money } = require('./i18n');
+const { tr, trn } = require('./i18n');
 
 // PLATYPUS_DATA_DIR (prove, loop in parallelo): anche i dati di Electron stanno lì, in electron/. Va fatto prima del
 // blocco "una sola istanza", che dipende da questa cartella: così non si scontra con il Platypus già aperto.
@@ -182,32 +182,6 @@ function toggleMaximize() {
 
 // ---------------------------------------------------------------- report giornaliero
 function openReport() { shell.openExternal(`http://127.0.0.1:${core.port}/report`); }
-let reportShownDay = '';
-function checkReport() {
-  const s = core.state.settings || {};
-  const hour = Number(s.reportHour);
-  if (!(hour >= 0 && hour <= 23)) return;
-  const now = new Date();
-  const day = now.toDateString();
-  if (cfg.reportDay === day || reportShownDay === day) return;
-  if (now.getHours() < hour) return;
-  reportShownDay = day; cfg.reportDay = day; saveCfg();
-  if (cfg.notify === false || !canNotify()) return;
-  let r = null;
-  try { r = core.stats.report(); } catch {}
-  if (!r || (!r.projects.length && !process.env.PLATYPUS_NOTIFY_TEST)) return; // giornata vuota: niente avviso
-  const t = r.totals;
-  const n = new Notification({
-    title: tr('Report della giornata pronto'),
-    body: [money(t.cost), trn('{n} sessione', '{n} sessioni', t.sessions), trn('{n} sottoagente', '{n} sottoagenti', t.completed), trn('{n} commit', '{n} commit', t.commits)].join(' · '),
-    icon: path.join(ROOT, 'build', 'icon.png'),
-  });
-  n.on('click', openReport);
-  n.on('close', () => { activeToasts = activeToasts.filter(x => x !== n); });
-  activeToasts.push(n);
-  n.show();
-}
-
 // ---------------------------------------------------------------- hook di Claude Code
 function installHooks() {
   try {
@@ -283,83 +257,22 @@ function createTray() {
   buildTrayMenu();
 }
 
-// ---------------------------------------------------------------- notifiche: un agente aspetta il tuo permesso
-const notified = new Set();
-let notifyPrimed = false;
+// ---------------------------------------------------------------- notifiche
+// Quando c'è qualcosa da dire (un agente che aspetta, un avviso nuovo, il report) lo decide il motore (src/core/notify.js),
+// uguale per tutte le shell; qui si decide solo se mostrarlo: l'opzione del menu e la finestra già in primo piano.
 let activeToasts = [];
-function agentLabel(a) {
-  if (a.kind === 'main') return 'CLAUDE';
-  return String(a.name || a.type || tr('agente')).toUpperCase() + (!a.name && a.seq > 1 ? '-' + a.seq : '');
-}
-function sessionLabel(s) { return s.wing === 'cowork' ? (s.title || s.project) + ' (Cowork)' : s.project; }
-function checkWaiting() {
-  const snap = core.state.snapshot();
-  const current = new Set();
-  const fresh = [];
-  snap.sessions.forEach((s, i) => {
-    for (const a of [s.main, ...s.subs]) {
-      if (a.status !== 'waiting' || a.finished || s.demo) continue;
-      const k = s.id + ':' + a.id;
-      current.add(k);
-      if (!notified.has(k)) { notified.add(k); fresh.push({ s, a, floor: i + 1 }); }
-    }
+function showNotice(ev) {
+  if (process.env.PLATYPUS_DEBUG) console.log('[notify]', ev.kind, '|', ev.title, '|', String(ev.body).replace(/\n/g, ' / '), '| supportate:', Notification.isSupported(), 'finestra attiva:', !!(win && win.isFocused()));
+  if (cfg.notify === false || !canNotify()) return;
+  if (ev.kind !== 'report' && win && win.isVisible() && win.isFocused() && !process.env.PLATYPUS_NOTIFY_TEST) return;
+  const n = new Notification({ title: ev.title, body: ev.body, icon: path.join(ROOT, 'build', 'icon.png'), silent: false });
+  n.on('click', () => {
+    if (ev.kind === 'report') return openReport();
+    showWindow(); if (win && ev.sid) win.webContents.send('office:goto', ev.sid);
   });
-  for (const k of [...notified]) if (!current.has(k)) notified.delete(k);
-  // all'avvio non notifichiamo le attese già in corso: le vedi aprendo la finestra
-  if (!notifyPrimed) { notifyPrimed = true; return; }
-  if (process.env.PLATYPUS_DEBUG && fresh.length) console.log('[notify] nuove attese:', fresh.length, 'supportate:', Notification.isSupported(), 'finestra attiva:', !!(win && win.isFocused()));
-  if (!fresh.length || cfg.notify === false || !canNotify()) return;
-  if (win && win.isVisible() && win.isFocused() && !process.env.PLATYPUS_NOTIFY_TEST) return;
-  const first = fresh[0];
-  const title = fresh.length === 1
-    ? tr('{agent} ti aspetta', { agent: agentLabel(first.a) }) // un permesso, una domanda o un piano: lo dice la riga sotto
-    : tr('{n} agenti ti aspettano', { n: fresh.length });
-  const body = fresh.length === 1
-    ? tr('Piano {n}', { n: first.floor }) + ' · ' + sessionLabel(first.s) + '\n' + (first.a.action || '')
-    : fresh.slice(0, 4).map(f => agentLabel(f.a) + ' · ' + tr('piano {n}', { n: f.floor }) + ' ' + sessionLabel(f.s)).join('\n');
-  const n = new Notification({ title, body, icon: path.join(ROOT, 'build', 'icon.png'), silent: false });
-  n.on('click', () => { showWindow(); if (win) win.webContents.send('office:goto', first.s.id); });
   n.on('close', () => { activeToasts = activeToasts.filter(x => x !== n); });
   activeToasts.push(n); // tiene vivo l'oggetto finché la notifica è visibile
   n.show();
-  if (process.env.PLATYPUS_DEBUG) console.log('[notify] mostrata:', title, '|', body.replace(/\n/g, ' / '));
-}
-// avvisi intelligenti (agente fermo, errori di fila, budget, sessione che ti aspetta)
-const alertSeen = new Set();
-let alertsPrimed = false;
-function checkAlerts() {
-  const snap = core.state.snapshot();
-  const current = new Set();
-  const fresh = [];
-  snap.sessions.forEach((s, i) => {
-    for (const al of s.alerts || []) {
-      if (al.kind === 'wait' || s.demo) continue; // le attese hanno già la loro notifica
-      const k = s.id + ':' + al.id;
-      current.add(k);
-      if (!alertSeen.has(k)) { alertSeen.add(k); fresh.push({ s, al, floor: i + 1 }); }
-    }
-  });
-  for (const k of [...alertSeen]) if (!current.has(k)) alertSeen.delete(k);
-  if (!alertsPrimed) { alertsPrimed = true; return; }
-  if (!fresh.length || snap.settings.alertsNotify === false || cfg.notify === false || !canNotify()) return;
-  if (win && win.isVisible() && win.isFocused() && !process.env.PLATYPUS_NOTIFY_TEST) return;
-  const first = fresh[0];
-  const n = new Notification({
-    title: fresh.length === 1 ? tr('Avviso · piano {n}', { n: first.floor }) + ' ' + sessionLabel(first.s) : tr('{n} nuovi avvisi', { n: fresh.length }),
-    body: fresh.slice(0, 4).map(f => (fresh.length > 1 ? `P${f.floor}: ` : '') + f.al.text).join('\n'),
-    icon: path.join(ROOT, 'build', 'icon.png'),
-  });
-  n.on('click', () => { showWindow(); if (win) win.webContents.send('office:goto', first.s.id); });
-  n.on('close', () => { activeToasts = activeToasts.filter(x => x !== n); });
-  activeToasts.push(n);
-  n.show();
-  if (process.env.PLATYPUS_DEBUG) console.log('[notify] avviso:', fresh.map(f => f.al.text).join(' / '));
-}
-
-let waitTimer = null;
-function scheduleWaitCheck() {
-  if (waitTimer) return;
-  waitTimer = setTimeout(() => { waitTimer = null; try { checkWaiting(); } catch {} try { checkAlerts(); } catch {} }, 300);
 }
 
 // niente notifiche nelle prove automatiche (modalità snapshot): Electron registrerebbe l'app nel menu Start vero
@@ -435,11 +348,11 @@ app.whenReady().then(async () => {
   }
   if (process.argv.includes('--demo')) core.demo.start();
   ensureStartMenuShortcut();
-  core.state.on('change', scheduleWaitCheck);
+  core.notify.seenReport(cfg.reportDay); // il report già mostrato oggi quando lo decideva questa shell
+  core.notify.on('notify', showNotice);
   core.state.on('lang', () => buildTrayMenu()); // lingua cambiata nelle opzioni
   createWindow();
   createTray();
-  setInterval(() => { try { checkReport(); } catch {} }, 60000);
   if (process.env.PLATYPUS_SNAPSHOT) { // solo per test automatici
     setTimeout(async () => {
       if (process.env.PLATYPUS_SNAPSHOT_JS) { await win.webContents.executeJavaScript(process.env.PLATYPUS_SNAPSHOT_JS); await new Promise(r => setTimeout(r, 1500)); }
