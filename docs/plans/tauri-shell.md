@@ -143,7 +143,7 @@ On `[win]` and on `[linux]`, Electron against Tauri, with the demo on:
 - On macOS it is the only proof possible: read the logs carefully.
 - The Actions need the branch on GitHub, and pushing a branch needs Max's permission at that moment: stop and ask. Until then, write the workflow and check it by reading, without pushing.
 
-## T9 · Docs  [ ]
+## T9 · Docs  [x]
 
 - **`docs/ARCHITECTURE.md`:** the section "Moving to Tauri (or another shell)" becomes "Tauri shell (experimental)", with how it is made, the limits and the link to the measurements. The Italian `docs/ARCHITETTURA.md` is updated to match.
 - **Installation guides** (Italian and English): an optional section "Tauri shell", with the prerequisites per system.
@@ -154,7 +154,10 @@ On `[win]` and on `[linux]`, Electron against Tauri, with the demo on:
 
 ## For the CHANGELOG
 
-(to be filled in at the end)
+(Draft notes, completed as the tasks close; the integration writes the real entry.)
+
+- Notifications (agent waiting, new alert, daily report) are now decided by the engine (`src/core/notify.js`) and only shown by the shell, so every desktop shell notifies the same things. Electron behaves as before. New `GET /api/shell/events`: an SSE stream with only counters and notifications, for a shell that runs the engine as a separate process. The day of the last report notification now lives in `~/.platypus/notify.json`.
+- Docs: the architecture section about Tauri became "Tauri shell (experimental)", with the design, the limits and the prerequisites.
 
 ## Journal
 
@@ -211,3 +214,49 @@ On `[win]` and on `[linux]`, Electron against Tauri, with the demo on:
   - `npm run i18n:check`: 0 missing (the texts kept the same keys).
   - Electron itself, from the binary already in the main checkout's `node_modules` (nothing installed), in snapshot mode with `--demo`, port 47830, temporary home: a permission posted to the engine reached `showNotice` (`[notify] wait | CLAUDE is waiting for you | Floor 4 · t2 / Needs your OK: Runs: ls`), the screenshot shows the office with floor 4 waiting, and the process exited by itself.
 - Doubts for Max: none blocking. The tray option "Notifiche per i permessi" stays per shell: if you want it shared between Electron and Tauri, it could move into the engine's settings later.
+
+### 2026-11-18 · T9 · Docs
+
+- Done:
+  - `docs/ARCHITECTURE.md`: the section "Moving to Tauri (or another shell)" became "Tauri shell (experimental)": how it is made (own folder, engine as a Node child process or attach to a running one, window on the engine's URL, `officeApp` over `invoke` with one permission per command, notifications from `/api/shell/events`, plugins used from Rust only), the limits known from the Tauri 2 docs, and where the measurements will be. Also added `notify.js` to the engine table, `GET /api/shell/events` to the API table, the engine/shell split of notifications in "Desktop shell", and `~/.platypus/notify.json` to "Data on disk".
+  - `docs/ARCHITETTURA.md`: the same changes in Italian.
+  - "For the CHANGELOG" above: draft notes for T2 and T9.
+- Decision: the installation guides (`docs/INSTALL.md`, `docs/INSTALLAZIONE.md`) are **not** changed here. `docs/plans/parallel.md` reserves them for the integration (only the platform-tests plan may touch them, in its X2 task, which would also make a merge conflict likely), and when two rules disagree the more cautious one wins. The draft for both guides is below, ready to paste at integration, to go after "Browser mode" / "Modalità browser".
+- Also decided: the architecture section describes the design decided in T1 and T2, and says so. It must be refreshed when T3–T7 close (the close decision of T3, the real limits found in T4–T5, the link to `tauri-measurements.md` from T7).
+- Checked: links and names against the code (`src/core/notify.js`, `src/core/index.js`, `src/main.js`); `npm test` with a temporary home: "Tutto a posto."; `npm run i18n:check`: 0 missing.
+
+Draft for `docs/INSTALL.md`:
+
+```markdown
+## Tauri shell (optional, experimental)
+
+Electron stays the default and needs nothing of this. The Tauri shell in `shells/tauri/` is there to compare size, memory and start-up time; to build it from source you need, on top of Node.js:
+
+- **Rust** 1.90 or newer, through [rustup](https://rustup.rs).
+- **Windows:** the Microsoft C++ Build Tools with "Desktop development with C++", and `rustup default stable-msvc`. WebView2 is already part of Windows 10 (1803 and later) and Windows 11.
+- **macOS:** the Xcode Command Line Tools (`xcode-select --install`), macOS 10.15 or newer.
+- **Debian / Ubuntu:** `sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`
+- **Fedora:** `sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file libappindicator-gtk3-devel librsvg2-devel libxdo-devel` and `sudo dnf group install "c-development"`
+- **Arch:** `sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg xdotool`
+
+Then `npm run tauri:build` once (the first build takes several minutes) and `node scripts/launch.js --shell tauri`. Without a build, the launcher explains how to make one and opens Electron.
+```
+
+Draft for `docs/INSTALLAZIONE.md`:
+
+```markdown
+## Guscio Tauri (facoltativo, sperimentale)
+
+Il guscio predefinito resta Electron, che non ha bisogno di niente di tutto questo. Il guscio Tauri in `shells/tauri/` serve a confrontare dimensioni, memoria e tempo di avvio; per compilarlo dai sorgenti servono, oltre a Node.js:
+
+- **Rust** 1.90 o più recente, con [rustup](https://rustup.rs).
+- **Windows:** i Microsoft C++ Build Tools con "Sviluppo di applicazioni desktop con C++", e `rustup default stable-msvc`. WebView2 c'è già in Windows 10 (dalla 1803) e in Windows 11.
+- **macOS:** gli Xcode Command Line Tools (`xcode-select --install`), macOS 10.15 o più recente.
+- **Debian / Ubuntu:** `sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`
+- **Fedora:** `sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file libappindicator-gtk3-devel librsvg2-devel libxdo-devel` e `sudo dnf group install "c-development"`
+- **Arch:** `sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg xdotool`
+
+Poi una volta `npm run tauri:build` (la prima compilazione richiede alcuni minuti) e `node scripts/launch.js --shell tauri`. Senza una compilazione, il lanciatore spiega come farla e apre Electron.
+```
+
+The commands `npm run tauri:build` and `--shell tauri` come with T3 and T6: check the draft against them before pasting it.
