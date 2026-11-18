@@ -1,0 +1,11 @@
+{
+  "name": "platypus-embed-onnx",
+  "version": "1.0.0",
+  "description": "Optional ONNX embedding provider for Platypus: a small multilingual model that runs locally in a worker thread. Installed only with `npm run embed:onnx:install`.",
+  "private": true,
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "@huggingface/transformers": "~3.7.0"
+  }
+}

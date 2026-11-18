@@ -7,9 +7,14 @@
 // Due testi sono vicini se usano le stesse parole importanti. Non capisce i sinonimi come un modello
 // neurale, ma è immediato, non scarica nulla e non manda niente fuori dal computer.
 
-const DIM = 256;
+const rule = require('./drift-rule');
+const DIM = 256; // solo per il TF-IDF: il resto del modulo prende la lunghezza dai vettori (v.length)
 const MAX_PIECES = 900;
 const MAX_TERMS = 48;
+// I vettori neurali hanno bisogno del testo, non delle radici: ogni pezzo ne tiene un estratto corto, solo in memoria
+// (non va mai su disco; la cache degli embedding salva vettori e hash, non il testo).
+const SNIP = 320, SNIP_ACTION = 480;
+function snippet(text, n = SNIP) { return String(text || '').replace(/\s+/g, ' ').trim().slice(0, n); }
 
 const STOP = new Set((
   // italiano
@@ -108,7 +113,7 @@ class AgentMind {
     const tm = terms(text, this.corpus.surface);
     if (!tm.size && kind !== 'summary') return null;
     this.corpus.add(tm);
-    const p = { id: ++this.seq, t, kind, label: String(label || '').slice(0, 140), terms: tm, tokens: Math.max(1, Math.round(tokens || String(text || '').length / 4)), gen: this.gen, ...extra };
+    const p = { id: ++this.seq, t, kind, label: String(label || '').slice(0, 140), terms: tm, text: snippet(text), tokens: Math.max(1, Math.round(tokens || String(text || '').length / 4)), gen: this.gen, ...extra };
     this.pieces.push(p);
     if (this.pieces.length > MAX_PIECES) this.pieces.splice(0, this.pieces.length - MAX_PIECES);
     return p;
@@ -134,7 +139,7 @@ class AgentMind {
     if (!text) return;
     const p = this.add(kind, t, label, text, String(text).length / 4, isErr ? { err: true } : null);
     // per la stella polare conta l'azione insieme a quello che ha restituito
-    if (act && p) act.terms = mergeTerms(act.terms, p.terms);
+    if (act && p) { act.terms = mergeTerms(act.terms, p.terms); act.text = snippet(act.text + ' → ' + p.text, SNIP_ACTION); }
   }
   boundary(t, meta) { this.pendingBoundary = { t, pre: meta && meta.preTokens, post: meta && meta.postTokens }; }
   compact(t, summaryText) {
@@ -153,9 +158,34 @@ class AgentMind {
   }
 }
 
+// ---------------------------------------------------------------- spazi di significato
+// Ogni vettore viene da una fonte: 'tfidf', 'ollama:<modello>' o 'onnx:<modello>'. Vettori di fonti diverse non si
+// confrontano mai: un calcolo (bolla, stella polare, deriva) usa uno spazio solo, e lo spazio porta la sua fonte (src).
+// Uno spazio dà il vettore di un compito (goal) e di un pezzo (piece), oppure null se non l'ha ancora: i vettori
+// neurali arrivano dopo, dalla coda di embed/. Il TF-IDF li ha sempre, perché si ricalcola dalle mappe dei termini.
+function tfidfSpace(corpus) {
+  return { src: 'tfidf', version: 0, goal: g => corpus.vector(g.terms), piece: p => corpus.vector(p.terms) };
+}
+// La regola delle fonti miste: si prende il primo spazio candidato che ha un vettore per ogni compito e ogni azione
+// delle menti in gioco; se nessuno ce l'ha, il TF-IDF. I pezzi che non sono azioni e non hanno ancora un vettore nello
+// spazio scelto restano fuori dalla nuvola finché non arriva (vedi snapshotMinds: pending).
+// Si guardano tutti, senza fermarsi al primo che manca: chiedere un vettore è anche metterlo in coda.
+function covers(space, minds) {
+  let all = true;
+  for (const mind of minds) {
+    for (const g of mind.goals) if (!space.goal(g)) all = false;
+    for (const p of mind.pieces) if (p.kind === 'action' && !space.piece(p)) all = false;
+  }
+  return all;
+}
+function pickSpace(minds, corpus, candidates) {
+  for (const sp of candidates || []) if (sp && sp.src !== 'tfidf' && covers(sp, minds)) return sp;
+  return tfidfSpace(corpus);
+}
+
 // ---------------------------------------------------------------- geometria: PCA a 3 assi e gruppi
 function pca3(vecs, prevAxes) {
-  const n = vecs.length, d = DIM;
+  const n = vecs.length, d = vecs[0].length;
   const mean = new Float32Array(d);
   for (const v of vecs) for (let i = 0; i < d; i++) mean[i] += v[i] / n;
   const X = vecs.map(v => { const x = new Float32Array(d); for (let i = 0; i < d; i++) x[i] = v[i] - mean[i]; return x; });
@@ -194,15 +224,15 @@ function kmeans(vecs, k, weights) {
     for (let i = 0; i < n; i++) { let m = Infinity; for (const c of cents) m = Math.min(m, 1 - cosine(vecs[i], c)); if (m > best) { best = m; bi = i; } }
     cents.push(vecs[bi]);
   }
-  const lab = new Array(n).fill(0);
+  const lab = new Array(n).fill(0), d = vecs[0].length;
   for (let it = 0; it < 12; it++) {
     for (let i = 0; i < n; i++) { let b = -2, bj = 0; for (let j = 0; j < k; j++) { const s = cosine(vecs[i], cents[j]); if (s > b) { b = s; bj = j; } } lab[i] = bj; }
     for (let j = 0; j < k; j++) {
-      const c = new Float32Array(DIM); let cnt = 0;
-      for (let i = 0; i < n; i++) if (lab[i] === j) { const w = weights ? weights[i] : 1; for (let q = 0; q < DIM; q++) c[q] += vecs[i][q] * w; cnt++; }
+      const c = new Float32Array(d); let cnt = 0;
+      for (let i = 0; i < n; i++) if (lab[i] === j) { const w = weights ? weights[i] : 1; for (let q = 0; q < d; q++) c[q] += vecs[i][q] * w; cnt++; }
       if (!cnt) continue;
-      let nn = 0; for (let q = 0; q < DIM; q++) nn += c[q] * c[q]; nn = Math.sqrt(nn) || 1;
-      for (let q = 0; q < DIM; q++) c[q] /= nn;
+      let nn = 0; for (let q = 0; q < d; q++) nn += c[q] * c[q]; nn = Math.sqrt(nn) || 1;
+      for (let q = 0; q < d; q++) c[q] /= nn;
       cents[j] = c;
     }
   }
@@ -214,14 +244,18 @@ function kmeans(vecs, k, weights) {
 // L'obiettivo viene "allargato" con le prime azioni che gli somigliano di più (retroazione di pertinenza):
 // "rifai il login" impara così che anche auth/ e token.ts fanno parte del compito.
 // Una riga per azione: [t, punteggio, media delle ultime 6, base (le prime 8 del compito), indice del compito, etichetta, errore]
-function alignment(mind, corpus) {
-  const align = [];
-  const acts = mind.pieces.filter(p => p.kind === 'action');
+// space: lo spazio di significato (di base il TF-IDF del corpus); le azioni senza vettore in quello spazio non contano.
+function alignment(mind, corpus, space = tfidfSpace(corpus)) {
+  const align = [], th = space.th || rule.thresholdsFor(space.src), z = th.zero || 0; // space.th: solo per la calibrazione
+  const score = c => (z ? Math.max(0, (c - z) / (1 - z)) : Math.max(0, c)); // riscalato dalla somiglianza "di fondo" della fonte
+  const acts = [];
+  for (const p of mind.pieces) if (p.kind === 'action') { const v = space.piece(p); if (v) acts.push({ p, v }); }
   const gv = mind.goals.map((g, gi) => {
-    const v0 = corpus.vector(g.terms);
+    const v0 = space.goal(g);
+    if (!v0) return { t: g.t, v: null };
     const end = gi + 1 < mind.goals.length ? mind.goals[gi + 1].t : Infinity;
-    const early = acts.filter(p => p.t >= g.t && p.t < end).slice(0, 10).map(p => corpus.vector(p.terms));
-    const top = early.map(v => [cosine(v, v0), v]).sort((a, b) => b[0] - a[0]).slice(0, 3).filter(x => x[0] > 0);
+    const early = acts.filter(x => x.p.t >= g.t && x.p.t < end).slice(0, 10).map(x => x.v);
+    const top = early.map(v => [score(cosine(v, v0)), v]).sort((a, b) => b[0] - a[0]).slice(0, 3).filter(x => x[0] > (th.widen || 0)); // pertinenti davvero, per quella fonte
     if (!top.length) return { t: g.t, v: v0 };
     const v = new Float32Array(v0.length);
     for (let i = 0; i < v.length; i++) { v[i] = v0[i]; for (const [, x] of top) v[i] += 0.6 * x[i] / top.length; }
@@ -230,47 +264,50 @@ function alignment(mind, corpus) {
     return { t: g.t, v };
   });
   let gi = -1, win = [], base = [];
-  for (const p of acts) {
+  for (const { p, v } of acts) {
     while (gi + 1 < gv.length && gv[gi + 1].t <= p.t) { gi++; win = []; base = []; }
-    if (gi < 0) continue;
-    const s = Math.max(0, cosine(corpus.vector(p.terms), gv[gi].v));
+    if (gi < 0 || !gv[gi].v) continue;
+    const s = score(cosine(v, gv[gi].v));
     win.push(s); if (win.length > 6) win.shift();
     if (base.length < 8) base.push(s);
     const avg = win.reduce((a, x) => a + x, 0) / win.length;
-    const b = Math.max(0.03, base.reduce((a, x) => a + x, 0) / base.length);
+    const b = Math.max(th.floor, base.reduce((a, x) => a + x, 0) / base.length);
     align.push([p.t, +s.toFixed(3), +avg.toFixed(3), +b.toFixed(3), gi, p.label, p.err ? 1 : 0]);
   }
   return align;
 }
-// Alla deriva: la stessa regola della mappa (worldmap.js). L'allineamento (media su base) resta sotto DRIFT_REL per
+// Alla deriva: la stessa regola della mappa (drift-rule.js, che usa anche worldmap.js). L'allineamento (media su base) resta sotto DRIFT_REL per
 // DRIFT_RUN azioni di fila, tutte del compito in corso. Con una base minima le parole del compito non compaiono mai nel
 // lavoro, e non si può giudicare (weak).
-const DRIFT_REL = 0.35, DRIFT_RUN = 6, WEAK_BASE = 0.031;
-function drift(mind, corpus) {
+// Le soglie dipendono dalla fonte dei vettori (la tabella è in drift-rule.js): DRIFT_REL e DRIFT_RUN sono quelle del TF-IDF.
+const DRIFT_REL = rule.TFIDF.rel, DRIFT_RUN = rule.TFIDF.run;
+function drift(mind, corpus, space) {
   if (!mind || !corpus || !mind.goals || !mind.goals.length) return null;
-  const al = alignment(mind, corpus);
+  const sp = space || tfidfSpace(corpus);
+  const al = alignment(mind, corpus, sp);
   if (!al.length) return null;
-  const last = al[al.length - 1], gi = last[4];
+  const gi = al[al.length - 1][4];
   if (gi !== mind.goals.length - 1) return null; // c'è una richiesta più nuova, ancora senza azioni
-  let run = 0;
-  for (let i = al.length - 1; i >= 0 && al[i][4] === gi && al[i][2] / al[i][3] < DRIFT_REL; i--) run++;
-  const weak = last[3] <= WEAK_BASE, g = mind.goals[gi];
-  return { goal: { t: g.t, label: g.label }, run, rel: +(last[2] / last[3]).toFixed(3), weak, drifting: !weak && run >= DRIFT_RUN };
+  const j = rule.judge(al, rule.thresholdsFor(sp.src)), g = mind.goals[gi];
+  return { goal: { t: g.t, label: g.label }, run: j.run, rel: j.rel, weak: j.weak, drifting: j.drifting, src: sp.src, uncalibrated: j.uncalibrated };
 }
 
 // ---------------------------------------------------------------- vista per la pagina
 const cache = new Map();
-function snapshotMinds(minds, corpus, key, ctxLimitHint) {
+// space: lo spazio di significato scelto con pickSpace (di base il TF-IDF). Cambia lo spazio, si riparte: niente assi
+// presi da un calcolo fatto con un'altra fonte.
+function snapshotMinds(minds, corpus, key, ctxLimitHint, space = tfidfSpace(corpus)) {
   const all = [];
   for (const { id, name, mind } of minds) for (const p of mind.pieces) all.push({ p, owner: id, ownerName: name, mind });
-  const sig = all.length + ':' + (all.length ? all[all.length - 1].p.id : 0) + ':' + corpus.docs;
+  const sig = all.length + ':' + (all.length ? all[all.length - 1].p.id : 0) + ':' + corpus.docs + ':' + space.src + ':' + (space.version || 0);
   const hit = cache.get(key);
   if (hit && hit.sig === sig) return hit.v;
-  const recent = all.slice(-1200);
-  const vecs = recent.map(x => corpus.vector(x.p.terms));
+  let recent = all.slice(-1200), vecs = recent.map(x => space.piece(x.p));
+  const pending = vecs.reduce((n, v) => n + (v ? 0 : 1), 0);
+  if (pending) { recent = recent.filter((_, i) => vecs[i]); vecs = vecs.filter(Boolean); }
   const goalsAll = [];
-  for (const { id, mind } of minds) for (const g of mind.goals) goalsAll.push({ g, owner: id, v: corpus.vector(g.terms) });
-  const prevAxes = hit && hit.axes;
+  for (const { id, mind } of minds) for (const g of mind.goals) { const v = space.goal(g); if (v) goalsAll.push({ g, owner: id, v }); }
+  const prevAxes = hit && hit.src === space.src && hit.axes;
   const P = vecs.length >= 4 ? pca3(vecs.concat(goalsAll.map(x => x.v)), prevAxes) : null;
   // gruppi di significato: di cosa è fatto il contesto
   const k = Math.min(6, Math.max(1, Math.round(Math.sqrt(vecs.length / 3))));
@@ -284,17 +321,17 @@ function snapshotMinds(minds, corpus, key, ctxLimitHint) {
     const top = [...w.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([t]) => corpus.surface.get(t) || t);
     clusters.push({ id: j, label: top.join(' · '), n: idx.length });
   }
-  const align = minds.length === 1 ? alignment(minds[0].mind, corpus) : [];
+  const align = minds.length === 1 ? alignment(minds[0].mind, corpus, space) : [];
   const pieces = recent.map((x, i) => {
     const c = P ? P.coords[i] : [0, 0, 0];
     return [x.p.t, x.p.kind, x.p.label, x.p.tokens, x.p.gen, +c[0].toFixed(3), +c[1].toFixed(3), +c[2].toFixed(3), lab[i] ?? 0, x.owner, x.p.err ? 1 : 0];
   });
   const goals = goalsAll.map(x => { const c = P ? P.project(x.v) : [0, 0, 0]; return [x.g.t, x.g.label, +c[0].toFixed(3), +c[1].toFixed(3), +c[2].toFixed(3), x.owner]; });
   const ctx = minds.map(({ id, mind }) => ({ id, hist: mind.ctxHist.slice(-400), compactions: mind.compactions, gen: mind.gen }));
-  const v = { engine: 'lexical', pieces, goals, clusters, align, ctx, limitHint: ctxLimitHint || 0 };
-  cache.set(key, { sig, v, axes: P ? P.axes : null });
+  const v = { engine: space.src === 'tfidf' ? 'lexical' : 'neural', src: space.src, th: rule.thresholdsFor(space.src), pending, pieces, goals, clusters, align, ctx, limitHint: ctxLimitHint || 0 };
+  cache.set(key, { sig, v, src: space.src, axes: P ? P.axes : null });
   if (cache.size > 80) cache.delete(cache.keys().next().value);
   return v;
 }
 
-module.exports = { AgentMind, Corpus, terms, cosine, snapshotMinds, alignment, drift, DIM, DRIFT_REL, DRIFT_RUN };
+module.exports = { AgentMind, Corpus, terms, cosine, snapshotMinds, alignment, drift, tfidfSpace, pickSpace, snippet, DIM, DRIFT_REL, DRIFT_RUN };

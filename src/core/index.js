@@ -23,6 +23,7 @@
 //   POST /api/bottega        {sid|cwd, action: pin|ignore|unignore|forget, id}
 //   POST /api/bottega/learn  {sid|cwd}  impara dalle sessioni passate del progetto (in background)
 //   GET  /api/bottega/hints  {sid}  cosa direbbe il Nonno adesso: azioni in corso che corrispondono a una lezione
+//   GET  /api/embed          il motore del significato: fonte in uso, stato di ogni fonte, cache (vedi embed/)
 //   GET  /api/grounding      {sid, aid, replay}  mappa contro territorio: ricordi scaduti, modifiche alla cieca, percorsi inventati, affermazioni, sorprese
 
 const { dataDir } = require('../paths');
@@ -33,6 +34,7 @@ const path = require('path');
 const { OfficeState, DEFAULT_SETTINGS, displayName } = require('./state');
 const worldmap = require('./worldmap');
 const semantic = require('./semantic');
+const { Embedder } = require('./embed');
 const grounding = require('./grounding');
 const surprise = require('./surprise');
 const { Bottega, digest, hints, renderSection, projectKey, normDir } = require('./bottega');
@@ -209,6 +211,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const FEEDBACK_MS = 300;
   const feedbackStats = { calls: 0, said: 0, shadow: 0, late: 0, errors: 0 };
   const feedbackLog = new FeedbackLog(path.join(path.dirname(settingsPath), 'feedback')); // accanto alle opzioni: ~/.platypus/feedback
+  const embedder = new Embedder({ settings: state.settings, dir: path.join(path.dirname(settingsPath), 'embed-cache'), deps: { modelsDir: path.join(path.dirname(settingsPath), 'models') } }); // significato neurale (embed/)
   const feedbackGate = new feedback.Gate(); // i limiti di frequenza, in memoria: ripartono con Platypus
   // la demo (C3): agenti finti, quindi ogni funzione nel modo più alto che ha nella 2.11, qualunque cosa dicano le
   // opzioni; un registro tutto suo, in memoria, che si svuota quando la demo finisce
@@ -253,7 +256,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         // i progetti della demo sono finti: anche se una cartella con quel nome esiste sul computer, non la guardiamo
         hasSection: cwd => (s && s.demo ? false : claudemd.hasSection(cwd)),
         // i passi già visti dell'agente che ha mandato l'hook (il principale, o il sottoagente con quell'identificativo)
-        agent: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a && a.world ? { id: a.id, steps: a.world.steps, nodes: a.world.nodes, goals: (a.mind && a.mind.goals) || [], mind: a.mind || null, corpus: s.corpus || null } : null; },
+        agent: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a && a.world ? { id: a.id, steps: a.world.steps, nodes: a.world.nodes, goals: (a.mind && a.mind.goals) || [], mind: a.mind || null, corpus: s.corpus || null, space: a.mind && s.corpus ? semantic.pickSpace([a.mind], s.corpus, [embedder.space(1, { demo: !!s.demo })]) : null } : null; },
         waiting: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return !!(a && state.userPending(s, a, i.agent_id || null)); },
         agentName: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a ? displayName(a) : ''; },
         // tutti gli agenti della sessione, con il nome che hanno in ufficio (serve a dire chi ha cambiato un file)
@@ -371,8 +374,10 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     const minds = list.filter(a => a.mind && a.mind.pieces.length).slice(0, 40).map(a => ({ id: a.id, name: displayName(a), mind: a.mind, ctx: a.ctx || 0 }));
     if (!minds.length) return { ok: true, empty: true, sid: s.id, aid };
     try {
-      const v = semantic.snapshotMinds(minds, s.corpus, (q.get('replay') ? 'r:' : '') + s.id + ':' + aid);
-      return { ok: true, sid: s.id, aid, now: st.now(), names: Object.fromEntries(minds.map(m => [m.id, m.name])), ctxNow: Object.fromEntries(minds.map(m => [m.id, m.ctx])), ...v };
+      const space = semantic.pickSpace(minds.map(m => m.mind), s.corpus, [embedder.space(0, { demo: !!s.demo })]);
+      const v = semantic.snapshotMinds(minds, s.corpus, (q.get('replay') ? 'r:' : '') + s.id + ':' + aid, 0, space);
+      const active = embedder.activeId(); // la fonte scelta: finché non ha tutti i vettori si mostra il TF-IDF e si "affina"
+      return { ok: true, sid: s.id, aid, now: st.now(), active, refining: active !== 'tfidf' && !(active.startsWith('fake:') && !s.demo) && (v.src !== active || v.pending > 0), fallback: embedder.fallback, names: Object.fromEntries(minds.map(m => [m.id, m.name])), ctxNow: Object.fromEntries(minds.map(m => [m.id, m.ctx])), ...v };
     } catch (e) { return { ok: false, error: e.message }; }
   }
 
@@ -502,10 +507,16 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         on ? demo.start() : demo.stop();
         return json(res, 200, { demo: demo.on });
       }
+      case '/api/embed': { // il motore del significato: guarda le fonti (probe) o svuota la cache (clear)
+        if (j.action === 'clear') { await embedder.clearCache(); return json(res, 200, embedder.status()); }
+        if (j.action === 'probe') return json(res, 200, await embedder.probe());
+        return json(res, 400, { ok: false });
+      }
       case '/api/settings': {
         const before = { city: state.settings.weatherCity, dirs: state.settings.coworkDirs, lang: state.settings.lang };
         const s = state.setSettings(j);
         saveSettings(settingsPath, s);
+        embedder.configure(s);
         if (before.lang !== s.lang) {
           i18n.setLang(i18n.resolveLang(s.lang, osLocale));
           if (demo.on) { demo.stop(); demo.start(); } // la demo ricomincia nella nuova lingua
@@ -596,10 +607,12 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
       return res.end('window.AO_I18N=' + JSON.stringify({ lang, locale: i18n.localeTag(lang), dict: i18n.dict(lang), langs: i18n.LANGS }) + ';');
     }
+    if (url.pathname === '/drift-rule.js') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' }); return res.end(fs.readFileSync(path.join(__dirname, 'drift-rule.js'))); } // la regola della deriva, la stessa del motore
     if (url.pathname === '/api/settings') return json(res, 200, state.settings);
     if (url.pathname === '/api/cowork-scan') return json(res, 200, state.coworkScan || {});
     if (url.pathname === '/api/agentmap') return json(res, 200, agentMap(url.searchParams));
     if (url.pathname === '/api/agentmind') return json(res, 200, agentMind(url.searchParams));
+    if (url.pathname === '/api/embed') return json(res, 200, embedder.status());
     if (url.pathname === '/api/grounding') return json(res, 200, agentGrounding(url.searchParams));
     if (url.pathname === '/api/bottega/list') return json(res, 200, { ok: true, books: bottega.list() });
     if (url.pathname === '/api/bottega/claudemd') { const p = claudeMdPlan(Object.fromEntries(url.searchParams)); return p ? json(res, 200, { ok: true, ...p }) : json(res, 404, { ok: false }); }
@@ -685,12 +698,13 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     stats.stop();
     clearInterval(learnTimer); clearTimeout(learnSoon); clearInterval(judgeTimer);
     bottega.stop();
+    embedder.stop();
     state.stop();
     for (const c of clients) try { c.end(); } catch {}
     server.close();
   }
 
-  return { state, stats, bottega, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
+  return { state, stats, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
     install: () => hooks.install({ port, base }),
     uninstall: () => hooks.uninstall({ base }),
     status: () => hooks.status({ base }),

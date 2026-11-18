@@ -71,6 +71,7 @@ class Demo {
       for (const a of x.subs.values()) this.world.seed(x, a, a._demoStuck ? 10 : a._demoDrift ? 24 : 5 + Math.floor(Math.random() * 14), a._demoStuck ? 'npm run test:e2e' : null);
     }
     this.groundingScenario(this.ids.a, { explore: team[0], finder: team[1], architect: arch, tester: team[2], plan: planId }, scale);
+    this.synonymsScenario(this.ids.a);
     this.startWorkflows(this.ids.c);
     this.demoMessage(this.ids.a, arch, tr('Usa i refresh token a rotazione'));
     this.seedBooks();
@@ -174,6 +175,45 @@ class Demo {
   }
 
   // un evento fra qualche secondo (accorciato da scale), cancellato se la demo si ferma
+  // E7 · sinonimi: il compito dice "login", l'agente lavora sull'autenticazione con altre parole. Con il TF-IDF sembra
+  // alla deriva; con un motore che capisce i sinonimi (embedEngine = 'fake' nella demo, o un modello vero) resta sulla rotta.
+  synonymsScenario(sid) {
+    const s = this.state.sessions.get(sid);
+    const id = this.spawn(sid, 'general-purpose', tr('Sistema il login: gli utenti non riescono più a entrare'));
+    const a = s && s.subs.get(id);
+    if (!a) return null;
+    a._demoHold = Infinity; // recita solo il suo copione
+    const steps = [
+      ['Read', { file_path: 'src/login/LoginForm.tsx' }, 'export function LoginForm() { const [login, setLogin] = useState(""); return <button>Login</button> }'],
+      ['Grep', { pattern: 'login', path: 'src/login' }, 'src/login/LoginForm.tsx\nsrc/login/loginApi.ts\nsrc/login/LoginPage.tsx'],
+      ['Read', { file_path: 'src/login/loginApi.ts' }, 'export async function login(username, pwd) { return post("/api/login", { username, pwd }) }'],
+      ['Read', { file_path: 'src/login/LoginPage.tsx' }, '<LoginPage><LoginForm onLogin={goHome} /></LoginPage>'],
+      ['Bash', { command: 'npm test -- login' }, 'FAIL src/login/login.test.ts: login rejected for a valid username', true],
+      ['Grep', { pattern: '/api/login', path: 'src/server' }, 'src/server/routes.ts: app.post("/api/login", loginHandler)'],
+      ['Read', { file_path: 'src/server/loginHandler.ts' }, 'export function loginHandler(req, res) { login(req.body.username, req.body.pwd) }'],
+      ['Edit', { file_path: 'src/login/loginApi.ts', old_string: 'pwd', new_string: 'pwd.trim()' }, 'ok'],
+      ['Read', { file_path: 'src/security/authentication.ts' }, 'export function verifyCredentials(account, secret) { return bcrypt.compare(secret, account.hash) }'],
+      ['Grep', { pattern: 'verifyCredentials', path: 'src/security' }, 'src/security/authentication.ts\nsrc/security/accessGuard.ts'],
+      ['Edit', { file_path: 'src/security/authentication.ts', old_string: 'bcrypt.compare(secret', new_string: 'bcrypt.compare(secret.normalize()' }, 'ok'],
+      ['Read', { file_path: 'src/security/passwordHash.ts' }, 'bcrypt rounds 4: hash mismatch for accounts created before the migration'],
+      ['Edit', { file_path: 'src/security/passwordHash.ts', old_string: 'rounds: 4', new_string: 'rounds: 12' }, 'ok'],
+      ['Read', { file_path: 'src/security/accessGuard.ts' }, 'export function requireAuth(req) { if (!req.identity) throw new Unauthorized() }'],
+      ['Edit', { file_path: 'src/security/accessGuard.ts', old_string: 'req.identity', new_string: 'req.identity && req.identity.verified' }, 'ok'],
+      ['Read', { file_path: 'src/security/signIn.ts' }, 'signIn(identity, secret) issues the access credentials'],
+      ['Edit', { file_path: 'src/security/signIn.ts', old_string: 'issue(', new_string: 'issueVerified(' }, 'ok'],
+      ['Read', { file_path: 'docs/security/autenticazione.md' }, 'Accesso degli utenti: credenziali, autenticazione e identità verificata'],
+      ['Edit', { file_path: 'docs/security/autenticazione.md', old_string: 'credenziali', new_string: 'credenziali verificate' }, 'ok'],
+      ['Read', { file_path: 'src/security/credentials.ts' }, 'export const credentialPolicy = { minLength: 12, rotateDays: 90 }'],
+    ];
+    const t0 = Date.now() - steps.length * 30000 - 60000;
+    steps.forEach(([tool, input, out, err], i) => {
+      const tid = 'demo-syn-' + (++this.world.seq), t = t0 + i * 30000;
+      this.state.worldStart(s, a, tid, tool, input, t);
+      this.state.worldEnd(s, a, tid, !!err, { content: out }, { toolUseResult: {} }, t + 4000);
+    });
+    return id;
+  }
+
   later(sec, fn) { const tm = setTimeout(() => { this.world.timers.delete(tm); try { fn(); } catch {} }, sec * 1000); this.world.timers.add(tm); }
   // un hook di feedback come quello che Claude Code manderebbe per questa sessione (vedi index.js: feedbackAnswer)
   say(sid, input) {

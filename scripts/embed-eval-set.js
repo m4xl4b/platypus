@@ -1,0 +1,223 @@
+'use strict';
+// Il piccolo insieme etichettato per calibrare il significato (scripts/embed-eval.js). Scritto apposta, nessun dato vero.
+// Ogni compito ha sei azioni "sul compito" (come le scrive l'ufficio: strumento, file, un pezzo del risultato).
+// Le azioni "fuori dal compito" di un compito sono quelle di un compito di un altro ambito (domain).
+// syn: le azioni parlano del compito con parole diverse (sinonimi, altra lingua): è dove il TF-IDF fa fatica.
+
+module.exports = [
+  // ---------------------------------------------------------------- italiano
+  { lang: 'it', domain: 'auth', goal: 'Sistema il refresh dei token di login: quelli scaduti vanno rinnovati', on: [
+    'Legge src/auth/token.ts → export function refreshToken(t) { if (expired(t)) return renew(t) }',
+    'Cerca "refreshToken" in src/auth → session.ts:40 refreshToken(session.token)',
+    'Modifica src/auth/token.ts: rinnova il token scaduto prima della richiesta',
+    'Esegue: npm test -- auth → token.test.ts: 9 passed',
+    'Legge src/auth/session.ts → la sessione tiene il token e la data di scadenza',
+    'Modifica src/auth/session.ts: aggiorna la scadenza dopo il rinnovo del token'] },
+  { lang: 'it', domain: 'auth', syn: true, goal: 'Aggiusta il login', on: [
+    'Legge src/security/authentication.ts → verifyCredentials(user, password)',
+    'Cerca "signIn" in src → pages/SignIn.tsx: handleSubmit chiama authenticate()',
+    'Modifica src/security/authentication.ts: confronta l\'hash della password con bcrypt.compare',
+    'Esegue: npm test -- authentication → 1 failed: wrong password accepted',
+    'Modifica pages/SignIn.tsx: mostra l\'errore quando le credenziali sono sbagliate',
+    'Esegue: npm test -- authentication → 12 passed'] },
+  { lang: 'it', domain: 'billing', goal: 'Correggi l\'arrotondamento dell\'IVA nelle fatture', on: [
+    'Legge src/billing/invoice.ts → const vat = net * 0.22',
+    'Cerca "Math.round" in src/billing → tax.ts:12 Math.round(vat)',
+    'Modifica src/billing/tax.ts: arrotonda l\'IVA al centesimo per riga di fattura',
+    'Esegue: npm test -- invoice → totale fattura 122.01 invece di 122.00',
+    'Modifica src/billing/invoice.ts: somma le righe già arrotondate',
+    'Esegue: npm test -- invoice → 18 passed'] },
+  { lang: 'it', domain: 'billing', syn: true, goal: 'I totali dei documenti di vendita non tornano di un centesimo', on: [
+    'Legge src/billing/invoice.ts → total = lines.reduce((a, l) => a + l.amount * 1.22, 0)',
+    'Cerca "toFixed" in src/billing → rounding of vat per line',
+    'Modifica src/billing/rounding.ts: round half even on each line before summing',
+    'Esegue: npm test -- billing → expected 100.01 received 100.00',
+    'Legge src/billing/creditNote.ts → same rounding as invoices',
+    'Esegue: npm test -- billing → all passed'] },
+  { lang: 'it', domain: 'warehouse', goal: 'Aggiungi la tracciabilità dei lotti nel magazzino', on: [
+    'Legge src/warehouse/stock.ts → movimenti di magazzino senza numero di lotto',
+    'Modifica db/schema.sql: aggiunge la colonna lot_id alla tabella stock_movements',
+    'Crea src/warehouse/lots.ts: registra il lotto a ogni carico e scarico',
+    'Cerca "batch" in src/warehouse → nessun risultato',
+    'Modifica src/warehouse/stock.ts: passa il lotto nei movimenti',
+    'Esegue: npm test -- warehouse → lots.test.ts 7 passed'] },
+  { lang: 'it', domain: 'warehouse', syn: true, goal: 'Voglio sapere da quale partita viene ogni pezzo spedito', on: [
+    'Legge src/warehouse/shipping.ts → shipment lines have sku and qty only',
+    'Modifica db/schema.sql: add batch_code to shipment_lines',
+    'Modifica src/warehouse/shipping.ts: copy the batch code from the picked stock',
+    'Crea src/warehouse/traceability.ts: find the batch of a shipped item',
+    'Esegue: npm test -- traceability → 5 passed',
+    'Legge src/warehouse/picking.ts → picking chooses the oldest batch first'] },
+  { lang: 'it', domain: 'ui', goal: 'Metti il tema scuro nella barra laterale', on: [
+    'Legge src/ui/Sidebar.tsx → background: white; color: #222',
+    'Modifica src/ui/theme.css: variabili colore per il tema scuro',
+    'Modifica src/ui/Sidebar.tsx: usa var(--sidebar-bg) e var(--sidebar-fg)',
+    'Cerca "prefers-color-scheme" in src/ui → nessun risultato',
+    'Modifica src/ui/theme.css: @media (prefers-color-scheme: dark) per la barra laterale',
+    'Esegue: npm run storybook:test → Sidebar dark snapshot updated'] },
+  { lang: 'it', domain: 'ui', syn: true, goal: 'La colonna di navigazione a sinistra deve diventare nera di notte', on: [
+    'Legge src/ui/Sidebar.tsx → className="sidebar light"',
+    'Modifica src/ui/theme.css: dark palette for the sidebar',
+    'Modifica src/ui/Sidebar.tsx: switch to the dark class when the OS is in dark mode',
+    'Esegue: npm run storybook:test → snapshot Sidebar--dark',
+    'Legge src/ui/useColorScheme.ts → matchMedia prefers-color-scheme',
+    'Modifica src/ui/Sidebar.tsx: icons in light grey on the dark background'] },
+  { lang: 'it', domain: 'docs', goal: 'Aggiorna la policy di backup per la ISO 27001', on: [
+    'Legge docs/policy/backup.md → copie settimanali, nessun test di ripristino',
+    'Modifica docs/policy/backup.md: copie giornaliere cifrate e test di ripristino trimestrale',
+    'Legge docs/iso27001/annex-a.md → A.8.13 backup delle informazioni',
+    'Modifica docs/iso27001/soa.md: controllo A.8.13 applicato, rimanda alla policy di backup',
+    'Cerca "conservazione" in docs/policy → retention.md: 30 giorni',
+    'Modifica docs/policy/backup.md: conservazione delle copie per 90 giorni'] },
+  { lang: 'it', domain: 'docs', syn: true, goal: 'Le regole sulle copie di sicurezza devono passare l\'audit ISO', on: [
+    'Legge docs/policy/backup.md → weekly backups, no restore test',
+    'Modifica docs/policy/backup.md: daily encrypted backups, quarterly restore drill',
+    'Legge docs/iso27001/annex-a.md → control A.8.13 information backup',
+    'Modifica docs/iso27001/soa.md: A.8.13 applicable, see backup policy',
+    'Legge docs/audit/findings-2025.md → finding: restore never tested',
+    'Modifica docs/audit/actions.md: restore drill planned every quarter'] },
+  { lang: 'it', domain: 'db', goal: 'Migra le sessioni utente al nuovo database Postgres', on: [
+    'Legge db/mysql/sessions.sql → CREATE TABLE sessions (id, user_id, data, expires)',
+    'Crea db/migrations/012_sessions_pg.sql: tabella sessions su Postgres con jsonb',
+    'Crea scripts/migrate-sessions.ts: copia le sessioni da MySQL a Postgres a blocchi',
+    'Esegue: npm run migrate -- --dry-run → 120.000 sessioni da copiare',
+    'Modifica src/db/sessionStore.ts: legge e scrive le sessioni su Postgres',
+    'Esegue: npm test -- sessionStore → 14 passed'] },
+  { lang: 'it', domain: 'perf', goal: 'La pagina dei report è lenta: velocizza la query', on: [
+    'Legge src/reports/query.sql → SELECT * FROM orders JOIN customers … senza indice su created_at',
+    'Esegue: EXPLAIN ANALYZE della query dei report → Seq Scan on orders 4.2 s',
+    'Crea db/migrations/013_orders_created_at_idx.sql: indice su orders(created_at)',
+    'Modifica src/reports/query.sql: seleziona solo le colonne che servono',
+    'Esegue: EXPLAIN ANALYZE → Index Scan 120 ms',
+    'Modifica src/reports/ReportPage.tsx: paginazione da 50 righe'] },
+  { lang: 'it', domain: 'ci', goal: 'Fai girare i test su Windows nella CI', on: [
+    'Legge .github/workflows/test.yml → runs-on: ubuntu-latest',
+    'Modifica .github/workflows/test.yml: matrice con windows-latest e ubuntu-latest',
+    'Esegue: act -j test → path separator error on windows',
+    'Modifica scripts/test-paths.js: usa path.join invece di "/"',
+    'Legge .github/workflows/test.yml → shell: bash anche su Windows',
+    'Esegue: npm test → Tutto a posto su windows-latest'] },
+  { lang: 'it', domain: 'i18n', goal: 'Traduci in inglese i messaggi di errore del checkout', on: [
+    'Cerca "tr(" in src/checkout → 23 messaggi di errore in italiano',
+    'Crea src/i18n/locales/en/checkout.json: traduzioni dei messaggi del checkout',
+    'Modifica src/checkout/errors.ts: passa i messaggi da tr()',
+    'Esegue: npm run i18n:check → 0 mancanti',
+    'Legge src/checkout/Payment.tsx → "Carta rifiutata" scritto a mano',
+    'Modifica src/checkout/Payment.tsx: tr(\'Carta rifiutata\')'] },
+  { lang: 'it', domain: 'email', goal: 'Manda una mail di conferma quando l\'ordine è spedito', on: [
+    'Legge src/orders/shipping.ts → markShipped(order) aggiorna solo lo stato',
+    'Crea src/notifications/templates/shipped.html: mail con il numero di tracking',
+    'Modifica src/orders/shipping.ts: dopo markShipped invia la mail di conferma',
+    'Legge src/notifications/mailer.ts → sendMail(to, template, data)',
+    'Esegue: npm test -- shipping → la mail parte una volta sola',
+    'Modifica src/notifications/templates/shipped.html: link per seguire la spedizione'] },
+  // ---------------------------------------------------------------- english
+  { lang: 'en', domain: 'auth', goal: 'Add two-factor authentication with TOTP codes', on: [
+    'Read src/auth/login.ts → after password check the session is created',
+    'Create src/auth/totp.ts: generate the secret and verify 6-digit codes',
+    'Edit src/auth/login.ts: ask for the TOTP code when 2FA is enabled',
+    'Edit db/schema.sql: add totp_secret to users',
+    'Bash npm test -- totp → 8 passed',
+    'Create src/ui/TwoFactorSetup.tsx: QR code to enroll the authenticator app'] },
+  { lang: 'en', domain: 'auth', syn: true, goal: 'Users should confirm sign-in with the code from their phone app', on: [
+    'Read src/auth/login.ts → session created right after the password',
+    'Create src/auth/otp.ts: one-time password check with a 30 s window',
+    'Edit src/auth/login.ts: second step with the authenticator code',
+    'Grep "secret" in src/auth → users.otpSecret is missing',
+    'Edit db/schema.sql: add otp_secret column',
+    'Bash npm test -- otp → all passed'] },
+  { lang: 'en', domain: 'billing', goal: 'Fix the currency conversion in invoices', on: [
+    'Read src/billing/currency.ts → rates cached for 30 days',
+    'Edit src/billing/currency.ts: refresh exchange rates daily',
+    'Grep "convert(" in src/billing → invoice.ts:88 convert(total, "EUR", customer.currency)',
+    'Edit src/billing/invoice.ts: convert each line, not only the total',
+    'Bash npm test -- currency → 6 passed',
+    'Read src/billing/rates.json → USD 1.08 GBP 0.85'] },
+  { lang: 'en', domain: 'warehouse', goal: 'Show low stock alerts in the warehouse dashboard', on: [
+    'Read src/warehouse/stock.ts → quantity per sku',
+    'Create src/warehouse/alerts.ts: items below the reorder level',
+    'Edit src/warehouse/Dashboard.tsx: red badge for low stock items',
+    'Grep "reorder" in src/warehouse → reorderLevel defined per product',
+    'Bash npm test -- alerts → 4 passed',
+    'Edit src/warehouse/Dashboard.tsx: sort low stock items first'] },
+  { lang: 'en', domain: 'ui', goal: 'Make the settings page work on mobile', on: [
+    'Read src/ui/Settings.tsx → fixed width 960px',
+    'Edit src/ui/settings.css: flex column under 600px',
+    'Edit src/ui/Settings.tsx: collapse sections into an accordion on small screens',
+    'Bash npm run test:visual -- settings-mobile → snapshot updated',
+    'Grep "max-width" in src/ui → settings.css has none',
+    'Edit src/ui/settings.css: bigger touch targets for the toggles'] },
+  { lang: 'en', domain: 'ui', syn: true, goal: 'The preferences screen is unusable on a phone', on: [
+    'Read src/ui/Settings.tsx → fixed width layout',
+    'Edit src/ui/settings.css: responsive layout with media queries',
+    'Edit src/ui/Settings.tsx: accordion sections on narrow viewports',
+    'Bash npm run test:visual → settings at 375px ok',
+    'Edit src/ui/settings.css: 44px tap targets for switches',
+    'Read src/ui/Toggle.tsx → toggle is 20px tall'] },
+  { lang: 'en', domain: 'docs', goal: 'Write the incident response runbook', on: [
+    'Create docs/runbooks/incident-response.md: severity levels and who to call',
+    'Read docs/oncall.md → on-call rotation and escalation',
+    'Edit docs/runbooks/incident-response.md: steps for triage, mitigation and postmortem',
+    'Create docs/templates/postmortem.md: timeline, impact, root cause, actions',
+    'Edit docs/runbooks/incident-response.md: status page update every 30 minutes',
+    'Grep "incident" in docs → policy/security.md mentions the runbook'] },
+  { lang: 'en', domain: 'db', goal: 'Add a migration to rename the customers table to clients', on: [
+    'Create db/migrations/014_rename_customers.sql: ALTER TABLE customers RENAME TO clients',
+    'Grep "customers" in src → 31 queries use the old table name',
+    'Edit src/db/clients.ts: queries on clients',
+    'Edit src/reports/query.sql: JOIN clients',
+    'Bash npm run migrate -- --dry-run → rename ok',
+    'Bash npm test -- db → 22 passed'] },
+  { lang: 'en', domain: 'perf', goal: 'Reduce the memory used by the image upload service', on: [
+    'Read src/upload/handler.ts → whole file read into a Buffer',
+    'Edit src/upload/handler.ts: stream the upload to disk',
+    'Bash node --inspect upload benchmark → heap 1.2 GB for 10 uploads',
+    'Edit src/upload/resize.ts: resize with a stream instead of loading the image',
+    'Bash upload benchmark → heap 180 MB',
+    'Read src/upload/limits.ts → max size 50 MB'] },
+  { lang: 'en', domain: 'ci', syn: true, goal: 'The pipeline should publish a build for every tag', on: [
+    'Read .github/workflows/release.yml → only on push to main',
+    'Edit .github/workflows/release.yml: on push tags v*',
+    'Edit .github/workflows/release.yml: upload the zip as a GitHub release asset',
+    'Bash act -j release → artifact Platypus-2.11.0-win-x64.zip',
+    'Read package.json → dist:win builds the zip',
+    'Edit .github/workflows/release.yml: release notes from the changelog'] },
+  { lang: 'en', domain: 'i18n', goal: 'Add German to the language picker', on: [
+    'Read src/i18n/index.js → LANGS: it, en',
+    'Create src/i18n/locales/de/app.json: German strings',
+    'Edit src/i18n/index.js: add de to LANGS',
+    'Bash npm run i18n:check → de: 1162 missing',
+    'Edit renderer/game.js: language picker lists Deutsch',
+    'Create src/i18n/locales/de/game.json: German translations of the game'] },
+  { lang: 'en', domain: 'email', syn: true, goal: 'Customers should get notified when their parcel leaves', on: [
+    'Read src/orders/shipping.ts → status changes to shipped',
+    'Create src/notifications/templates/shipped.html: tracking number and carrier',
+    'Edit src/orders/shipping.ts: send the shipped notification email',
+    'Bash npm test -- notifications → mail sent once',
+    'Read src/notifications/mailer.ts → SMTP settings',
+    'Edit src/notifications/templates/shipped.html: track your package link'] },
+  { lang: 'en', domain: 'search', goal: 'Add full-text search to the product catalog', on: [
+    'Read src/catalog/products.ts → filter by category only',
+    'Create db/migrations/015_products_fts.sql: tsvector column and GIN index',
+    'Create src/catalog/search.ts: full-text query with ranking',
+    'Edit src/catalog/ProductList.tsx: search box above the list',
+    'Bash npm test -- search → 9 passed',
+    'Edit src/catalog/search.ts: highlight matching words'] },
+  { lang: 'it', domain: 'search', syn: true, goal: 'Nel catalogo si deve poter cercare un articolo scrivendo una parola', on: [
+    'Read src/catalog/products.ts → filter by category only',
+    'Create db/migrations/015_products_fts.sql: tsvector and GIN index',
+    'Create src/catalog/search.ts: ranked text query',
+    'Edit src/catalog/ProductList.tsx: input box on top of the product list',
+    'Bash npm test -- catalog → 9 passed',
+    'Edit src/catalog/search.ts: typo tolerance with trigram similarity'] },
+  { lang: 'en', domain: 'logging', goal: 'Send the application logs to a JSON file with rotation', on: [
+    'Read src/log.ts → console.log everywhere',
+    'Create src/logger.ts: JSON lines with level, time and message',
+    'Edit src/logger.ts: rotate the file at 10 MB, keep 5 files',
+    'Grep "console.log" in src → 48 calls',
+    'Edit src/server.ts: use logger.info instead of console.log',
+    'Bash npm test -- logger → rotation works'] },
+];
+
+// compiti che non si possono misurare: le loro parole non compaiono mai nel lavoro
+module.exports.UNMEASURABLE = ['Zzyzx quux frobnicate', 'Procedi come d\'accordo', 'Do the thing we discussed', 'Vai avanti'];

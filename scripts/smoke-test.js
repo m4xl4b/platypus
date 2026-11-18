@@ -55,7 +55,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   console.log(`Platypus smoke test · ${process.platform} ${process.arch} · Node ${process.versions.node}`);
 
   console.log('sintassi');
-  for (const f of walk(path.join(ROOT, 'src')).concat(walk(path.join(ROOT, 'renderer')), walk(path.join(ROOT, 'scripts')))) {
+  for (const f of walk(path.join(ROOT, 'src')).concat(walk(path.join(ROOT, 'renderer')), walk(path.join(ROOT, 'scripts')), walk(path.join(ROOT, 'optional')))) {
     const r = spawnSync(process.execPath, ['--check', f], { encoding: 'utf8' });
     if (r.status !== 0) ok(false, path.relative(ROOT, f) + '\n' + r.stderr);
   }
@@ -69,6 +69,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   require('./unit-claudemd').run(ok);
   require('./unit-surprise').run(ok);
   require('./unit-engine').run(ok);
+  await require('./unit-embed').run(ok);
 
   console.log('motore');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-test-'));
@@ -98,6 +99,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ].map(o => JSON.stringify(o)).join('\n') + '\n');
   fs.utimesSync(oldFile, new Date(T1), new Date(T1));
   const { startCore } = require(path.join(ROOT, 'src', 'core'));
+  // il significato resta lessicale, anche se su questo computer gira un Ollama: i numeri delle prove non cambiano
+  fs.writeFileSync(path.join(tmp, 'settings.json'), JSON.stringify({ embedEngine: 'tfidf' }));
   const port = 47900 + Math.floor(Math.random() * 90);
   const core = startCore({ port, base, settingsPath: path.join(tmp, 'settings.json'), statsPath: path.join(tmp, 'stats.json'), fetch: async () => { throw new Error('offline'); } });
   await core.ready;
@@ -118,6 +121,36 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(map.ok && map.nodes.length > 0 && map.trajectories.length > 0, `mappa della realtà: ${map.nodes.length} luoghi, ${map.trajectories.length} traiettorie`);
   const mind = JSON.parse((await get(port, `/api/agentmind?sid=${sid}&aid=main`)).body);
   ok(mind.ok && mind.pieces && mind.pieces.length > 0, `bolla del contesto: ${mind.pieces ? mind.pieces.length : 0} pezzi`);
+  // E3 · significato con un Ollama finto: la bolla parte lessicale e passa ai vettori neurali quando arrivano
+  {
+    const fo = await require('./unit-embed').fakeOllama();
+    const em0 = JSON.parse((await get(port, '/api/embed')).body);
+    ok(mind.src === 'tfidf' && mind.engine === 'lexical' && em0.engine === 'tfidf' && em0.active === 'tfidf', 'significato: con «solo lessicale» la bolla è TF-IDF');
+    // E6 · le opzioni guardano le fonti senza caricare modelli (solo /api/tags)
+    await get(port, '/api/settings', 'POST', JSON.stringify({ ollamaUrl: fo.url }));
+    const pr = JSON.parse((await get(port, '/api/embed', 'POST', JSON.stringify({ action: 'probe' }))).body);
+    ok(pr.active === 'tfidf' && pr.sources.ollama.state === 'ready' && pr.sources.ollama.model === 'nomic-embed-text:latest' && ['not-installed', 'ready'].includes(pr.sources.onnx.state) && fo.log.length && fo.log.every(x => x.url === '/api/tags'), `opzioni del significato: Ollama ${pr.sources.ollama.state} (${pr.sources.ollama.model}), ONNX ${pr.sources.onnx.state}, senza caricare il modello`);
+    await get(port, '/api/settings', 'POST', JSON.stringify({ embedEngine: 'ollama', ollamaUrl: fo.url }));
+    let nm = null, sawRefining = false;
+    for (let i = 0; i < 40 && !(nm && nm.src !== 'tfidf' && !nm.pending); i++) { nm = JSON.parse((await get(port, `/api/agentmind?sid=${sid}&aid=main`)).body); if (nm.refining && nm.pieces.length) sawRefining = true; await sleep(50); }
+    ok(sawRefining && nm.active === nm.src && nm.refining === false, 'bolla: mentre arrivano i vettori si vede subito il TF-IDF con «affino…», poi la fonte neurale');
+    const em1 = JSON.parse((await get(port, '/api/embed')).body);
+    ok(nm && nm.src === 'ollama:nomic-embed-text:latest' && nm.engine === 'neural' && nm.pending === 0 && nm.pieces.length === mind.pieces.length && em1.active === nm.src && em1.sources.ollama.state === 'ready' && em1.cache.vectors > 0, `significato: con l'Ollama finto la bolla passa a ${nm && nm.src} (${em1.cache.vectors} vettori in cache)`);
+    ok(fo.log.filter(x => x.url === '/api/embed').every(x => x.body.input.length <= 16) && fs.readdirSync(path.join(tmp, 'embed-cache')).some(f => f.endsWith('.bin')), 'significato: lotti di al massimo 16 testi, cache su disco accanto alle opzioni');
+    const cl = JSON.parse((await get(port, '/api/embed', 'POST', JSON.stringify({ action: 'clear' }))).body);
+    ok(cl.cache.vectors === 0 && cl.cache.diskBytes === 0, 'opzioni del significato: «svuota la cache» toglie vettori in memoria e su disco');
+    await fo.close();
+    await get(port, '/api/settings', 'POST', JSON.stringify({ embedEngine: 'ollama', ollamaUrl: 'http://192.168.1.5:11434' }));
+    const em2 = JSON.parse((await get(port, '/api/embed')).body);
+    const sv = JSON.parse((await get(port, '/api/settings')).body);
+    ok(sv.ollamaUrl === fo.url, 'significato: le opzioni rifiutano un Ollama fuori dal computer');
+    await get(port, '/api/settings', 'POST', JSON.stringify({ ollamaUrl: 'http://127.0.0.1:9' }));
+    let em3 = null;
+    for (let i = 0; i < 40; i++) { await get(port, `/api/agentmind?sid=${sid}&aid=main`); em3 = JSON.parse((await get(port, '/api/embed')).body); if (em3.sources.ollama.state !== 'unknown') break; await sleep(50); }
+    const back = JSON.parse((await get(port, `/api/agentmind?sid=${sid}&aid=main`)).body);
+    ok(em2.engine === 'ollama' && em3.active === 'tfidf' && em3.fallback && em3.fallback.source === 'ollama' && em3.sources.ollama.state === 'not-found' && back.src === 'tfidf' && back.engine === 'lexical' && back.pending === 0, `significato: Ollama spento → di nuovo TF-IDF, e lo dice (${em3.fallback && em3.fallback.state})`);
+    await get(port, '/api/settings', 'POST', JSON.stringify({ embedEngine: 'tfidf', ollamaUrl: 'http://127.0.0.1:11434' }));
+  }
   const gr = JSON.parse((await get(port, `/api/grounding?sid=${sid}&aid=all`)).body);
   ok(gr.ok && Array.isArray(gr.stale) && Array.isArray(gr.blindEdits) && Array.isArray(gr.ghosts) && Array.isArray(gr.claims) && gr.disk, `mappa contro territorio: ${gr.stale ? gr.stale.length : 0} ricordi scaduti, ${gr.blindEdits ? gr.blindEdits.length : 0} modifiche alla cieca, ${gr.ghosts ? gr.ghosts.length : 0} percorsi inventati, ${gr.claims ? gr.claims.length : 0} affermazioni`);
   // lo scenario della demo sul piano 1 (portale-clienti)
@@ -372,6 +405,29 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const fbDrLast = fbDrMind.align && fbDrMind.align[fbDrMind.align.length - 1];
   ok(core.state.settings.fbDrift === 'shadow' && fbDr.status === 204 && fbDrE && fbDrE.mode === 'shadow' && /^Platypus: your last \d+ actions look far from the task you were given: «Fix the login token refresh/.test(fbDrE.text), 'ritorno al compito: la deriva viene dalla stella polare dell\'ufficio, e resta in ombra → ' + fbDr.status + ' «' + (fbDrE ? fbDrE.text.slice(0, 60) : '-') + '…»');
   ok(fbDrLast && fbDrLast[2] / fbDrLast[3] < 0.35, `ritorno al compito: è la stessa serie che la mappa disegna (allineamento ${fbDrLast ? Math.round(100 * fbDrLast[2] / fbDrLast[3]) : '-'}%)`);
+  // E5 · la mappa riceve la regola della deriva dal server: è la stessa del motore e dà la stessa risposta
+  const ruleJs = await get(port, '/drift-rule.js');
+  const ruleBox = { self: {} };
+  try { require('vm').runInNewContext(ruleJs.body, ruleBox); } catch {}
+  const pageRule = ruleBox.self.PlatypusDrift, fbDrS = core.state.sessions.get(fbDrSid);
+  const engineDr = require(path.join(ROOT, 'src', 'core', 'semantic')).drift(fbDrS.main.mind, fbDrS.corpus);
+  const pageDr = pageRule && pageRule.judge(fbDrMind.align, fbDrMind.th);
+  ok(ruleJs.status === 200 && ruleJs.body === fs.readFileSync(path.join(ROOT, 'src', 'core', 'drift-rule.js'), 'utf8') && pageDr && engineDr && pageDr.drifting === engineDr.drifting && pageDr.run === engineDr.run && pageDr.rel === engineDr.rel, `significato: /drift-rule.js è la regola del motore, e sulla stessa serie la mappa dice lo stesso (deriva da ${pageDr && pageDr.run} azioni)`);
+  // E7 · la scena «sinonimi» della demo: il compito dice login, l'agente lavora sull'autenticazione con altre parole.
+  // Con il TF-IDF sembra alla deriva; con il provider finto della demo (embedEngine = fake, nascosto) resta sulla rotta.
+  {
+    const synA = [...core.state.sessions.get(p1.id).subs.values()].find(a => a._demoHold === Infinity);
+    const synQ = `/api/agentmind?sid=${p1.id}&aid=${synA && synA.id}`;
+    const lex = JSON.parse((await get(port, synQ)).body), lexJ = pageRule.judge(lex.align, lex.th);
+    await get(port, '/api/settings', 'POST', JSON.stringify({ embedEngine: 'fake' }));
+    let neu = null;
+    for (let i = 0; i < 60 && !(neu && neu.src === 'fake:synonyms' && !neu.refining); i++) { neu = JSON.parse((await get(port, synQ)).body); await sleep(30); }
+    const neuJ = neu && pageRule.judge(neu.align, neu.th);
+    ok(synA && lex.src === 'tfidf' && lexJ.drifting && neu.src === 'fake:synonyms' && neu.th.calibrated && !neuJ.drifting && neuJ.state === 'on', `demo, sinonimi: col TF-IDF «alla deriva» da ${lexJ.run} azioni, col significato finto «sulla rotta» (allineamento ${Math.round(neuJ.rel * 100)}%)`);
+    const real = JSON.parse((await get(port, `/api/agentmind?sid=${fbDrSid}&aid=main`)).body);
+    ok(real.src === 'tfidf' && real.refining === false && JSON.parse((await get(port, '/api/settings')).body).embedEngine === 'fake', 'demo, sinonimi: il provider finto vale solo per le sessioni della demo, le altre restano lessicali');
+    await get(port, '/api/settings', 'POST', JSON.stringify({ embedEngine: 'tfidf' }));
+  }
   core.state.setSettings({ fbDrift: 'off' });
   // C1 · quello che l'ufficio e il Libro mostrano: gli ultimi messaggi nello stato, il registro del progetto, i conteggi
   const fbSaid = core.feedbackSaid();

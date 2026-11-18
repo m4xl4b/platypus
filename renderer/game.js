@@ -3258,7 +3258,7 @@ function toggleSettings() {
   const box = $('#settings');
   if (!box.hidden) { if (box._tryClose) box._tryClose(); else box.hidden = true; return; }
   const st = (snap && snap.settings) || {};
-  box.innerHTML = '<span class="x">X</span><h3>' + tr('OPZIONI') + '</h3>' + settingsGroupsHtml(st) + feedbackHooksHtml(st) + settingsStatus() +
+  box.innerHTML = '<span class="x">X</span><h3>' + tr('OPZIONI') + '</h3>' + settingsGroupsHtml(st) + (window.embedOptionsHtml ? embedOptionsHtml(st) : '') + feedbackHooksHtml(st) + settingsStatus() +
     `<p class="dim">${tr('Le opzioni restano salvate anche alla prossima apertura.')}</p>` +
     `<div class="btns save-bar"><button data-do="save">${tr('SALVA')}</button><span class="dirty" hidden>${tr('Modifiche non salvate')}</span></div>`;
   // chiudere con X dopo una modifica: la prima volta avvisa, la seconda chiude senza salvare
@@ -3270,6 +3270,7 @@ function toggleSettings() {
   };
   box.querySelector('.x').onclick = box._tryClose;
   bindFeedbackHooks(box);
+  if (window.embedOptionsBind) embedOptionsBind(box); // motore del significato (embed-ui.js)
   box.querySelector('[data-do=rescan]').onclick = async () => {
     const r = await api('/api/cowork-scan', {});
     if (r) { snap.cowork = r; toast(tr('Cowork: {found} cartelle trovate, {watched} seguite', { found: r.found, watched: r.watched })); box.hidden = true; toggleSettings(); }
@@ -3281,6 +3282,7 @@ function toggleSettings() {
     for (const [k] of SETTINGS_TEXTS) body[k] = box.querySelector(`input[name=${k}]`).value;
     body.lang = box.querySelector('select[name=lang]').value;
     for (const sel of box.querySelectorAll('select[data-fb]')) body[sel.name] = sel.value;
+    if (window.embedOptionsCollect) embedOptionsCollect(box, body);
     const r = await api('/api/settings', body);
     if (r && r.budgetUSD != null) { snap.settings = r; dress.t = -1e9; toast(tr('Opzioni salvate')); box.hidden = true; boardSig = ''; reconcile(); } else toast(tr('Non sono riuscito a salvare'), false);
   };
