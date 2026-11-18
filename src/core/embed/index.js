@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { DIM } = require('../semantic');
+const { loopbackUrl, DEFAULT_URL } = require('./ollama');
 
 const ENGINES = ['auto', 'ollama', 'onnx', 'tfidf'];
 const CHAIN = ['ollama', 'onnx'];
@@ -131,6 +132,14 @@ function defaultFactory(kind) {
 const FACTORIES = { ollama: defaultFactory('ollama'), onnx: defaultFactory('onnx') };
 
 function cleanEngine(v) { return ENGINES.includes(v) ? v : 'auto'; }
+// le opzioni del significato, ripulite (state.setSettings): un indirizzo di Ollama che non è di loopback si rifiuta
+const SETTINGS = ['embedEngine', 'embedModel', 'ollamaUrl'];
+function cleanSetting(k, v, prev) {
+  if (k === 'embedEngine') return cleanEngine(String(v || '').trim());
+  if (k === 'embedModel') return String(v || '').trim().replace(/[^A-Za-z0-9._:/@-]/g, '').slice(0, 80);
+  if (k === 'ollamaUrl') return loopbackUrl(v) || prev || DEFAULT_URL;
+  return v;
+}
 
 // La catena: con 'auto' Ollama se risponde, poi ONNX se è installato, altrimenti TF-IDF. Con una fonte precisa si usa
 // quella e, se non va, il TF-IDF, dicendolo (fallback). sources: le fonti già create (per non rifarle), skip: le sospese.
@@ -342,4 +351,4 @@ class Embedder {
 }
 function normalize(v) { let n = 0; for (let i = 0; i < v.length; i++) n += v[i] * v[i]; n = Math.sqrt(n) || 1; for (let i = 0; i < v.length; i++) v[i] /= n; return v; }
 
-module.exports = { Embedder, getProvider, resolveChain, DiskCache, Lru, keyOf, fileOf, cleanEngine, tfidf, ENGINES, BATCH, TIMEOUT_MS, MEM_CAP, DISK_CAP, FAILS, SUSPEND_MS };
+module.exports = { Embedder, getProvider, resolveChain, DiskCache, Lru, keyOf, fileOf, cleanEngine, cleanSetting, SETTINGS, tfidf, ENGINES, BATCH, TIMEOUT_MS, MEM_CAP, DISK_CAP, FAILS, SUSPEND_MS };

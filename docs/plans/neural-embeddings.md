@@ -73,7 +73,7 @@ Everything in `docs/plans/parallel.md` still applies. In addition:
   - a cap of 50 MB per source; it is cleared from the options.
 - **Queue:** one for the whole engine, with priority to the visible agents, batches and timeouts. If a source fails 3 times in a row, it is suspended for 5 minutes.
 
-## E3 · Ollama provider  [ ]
+## E3 · Ollama provider  [x]
 
 - `src/core/embed/ollama.js`:
   - `GET /api/tags` to see which models are there;
@@ -206,3 +206,24 @@ Today's thresholds are valid for TF-IDF, not for neural vectors, which have much
 **Checks.** New tests in `scripts/unit-embed.js` (now async; `smoke-test.js` awaits it), with fake providers and a temporary folder: the chain in every mode, including a `ready()` that never answers; `getProvider`; null-then-vector; batch sizes (16, 16, 8 documents, 1 query); priority to visible agents; the disk file holds no text and serves a new instance without new requests; a dimension change recomputes; the memory and disk caps (10 vectors / 2000 bytes in the test); clearing the cache; three timeouts → suspended, TF-IDF and the reason, then retried after 5 minutes with a fake clock; in `auto` three errors from Ollama move to ONNX; the demo scenario starts on TF-IDF and switches to the neural space when every goal and action has a vector, with the other pieces counted as pending until they arrive. `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing (no new UI strings yet).
 
 **Decisions.** One request at a time is enough for a local model and keeps Ollama from being flooded. Queued work is not persisted: after a restart, vectors come back from the disk cache when they are asked for again.
+
+### 2026-11-18 · E3 · Ollama provider
+
+**Done.**
+- New `src/core/embed/ollama.js` (Node `http`, no dependencies): `GET /api/tags`, then `POST /api/embed` with `input` as a list and `truncate: true`; if `/api/embed` answers 404 without mentioning a model (old Ollama), it switches to `POST /api/embeddings`, one text at a time. `ready()` picks the model and embeds one short probe to learn the dimension. Answers are capped at 64 MB; every request has the 5 s timeout.
+- **Host.** `loopbackUrl()` accepts only `127.0.0.1`, `::1` and `localhost` (http or https, no user/password); anything else gives state `error` without any network call. The option is cleaned in `state.setSettings` (one line in `state.js`, through `embed.cleanSetting`): a non-loopback `ollamaUrl` is refused and the previous value kept.
+- **Model** (`embedModel`). If set, that model (with or without `:latest`); if missing: state `not-found`, `hint` = `ollama pull <model>`, never run. If empty: the first embedding model present (by name: embed, bge, e5, gte, minilm, …; or by family: bert, xlm-roberta, nomic-bert), preferring multilingual ones in this order: bge-m3, snowflake-arctic-embed2, embeddinggemma, qwen3-embedding, nomic-embed-text-v2, granite-embedding, multilingual-e5, paraphrase-multilingual, jina-embeddings-v3. If there is none: `hint` = `ollama pull bge-m3`.
+- **Prefixes** per model: e5 `query: ` / `passage: `; nomic `search_query: ` / `search_document: `; embeddinggemma `task: search result | query: ` / `title: none | text: `; qwen3-embedding an instruction for the query only; none for bge-m3 and the others.
+- **Settings** in `DEFAULT_SETTINGS`: `embedEngine: 'auto'`, `embedModel: ''`, `ollamaUrl: 'http://127.0.0.1:11434'`.
+- **Engine** (`src/core/index.js`, small hooks): one `Embedder` for the core, cache in `embed-cache/` next to `settings.json` (so `dataDir()/embed-cache`, or `PLATYPUS_DATA_DIR`); `/api/agentmind` uses `pickSpace` with the space of the active source (priority 0, the agent being looked at); `POST /api/settings` calls `embedder.configure`; new `GET /api/embed` with `embedder.status()`; `stop()` stops it.
+- The drift rule (`drift()`, `driftBack`) still uses TF-IDF only: neural vectors need their own thresholds, which come in E5.
+
+**Models found and recommended for Italian (not verified).** I did not start Ollama. Listing its model folder (`OLLAMA_MODELS=D:\ollama\models`, manifest names only) shows these embedding models already on disk: `bge-m3`, `embeddinggemma-2`, `nomic-embed-text`, `nomic-embed-text-v2-moe`, `qwen3-embedding`, `snowflake-arctic-embed2`. This contradicts the plan's note that no embedding model is known to be pulled, so no download should be needed. On paper the multilingual candidates for Italian are bge-m3 (about 1.2 GB, 1024 dimensions), snowflake-arctic-embed2, embeddinggemma and qwen3-embedding; `nomic-embed-text` v1 is mostly English. My provisional recommendation is **bge-m3**, but this is not checked: measuring it needs Max's permission to start Ollama, and then `scripts/embed-eval.js` (E5) gives the AUC per model.
+
+**Checks.**
+- A fake Ollama server (`fakeOllama()` in `scripts/unit-embed.js`, deterministic 16-dimension vectors) is used both by the provider tests and by a block inside `scripts/smoke-test.js`. Provider: normal case (model chosen, dimension, one request per batch with the model's prefixes, no pull); model choice and prefixes; missing model and no embedding model (`hint` with the command); old Ollama; a slow `/api/tags` (not ready after about 100 ms) and a slow embed (error); Ollama off (`ECONNREFUSED` → `not-found`); non-loopback hosts refused, including `127.0.0.1.evil.example` and `user:pw@127.0.0.1`; the settings refusing an outside host.
+- Engine (smoke test): with `tfidf` the bubble is lexical; switching to the fake Ollama through `/api/settings`, `/api/agentmind` turns into `ollama:nomic-embed-text:latest` with nothing pending and the same pieces, batches of at most 16 and the cache file in `embed-cache/`; an outside URL is refused; with Ollama off the bubble goes back to TF-IDF and `/api/embed` says why (`not-found`).
+- The smoke test now starts its engine with `embedEngine: 'tfidf'` in its temporary `settings.json`, so a developer's running Ollama can never change its numbers.
+- `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing.
+
+**Doubt for Max.** With `auto` as the default, a Platypus on a computer where Ollama is running with an embedding model will start sending snippets of the agents' text to that local Ollama on its own. It stays on the computer, as the plan requires, but it also loads the model into memory. If you prefer, the default can be `tfidf` and the neural engine opt-in; I kept `auto` because the plan describes it as the chain's default.

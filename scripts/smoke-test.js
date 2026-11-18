@@ -99,6 +99,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ].map(o => JSON.stringify(o)).join('\n') + '\n');
   fs.utimesSync(oldFile, new Date(T1), new Date(T1));
   const { startCore } = require(path.join(ROOT, 'src', 'core'));
+  // il significato resta lessicale, anche se su questo computer gira un Ollama: i numeri delle prove non cambiano
+  fs.writeFileSync(path.join(tmp, 'settings.json'), JSON.stringify({ embedEngine: 'tfidf' }));
   const port = 47900 + Math.floor(Math.random() * 90);
   const core = startCore({ port, base, settingsPath: path.join(tmp, 'settings.json'), statsPath: path.join(tmp, 'stats.json'), fetch: async () => { throw new Error('offline'); } });
   await core.ready;
@@ -119,6 +121,29 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(map.ok && map.nodes.length > 0 && map.trajectories.length > 0, `mappa della realtà: ${map.nodes.length} luoghi, ${map.trajectories.length} traiettorie`);
   const mind = JSON.parse((await get(port, `/api/agentmind?sid=${sid}&aid=main`)).body);
   ok(mind.ok && mind.pieces && mind.pieces.length > 0, `bolla del contesto: ${mind.pieces ? mind.pieces.length : 0} pezzi`);
+  // E3 · significato con un Ollama finto: la bolla parte lessicale e passa ai vettori neurali quando arrivano
+  {
+    const fo = await require('./unit-embed').fakeOllama();
+    const em0 = JSON.parse((await get(port, '/api/embed')).body);
+    ok(mind.src === 'tfidf' && mind.engine === 'lexical' && em0.engine === 'tfidf' && em0.active === 'tfidf', 'significato: con «solo lessicale» la bolla è TF-IDF');
+    await get(port, '/api/settings', 'POST', JSON.stringify({ embedEngine: 'ollama', ollamaUrl: fo.url }));
+    let nm = null;
+    for (let i = 0; i < 40 && !(nm && nm.src !== 'tfidf' && !nm.pending); i++) { nm = JSON.parse((await get(port, `/api/agentmind?sid=${sid}&aid=main`)).body); await sleep(50); }
+    const em1 = JSON.parse((await get(port, '/api/embed')).body);
+    ok(nm && nm.src === 'ollama:nomic-embed-text:latest' && nm.engine === 'neural' && nm.pending === 0 && nm.pieces.length === mind.pieces.length && em1.active === nm.src && em1.sources.ollama.state === 'ready' && em1.cache.vectors > 0, `significato: con l'Ollama finto la bolla passa a ${nm && nm.src} (${em1.cache.vectors} vettori in cache)`);
+    ok(fo.log.filter(x => x.url === '/api/embed').every(x => x.body.input.length <= 16) && fs.readdirSync(path.join(tmp, 'embed-cache')).some(f => f.endsWith('.bin')), 'significato: lotti di al massimo 16 testi, cache su disco accanto alle opzioni');
+    await fo.close();
+    await get(port, '/api/settings', 'POST', JSON.stringify({ embedEngine: 'ollama', ollamaUrl: 'http://192.168.1.5:11434' }));
+    const em2 = JSON.parse((await get(port, '/api/embed')).body);
+    const sv = JSON.parse((await get(port, '/api/settings')).body);
+    ok(sv.ollamaUrl === fo.url, 'significato: le opzioni rifiutano un Ollama fuori dal computer');
+    await get(port, '/api/settings', 'POST', JSON.stringify({ ollamaUrl: 'http://127.0.0.1:9' }));
+    let em3 = null;
+    for (let i = 0; i < 40; i++) { await get(port, `/api/agentmind?sid=${sid}&aid=main`); em3 = JSON.parse((await get(port, '/api/embed')).body); if (em3.sources.ollama.state !== 'unknown') break; await sleep(50); }
+    const back = JSON.parse((await get(port, `/api/agentmind?sid=${sid}&aid=main`)).body);
+    ok(em2.engine === 'ollama' && em3.active === 'tfidf' && em3.fallback && em3.fallback.source === 'ollama' && em3.sources.ollama.state === 'not-found' && back.src === 'tfidf' && back.engine === 'lexical' && back.pending === 0, `significato: Ollama spento → di nuovo TF-IDF, e lo dice (${em3.fallback && em3.fallback.state})`);
+    await get(port, '/api/settings', 'POST', JSON.stringify({ embedEngine: 'tfidf', ollamaUrl: 'http://127.0.0.1:11434' }));
+  }
   const gr = JSON.parse((await get(port, `/api/grounding?sid=${sid}&aid=all`)).body);
   ok(gr.ok && Array.isArray(gr.stale) && Array.isArray(gr.blindEdits) && Array.isArray(gr.ghosts) && Array.isArray(gr.claims) && gr.disk, `mappa contro territorio: ${gr.stale ? gr.stale.length : 0} ricordi scaduti, ${gr.blindEdits ? gr.blindEdits.length : 0} modifiche alla cieca, ${gr.ghosts ? gr.ghosts.length : 0} percorsi inventati, ${gr.claims ? gr.claims.length : 0} affermazioni`);
   // lo scenario della demo sul piano 1 (portale-clienti)

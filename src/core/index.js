@@ -23,6 +23,7 @@
 //   POST /api/bottega        {sid|cwd, action: pin|ignore|unignore|forget, id}
 //   POST /api/bottega/learn  {sid|cwd}  impara dalle sessioni passate del progetto (in background)
 //   GET  /api/bottega/hints  {sid}  cosa direbbe il Nonno adesso: azioni in corso che corrispondono a una lezione
+//   GET  /api/embed          il motore del significato: fonte in uso, stato di ogni fonte, cache (vedi embed/)
 //   GET  /api/grounding      {sid, aid, replay}  mappa contro territorio: ricordi scaduti, modifiche alla cieca, percorsi inventati, affermazioni, sorprese
 
 const { dataDir } = require('../paths');
@@ -33,6 +34,7 @@ const path = require('path');
 const { OfficeState, DEFAULT_SETTINGS, displayName } = require('./state');
 const worldmap = require('./worldmap');
 const semantic = require('./semantic');
+const { Embedder } = require('./embed');
 const grounding = require('./grounding');
 const surprise = require('./surprise');
 const { Bottega, digest, hints, renderSection, projectKey, normDir } = require('./bottega');
@@ -209,6 +211,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const FEEDBACK_MS = 300;
   const feedbackStats = { calls: 0, said: 0, shadow: 0, late: 0, errors: 0 };
   const feedbackLog = new FeedbackLog(path.join(path.dirname(settingsPath), 'feedback')); // accanto alle opzioni: ~/.platypus/feedback
+  const embedder = new Embedder({ settings: state.settings, dir: path.join(path.dirname(settingsPath), 'embed-cache') }); // significato neurale (embed/)
   const feedbackGate = new feedback.Gate(); // i limiti di frequenza, in memoria: ripartono con Platypus
   // la demo (C3): agenti finti, quindi ogni funzione nel modo più alto che ha nella 2.11, qualunque cosa dicano le
   // opzioni; un registro tutto suo, in memoria, che si svuota quando la demo finisce
@@ -371,7 +374,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     const minds = list.filter(a => a.mind && a.mind.pieces.length).slice(0, 40).map(a => ({ id: a.id, name: displayName(a), mind: a.mind, ctx: a.ctx || 0 }));
     if (!minds.length) return { ok: true, empty: true, sid: s.id, aid };
     try {
-      const v = semantic.snapshotMinds(minds, s.corpus, (q.get('replay') ? 'r:' : '') + s.id + ':' + aid);
+      const space = semantic.pickSpace(minds.map(m => m.mind), s.corpus, [embedder.space(0)]);
+      const v = semantic.snapshotMinds(minds, s.corpus, (q.get('replay') ? 'r:' : '') + s.id + ':' + aid, 0, space);
       return { ok: true, sid: s.id, aid, now: st.now(), names: Object.fromEntries(minds.map(m => [m.id, m.name])), ctxNow: Object.fromEntries(minds.map(m => [m.id, m.ctx])), ...v };
     } catch (e) { return { ok: false, error: e.message }; }
   }
@@ -506,6 +510,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         const before = { city: state.settings.weatherCity, dirs: state.settings.coworkDirs, lang: state.settings.lang };
         const s = state.setSettings(j);
         saveSettings(settingsPath, s);
+        embedder.configure(s);
         if (before.lang !== s.lang) {
           i18n.setLang(i18n.resolveLang(s.lang, osLocale));
           if (demo.on) { demo.stop(); demo.start(); } // la demo ricomincia nella nuova lingua
@@ -600,6 +605,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     if (url.pathname === '/api/cowork-scan') return json(res, 200, state.coworkScan || {});
     if (url.pathname === '/api/agentmap') return json(res, 200, agentMap(url.searchParams));
     if (url.pathname === '/api/agentmind') return json(res, 200, agentMind(url.searchParams));
+    if (url.pathname === '/api/embed') return json(res, 200, embedder.status());
     if (url.pathname === '/api/grounding') return json(res, 200, agentGrounding(url.searchParams));
     if (url.pathname === '/api/bottega/list') return json(res, 200, { ok: true, books: bottega.list() });
     if (url.pathname === '/api/bottega/claudemd') { const p = claudeMdPlan(Object.fromEntries(url.searchParams)); return p ? json(res, 200, { ok: true, ...p }) : json(res, 404, { ok: false }); }
@@ -685,12 +691,13 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     stats.stop();
     clearInterval(learnTimer); clearTimeout(learnSoon); clearInterval(judgeTimer);
     bottega.stop();
+    embedder.stop();
     state.stop();
     for (const c of clients) try { c.end(); } catch {}
     server.close();
   }
 
-  return { state, stats, bottega, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
+  return { state, stats, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
     install: () => hooks.install({ port, base }),
     uninstall: () => hooks.uninstall({ base }),
     status: () => hooks.status({ base }),

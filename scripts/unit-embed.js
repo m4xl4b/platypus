@@ -255,14 +255,102 @@ async function providerTests(ok) {
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 
+// ---------------------------------------------------------------- E3 · Ollama finto
+// Un server che risponde come Ollama, con vettori deterministici (parole sparse in 16 posizioni).
+// o.models: i modelli di /api/tags; o.legacy: niente /api/embed (Ollama vecchio); o.delayMs: risposte lente.
+function fakeOllama(o = {}) {
+  const http = require('http');
+  const opts = { models: [{ name: 'nomic-embed-text:latest', details: { family: 'nomic-bert' } }, { name: 'llama3.2:latest', details: { family: 'llama' } }], legacy: false, delayMs: 0, dim: 16, ...o };
+  const log = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', c => { body += c; });
+    req.on('end', () => {
+      let j = {}; try { j = JSON.parse(body || '{}'); } catch {}
+      log.push({ method: req.method, url: req.url, body: j });
+      const send = (code, obj) => setTimeout(() => { if (!res.writableEnded) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); } }, opts.delayMs);
+      const known = name => opts.models.some(m => m.name === name);
+      if (req.method === 'GET' && req.url === '/api/tags') return send(200, { models: opts.models });
+      if (req.method === 'POST' && req.url === '/api/embed') {
+        if (opts.legacy) return send(404, '404 page not found');
+        if (!known(j.model)) return send(404, { error: `model "${j.model}" not found, try pulling it first` });
+        return send(200, { model: j.model, embeddings: (j.input || []).map(t => Array.from(wordVec(t, opts.dim))) });
+      }
+      if (req.method === 'POST' && req.url === '/api/embeddings') {
+        if (!known(j.model)) return send(404, { error: `model "${j.model}" not found, try pulling it first` });
+        return send(200, { embedding: Array.from(wordVec(j.prompt, opts.dim)) });
+      }
+      send(404, { error: 'not found' });
+    });
+  });
+  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ url: 'http://127.0.0.1:' + server.address().port, opts, log, close: () => new Promise(r => { server.closeAllConnections && server.closeAllConnections(); server.close(() => r()); }) })));
+}
+
+async function ollamaTests(ok) {
+  const ollama = require(path.join(ROOT, 'src', 'core', 'embed', 'ollama'));
+  const srv = await fakeOllama();
+  try {
+    // il caso normale: sceglie il modello di embedding, impara la dimensione, mette i prefissi del modello
+    let p = ollama.create({ ollamaUrl: srv.url }, { timeoutMs: 1000 });
+    const r = await p.ready();
+    const v = await p.embed(['aggiusta il login', 'correggi l\'autenticazione'], 'document');
+    const last = srv.log[srv.log.length - 1];
+    ok(r && p.state === 'ready' && p.id === 'ollama:nomic-embed-text:latest' && p.dim === 16 && v.length === 2 && v[0].length === 16 && last.url === '/api/embed' && Array.isArray(last.body.input) && last.body.input[0] === 'search_document: aggiusta il login', `embedding E3: Ollama finto → ${p.id}, ${p.dim} dimensioni, una richiesta per lotto con i prefissi del modello`);
+    ok(srv.log[0].url === '/api/tags' && !srv.log.some(x => /pull/.test(x.url)), 'embedding E3: guarda /api/tags e non scarica niente');
+    // la scelta del modello
+    const M = n => ({ name: n });
+    ok(ollama.pickModel([M('llama3.2:latest'), M('nomic-embed-text:latest'), M('bge-m3:latest')]) === 'bge-m3:latest' && ollama.pickModel([M('qwen3-embedding:latest'), M('snowflake-arctic-embed2:latest'), M('nomic-embed-text:latest')]) === 'snowflake-arctic-embed2:latest' && ollama.pickModel([M('llama3.2:latest'), M('mxbai-embed-large:latest')]) === 'mxbai-embed-large:latest' && ollama.pickModel([M('llama3.2:latest')]) === null && ollama.pickModel([M('bge-m3:latest')], 'bge-m3') === 'bge-m3:latest' && ollama.pickModel([M('bge-m3:latest')], 'e5') === null, 'embedding E3: il modello: quello scelto, altrimenti il primo di embedding, prima i multilingue');
+    ok(ollama.prefix('jeffh/intfloat-multilingual-e5-small:f16', 'query') === 'query: ' && ollama.prefix('multilingual-e5-small', 'document') === 'passage: ' && ollama.prefix('bge-m3:latest', 'query') === '', 'embedding E3: prefissi e5 (query:/passage:), nessuno per bge-m3');
+    // un modello che non c'è: si dice, con il comando da lanciare (non lo lancia)
+    p = ollama.create({ ollamaUrl: srv.url, embedModel: 'bge-m3' }, { timeoutMs: 1000 });
+    ok(!(await p.ready()) && p.state === 'not-found' && p.hint === 'ollama pull bge-m3' && /bge-m3/.test(p.detail), `embedding E3: modello mancante → «${p.detail}», suggerisce «${p.hint}»`);
+    srv.opts.models = [{ name: 'llama3.2:latest', details: { family: 'llama' } }];
+    p = ollama.create({ ollamaUrl: srv.url }, { timeoutMs: 1000 });
+    ok(!(await p.ready()) && p.state === 'not-found' && p.hint === 'ollama pull ' + ollama.SUGGESTED, `embedding E3: nessun modello di embedding → «${p.hint}»`);
+    // Ollama vecchio: /api/embeddings un testo alla volta
+    srv.opts.models = [{ name: 'all-minilm:latest', details: { family: 'bert' } }]; srv.opts.legacy = true;
+    p = ollama.create({ ollamaUrl: srv.url }, { timeoutMs: 1000 });
+    const rl = await p.ready(), vl = await p.embed(['uno', 'due', 'tre'], 'document');
+    ok(rl && p.legacy && vl.length === 3 && srv.log.filter(x => x.url === '/api/embeddings').length === 4, 'embedding E3: Ollama vecchio (senza /api/embed) → /api/embeddings, un testo alla volta');
+    srv.opts.legacy = false;
+    // tempo scaduto
+    srv.opts.delayMs = 400;
+    p = ollama.create({ ollamaUrl: srv.url }, { timeoutMs: 100 });
+    const t0 = Date.now(), rt = await p.ready();
+    ok(!rt && p.state === 'not-found' && /timeout/.test(p.detail) && Date.now() - t0 < 350, `embedding E3: Ollama troppo lento → non pronto in ${Date.now() - t0} ms («${p.detail}»)`);
+    srv.opts.delayMs = 0;
+    p = ollama.create({ ollamaUrl: srv.url }, { timeoutMs: 100 });
+    await p.ready(); srv.opts.delayMs = 400;
+    let err = ''; try { await p.embed(['lento'], 'document'); } catch (e) { err = e.message; }
+    ok(/timeout/.test(err), 'embedding E3: una richiesta di vettori oltre il tempo è un errore (la coda conta i fallimenti)');
+    srv.opts.delayMs = 0;
+  } finally { await srv.close(); }
+  // Ollama spento: la porta non risponde
+  const off = ollama.create({ ollamaUrl: srv.url }, { timeoutMs: 1000 });
+  ok(!(await off.ready()) && off.state === 'not-found' && /not answering/.test(off.detail), `embedding E3: Ollama spento → «${off.detail}»`);
+  // solo loopback
+  const hosts = ['http://192.168.1.5:11434', 'http://example.com:11434', 'http://127.0.0.1.evil.example:11434', 'http://user:pw@127.0.0.1:11434', 'ftp://127.0.0.1', 'http://10.0.0.1'];
+  const goodHosts = ['http://127.0.0.1:11434', 'localhost:11434', 'http://[::1]:11434', 'https://localhost:8443', ''];
+  ok(hosts.every(h => ollama.loopbackUrl(h) === null) && goodHosts.every(h => ollama.loopbackUrl(h)), 'embedding E3: accetta solo 127.0.0.1, ::1 e localhost');
+  const far = ollama.create({ ollamaUrl: 'http://192.168.1.5:11434' });
+  ok(!(await far.ready()) && far.state === 'error' && /loopback/.test(far.detail), 'embedding E3: un host che non è di loopback si rifiuta senza chiamarlo');
+  const { OfficeState } = require(path.join(ROOT, 'src', 'core', 'state'));
+  const st = new OfficeState({ settings: {} });
+  st.setSettings({ ollamaUrl: 'http://localhost:11500' });
+  st.setSettings({ ollamaUrl: 'http://example.com:11434', embedEngine: 'boh', embedModel: 'bge-m3 ; rm -rf' });
+  ok(st.settings.ollamaUrl === 'http://localhost:11500' && st.settings.embedEngine === 'auto' && st.settings.embedModel === 'bge-m3rm-rf', `embedding E3: le opzioni rifiutano un host esterno (resta ${st.settings.ollamaUrl}) e ripuliscono motore e modello`);
+  st.stop && st.stop();
+}
+
 async function run(ok) {
   console.log('significato (embedding)');
   pinnedTests(ok);
   anyLengthTests(ok);
   await providerTests(ok);
+  await ollamaTests(ok);
 }
 
-module.exports = { run, demoScenario };
+module.exports = { run, demoScenario, fakeOllama, wordVec };
 
 if (require.main === module) {
   let failed = 0;
