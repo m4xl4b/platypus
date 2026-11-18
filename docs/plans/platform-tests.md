@@ -92,7 +92,7 @@ Follow the rules for the Windows PC above: record Max's entries first, restore t
 
 ### W3 · Real windows and sessions  [!] [win]
 
-Blocked on the real session: the Claude Code CLI on this PC is not logged in (`Invalid API key · Please run /login`), see the Journal (Windows). Done with simulated sessions: focus of cmd, PowerShell and Windows Terminal windows.
+Partly done: focus of cmd, PowerShell and Windows Terminal windows with simulated sessions. Still open: a real interactive session in a terminal (the trust dialog of a new folder needs a keystroke that I could not send safely to Max's desktop), VS Code, Resume, Open folder, agents with model/age/effort from a real transcript, WSL. See the Journal (Windows).
 
 At least one real Claude Code session is needed: ask Max to open one, or open it yourself in a test folder, if he agrees (and see the rule: never run `claude` without Max saying so at that moment).
 
@@ -103,9 +103,9 @@ At least one real Claude Code session is needed: ask Max to open one, or open it
   - sessions launched inside WSL show up;
   - with the normal network the hooks inside WSL do not arrive; with the mirrored network they do, if Max wants to try it.
 
-### W4 · Permissions from the balloon, and feedback hooks  [!] [win]
+### W4 · Permissions from the balloon, and feedback hooks  [x] [win]
 
-Blocked on the real session (CLI not logged in). Done with a simulated hook client that runs the exact command from the hooks installed by Platypus: balloon YES / ALWAYS / NO, two at once, wait longer than `approveWaitSec`, Platypus closed. Not done: what Claude Code really does with the answers, and the 2.11 feedback check (`scripts/feedback-check.js`).
+Done with the real Claude Code CLI after Max logged in (non-interactive `claude -p`, see the second W4 entry in the Journal (Windows)); the earlier entry used a simulated hook client. Limit: `-p` has no terminal, so "Claude Code asks as usual in the terminal" was seen only as an automatic refusal.
 
 - **With Max's permission:**
   1. install the hooks;
@@ -306,5 +306,36 @@ How it was run: the window was started from the test clone with the temporary ho
 - **W3, simulated sessions** (fake `sessions\<pid>.json` in the temporary home plus a `SessionStart` hook, a real terminal window, then `POST /api/focus` from another window): `cmd`, `powershell` and `wt.exe` (Windows Terminal 1.25 is installed, it is Windows 11's default terminal, but `wt.exe` is not in the PATH of this shell) each ended with the right window in front, each answer was `{"ok":true,"how":"app","app":"WindowsTerminal","approx":true}`. `approx` means the window was chosen by process name and title, not by the process tree: in the test the shell's parent was my script, not Windows Terminal, so this is a limit of the test; with a real `claude` started in a tab the tree is different. **Doubt for Max:** with several Windows Terminal windows open the "approximate" pick could take the wrong one; to be confirmed with real sessions.
 - **Not done for W3:** VS Code (not in the default path), Resume, Open folder, agents/subagents with model, age and effort (they need a real transcript), WSL (a `rocky` distribution exists but has no Node and no `claude`; I did not install anything). The terminals I opened were closed, the fake session files removed, the test Platypus stopped (no process under `C:\Platypus Tests`, port 47850 free).
 - **Cost to keep in mind:** none of this spent tokens.
+
+### 2026-11-18 · W4 · Real session, after Max logged in the CLI
+
+- **Setup:** Claude Code 2.1.11 (`claude -p`, `--model haiku`, `--setting-sources project`, `--permission-mode default`, `--no-session-persistence`), in the throwaway project `C:\Platypus Tests\w4-project` whose own `.claude\settings.json` holds the hooks (port 47850). Test Platypus window on 47850 with the temporary home. The balloon was answered by moving the window to the session's floor and clicking the real button in the page. The CLI environment had no `CLAUDE_*` / `ANTHROPIC_*` variables. The model asked to run `touch <file>` with the Bash tool, so every run needs a permission.
+- **Results (all runs end with exit code 0):**
+  - **YES:** the balloon showed "Create empty file w4-yes"; after SÌ the file existed and Claude said DONE (8 s).
+  - **ALWAYS:** asked to run two `touch` commands in a row; after the first answer SEMPRE both files were created, and **no second approval appeared** (checked 12 s later): Claude Code does take `updatedPermissions` and stops asking.
+  - **NO:** the file was not created, Claude said DENIED (the deny message of the office reached it).
+  - **Two at once** (two `claude -p` in parallel): two approvals pending; B answered NO first, A answered YES second: A created its file and said DONE, B did not and said DENIED. Answers are not crossed.
+  - **Nobody answers, `approveWaitSec` = 5:** the hook returned 204 after 5 s, Claude Code fell back to its own rule; in `-p` that is a refusal ("DENIED", file not created), 9.5 s in all. The setting was restored to 120.
+  - **Platypus closed while waiting:** the window was killed during the wait; Claude Code carried on 2.9 s later (refusal, `-p`). **Platypus already closed:** Claude Code finished in 4.8 s with the file not created and an explanation that the command "needs approval". It never hung.
+  - **Not covered:** the real terminal question of an interactive session (the `-p` mode has no one to ask), and a wait of the full 600 s of `curl -m`.
+- **2.11 feedback check (`scripts/feedback-check.js --port 47850`, with `TEMP`/`TMP` on `C:\Platypus Tests\fb-tmp` so that the existing `%TEMP%\platypus-feedback-check` was not touched; hooks `http`, so `--curl` was not needed).** Same prompt as in the document, run with `claude -p`:
+  - the model answered about the three markers and said it saw "PLATY-PRE (PreToolUse), PLATY-FAIL (PostToolUseFailure), PLATY-POST (PostToolUse)"; the final message of the run was `PLATY-STOP`;
+  - the transcript confirms where each marker lives: `hook_additional_context` attachments for PRE, FAIL and POST, and a `hook_blocking_error` + user message for the Stop block;
+  - `[feedback-check]` lines, as printed:
+    ```
+    [feedback-check] PreToolUse Bash agent=main origin=- → context
+    [feedback-check] PostToolUseFailure Bash agent=main origin=- → context
+    [feedback-check] PreToolUse Read agent=main origin=- → context
+    [feedback-check] PreToolUse Read agent=main origin=- → context
+    [feedback-check] PostToolUseFailure Read agent=main origin=- → context
+    [feedback-check] PostToolUse Read agent=main origin=- → context
+    [feedback-check] Stop - agent=main origin=- → block
+    [feedback-check] Stop - agent=main origin=- → 204
+    ```
+  - answers to the document's table: Claude Code 2.1.11; `http` hooks reach Platypus: **yes**; markers seen by the model: **PLATY-PRE, PLATY-POST, PLATY-FAIL, not PLATY-START**; `PreToolUse` context reaches the model: **yes** (this decides B2/B4 for Max); failing `npm test`: **`PostToolUseFailure`**; read of the missing file: **`PostToolUseFailure`** (the successful read of `notes.txt` gives `PostToolUse`); Stop block: **worked once** (PLATY-STOP, then the second `Stop` answered 204); `Origin` header: **none** (`origin=-`); Platypus closed (Ctrl+C on the check, then `claude -p --continue "read notes.txt again"`): worked as usual in 3 s, no error.
+  - **`SessionStart` did not arrive** in this `-p` run (no line, no PLATY-START). Possibly `-p` does not fire it for `http` hooks, or the event is not sent without a terminal; to be confirmed in an interactive session (a question for Max: does Claude Code in the desktop app or a terminal show PLATY-START?).
+  - The results are also copied, as a short table, to a new "Results (Windows)" section in `docs/plans/2.11-real-check.md`. I did **not** edit `docs/plans/2.11-3.0-feedback-storage-server.md`, where that document asks for a "Real-session check" entry: it belongs to the 2.11 plan, not to this loop.
+- **W3 attempt with a real interactive session:** I opened `claude` in a `cmd` window on a new folder; it stopped at the "Do you trust this folder?" question. Sending a keystroke to it from a script is not safe on Max's desktop (it goes to whatever has the focus), and the first attempt did not reach the window, so I closed the window and its process (by PID) and left W3 as partly done.
+- **Cleanup and side effects:** the transcripts of the test sessions in `~\.claude\projects` (`...Platypus-Tests...`) were deleted (they were mine); `~\.claude\settings.json` has the same hash as before; no entry about `Platypus Tests` in `~\.claude.json`; no `history.jsonl`. The test Platypus and the check were stopped (port 47850 free), `C:\Platypus Tests\fb-tmp` deleted. The clones and the two throwaway projects (`w3-project`, `w4-project`) stay in `C:\Platypus Tests\`.
 
 ## Journal (Linux)
