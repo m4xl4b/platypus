@@ -133,7 +133,9 @@ On `[win]` and on `[linux]`, Electron against Tauri, with the demo on:
 - **Time of the first build** of Tauri: it is the cost for whoever starts from source.
 - **Output:** a table in `docs/plans/tauri-measurements.md`, with the measuring method written so that it can be repeated.
 
-## T8 · GitHub Actions  [ ]
+## T8 · GitHub Actions  [!]
+
+Blocked: the workflow is written and checked by reading, and `--smoke` works locally, but the Actions only run on GitHub, and pushing the branch needs Max's permission at that moment.
 
 - A `tauri` job in `.github/workflows/ci.yml`, which runs only with `workflow_dispatch` or when `shells/tauri/**` changes. The normal CI must stay fast.
 - The job:
@@ -157,7 +159,11 @@ On `[win]` and on `[linux]`, Electron against Tauri, with the demo on:
 (Draft notes, completed as the tasks close; the integration writes the real entry.)
 
 - Notifications (agent waiting, new alert, daily report) are now decided by the engine (`src/core/notify.js`) and only shown by the shell, so every desktop shell notifies the same things. Electron behaves as before. New `GET /api/shell/events`: an SSE stream with only counters and notifications, for a shell that runs the engine as a separate process. The day of the last report notification now lives in `~/.platypus/notify.json`.
-- Docs: the architecture section about Tauri became "Tauri shell (experimental)", with the design, the limits and the prerequisites.
+- Docs: the architecture section about Tauri became "Tauri shell (experimental)", with the design, the limits, the prerequisites and the Windows measurements (`docs/plans/tauri-measurements.md`).
+- New, experimental: a second desktop shell in Tauri 2 (`shells/tauri/`), next to Electron, which stays the default and gets no new dependency. Build it with `npm run tauri:build` (needs Rust and the system libraries) and start it with `node scripts/launch.js --shell tauri`; without a build the launcher explains what is needed and opens Electron. It has the same window, title bar, full screen, mini mode, PIN, tray menu, notifications, start at login (same entry as Electron, never two) and single instance. On Windows it is about 5 MB instead of about 370 MB, with the same memory and start-up time.
+- The engine has `--parent-stdin` (`src/standalone.js`): started by a shell that holds its stdin, it saves and exits when the shell closes, even if the shell crashes.
+- The shell stream `/api/shell/events` also carries the tray texts (translated, following the language of the options) and the counters' label and tooltip.
+- New workflow `.github/workflows/tauri.yml` (by hand or when `shells/tauri` changes): builds the Tauri shell on Windows, macOS and Linux, starts it once with `--smoke`, and keeps only the program's size for 3 days. `ci.yml` is unchanged.
 
 ## Journal
 
@@ -361,3 +367,18 @@ The commands `npm run tauri:build` and `--shell tauri` come with T3 and T6: chec
 - Doubts for Max: on Windows the numbers say that Tauri saves disk (and download) but not memory or time, because the office is drawn by Chromium in both shells. Linux (WebKitGTK) may tell a different story and is still to be measured on the Linux computer.
 - Checked: three alternating runs per shell for each number; every run left port 47830 free; the repository script was run once per shell with its defaults. `npm test`: "Tutto a posto."; `npm run i18n:check`: 0 missing.
 - **Open, for the Linux computer (`[linux]`)**: the same table on Linux.
+
+### 2026-11-18 · T8 · GitHub Actions (written, not run: needs a push)
+
+- Done:
+  - `--smoke` in the shell: it starts (or attaches to) the engine, waits until the window has loaded the office, prints `[smoke] ok: …` and exits with 0; on any engine error it exits with 1 without dialogs, and after 120 s with no window it exits with 1. In `--smoke` and snapshot mode there are no dialogs, no toasts and no registration of the real toast ID.
+  - **`.github/workflows/tauri.yml`, a separate workflow, not a job in `ci.yml`.** GitHub's `paths` filter applies to a whole workflow, not to one job, so "only when `shells/tauri/**` changes" needs its own file (or a path-filter action, which would add a third-party action). It also leaves `ci.yml` untouched, which the platform-tests loop edits too. Triggers: `workflow_dispatch`, and `push`/`pull_request` on `shells/tauri/**` and the workflow itself.
+  - The job, on `ubuntu-latest`, `macos-15-intel` (as in `ci.yml`, for runner capacity) and `windows-latest`: checkout and setup-node pinned to the same commit hashes as `ci.yml`; Rust stable from the rustup already on the runners (no third-party action); on Linux the WebKitGTK packages from the prerequisites plus `xvfb` and `dbus`; `time npm run tauri:build`; the program started once with `--smoke --demo` (on Linux inside `dbus-run-session` and `xvfb-run`, because single-instance uses DBus there); a `size-<os>.txt` artifact with the program's size, `retention-days: 3`. The program itself is never uploaded. `permissions: contents: read`, `persist-credentials: false`, a 45-minute timeout.
+- Checked, locally only:
+  - `--smoke --demo` exactly as the workflow step runs it (Git Bash, release build, temporary home, port 47830): `[smoke] ok: started the engine on port 47830, the window loaded the office`, exit 0 after 2.2 s, port free afterwards. With `PLATYPUS_NODE` pointing to a missing file: exit 1, no dialog.
+  - the workflow parses as YAML (Python `yaml.safe_load`): one job, the three triggers and the eight steps in order. Re-read by hand against `ci.yml` (pins, permissions, artifact settings). Fixed while re-reading: macOS runners have no GNU `timeout`, so outside Linux the step relies on `--smoke`'s own 120 s limit.
+- Found and fixed during T8: the T6 launcher checks and the T7 measurements had started the shell without `PLATYPUS_AUMID`, so it had registered the real toast ID `com.platypus.desktop` under `HKCU\Software\Classes\AppUserModelId` (pointing to this worktree's icon). The key did not exist before T6 (checked then) and Electron does not use it; I removed it. Now the shell never registers the real ID in snapshot or `--smoke` mode, and `measure-win.ps1` uses a test ID and removes it.
+- Also refreshed (as the T9 entry asked): the Tauri section of both architecture docs now says how to start it, that closing quits, the Windows toasts, the position rule, and the plugins actually used (no `window-state`).
+- Not checked: the Actions themselves. On macOS they are the only proof possible; the logs must be read carefully. Possible issues to look for on Linux: WebKitGTK under Xvfb (if the window does not load, try `WEBKIT_DISABLE_COMPOSITING_MODE=1`), and the tray without a StatusNotifier host (warnings expected, not a failure).
+- **Question for Max:** may I push the branch (`claude/sviluppo-tauri-66442e`) to GitHub so the "Tauri shell" workflow runs? Nothing else would be done there: no pull request, no merge.
+

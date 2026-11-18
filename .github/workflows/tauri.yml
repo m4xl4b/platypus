@@ -1,0 +1,81 @@
+# Experimental Tauri shell (docs/plans/tauri-shell.md): build it on Windows, macOS and Linux and start it once
+# with --smoke (it starts the engine, waits for the window to load the office, then exits with 0).
+# It runs only by hand or when the shell changes, so the normal CI (ci.yml) stays fast and untouched.
+# The only artifact is a text file with the program's size, kept 3 days: never the program itself.
+# Actions are pinned to full commit hashes, like in ci.yml. Rust comes from the rustup already on the runners.
+name: Tauri shell
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'shells/tauri/**'
+      - '.github/workflows/tauri.yml'
+  pull_request:
+    paths:
+      - 'shells/tauri/**'
+      - '.github/workflows/tauri.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  tauri:
+    name: Tauri · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15-intel, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Rust (stable, from the runner's rustup)
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc -V && cargo -V
+      - name: System libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev xvfb dbus
+      - name: Build (the time is in the log)
+        shell: bash
+        run: time npm run tauri:build
+      - name: Start once with the demo (--smoke)
+        shell: bash
+        env:
+          PLATYPUS_PORT: '47812'
+        run: |
+          exe=shells/tauri/src-tauri/target/release/platypus
+          # --smoke exits by itself with 1 after 120 s (macOS has no `timeout` command)
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            timeout 180 dbus-run-session -- xvfb-run -a "$exe" --smoke --demo
+          else
+            "$exe" --smoke --demo
+          fi
+      - name: Size of the program
+        if: always()
+        shell: bash
+        run: |
+          exe=shells/tauri/src-tauri/target/release/platypus
+          [ -f "$exe.exe" ] && exe="$exe.exe"
+          if [ -f "$exe" ]; then
+            node -e "const s=require('fs').statSync(process.argv[1]).size; console.log(process.argv[2]+': '+s+' bytes ('+(s/1048576).toFixed(1)+' MB)')" "$exe" "$RUNNER_OS" | tee size-${{ runner.os }}.txt
+          else
+            echo "$RUNNER_OS: no program built" | tee size-${{ runner.os }}.txt
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: tauri-size-${{ runner.os }}
+          path: size-*.txt
+          retention-days: 3
+          if-no-files-found: warn

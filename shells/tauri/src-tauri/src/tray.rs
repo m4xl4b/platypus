@@ -43,8 +43,11 @@ fn plain(m: &MenuState, key: &str, fallback: &str) -> String {
     m.texts.get(key).and_then(|v| v.as_str()).unwrap_or(fallback).to_string()
 }
 
+/// Automatic checks (snapshot mode or `--smoke`): no dialogs, no toasts, no real registrations.
 pub fn snapshot_mode() -> bool {
-    std::env::var_os("PLATYPUS_SNAPSHOT").is_some() || std::env::var_os("PLATYPUS_SNAPSHOT_JS").is_some()
+    std::env::var_os("PLATYPUS_SNAPSHOT").is_some()
+        || std::env::var_os("PLATYPUS_SNAPSHOT_JS").is_some()
+        || crate::office::SMOKE.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// The icon: the usual one, or with a red dot while someone waits for you.

@@ -22,6 +22,8 @@ use tauri_plugin_opener::OpenerExt;
 use crate::engine::Engine;
 
 pub const LABEL: &str = "main";
+/// `--smoke`: exit with 0 as soon as the window has loaded the office (see main.rs).
+pub static SMOKE: AtomicBool = AtomicBool::new(false);
 /// The commands the page may call: one `allow-<command>` permission each (see build.rs).
 const PAGE_COMMANDS: &[&str] = &[
     "minimize",
@@ -290,6 +292,11 @@ pub fn open_window(app: &AppHandle) -> tauri::Result<()> {
                 if !shell.shown.swap(true, Ordering::SeqCst) {
                     let _ = w.show();
                     let _ = w.set_focus();
+                    if SMOKE.load(Ordering::SeqCst) {
+                        let how = if shell.engine.lock().unwrap().is_some() { "started" } else { "attached to" };
+                        println!("[smoke] ok: {how} the engine on port {}, the window loaded the office", shell.port());
+                        w.app_handle().exit(0);
+                    }
                 }
             }
         });

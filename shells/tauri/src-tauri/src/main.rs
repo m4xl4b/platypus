@@ -20,6 +20,10 @@ use crate::office::Shell;
 
 fn main() {
     let demo = std::env::args().any(|a| a == "--demo");
+    // --smoke (GitHub Actions, T8): start the engine, wait until the window has loaded the office, exit with 0;
+    // exit with 1 on any error or after 120 s. No dialogs.
+    let smoke = std::env::args().any(|a| a == "--smoke");
+    office::SMOKE.store(smoke, std::sync::atomic::Ordering::SeqCst);
     let app = tauri::Builder::default()
         // a second start brings the first window to the front (this plugin must come first)
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -47,10 +51,23 @@ fn main() {
             let data = shell_data_dir(app.handle());
             app.manage(Shell::new(data));
             let handle = app.handle().clone();
+            if smoke {
+                let h = handle.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(120));
+                    eprintln!("[smoke] FAILED: the window did not load the office within 120 s");
+                    h.exit(1);
+                });
+            }
             // the engine can take a few seconds: wait for it off the main thread, then open the window
             std::thread::spawn(move || {
                 if let Err(msg) = start_engine(&handle, demo) {
                     eprintln!("[platypus] {msg}");
+                    if smoke {
+                        eprintln!("[smoke] FAILED: the engine did not start");
+                        handle.exit(1);
+                        return;
+                    }
                     handle.dialog().message(msg).title("Platypus").kind(MessageDialogKind::Error).blocking_show();
                     handle.exit(1);
                     return;
@@ -63,8 +80,11 @@ fn main() {
                 if let Err(e) = tray::create(&handle) {
                     eprintln!("[platypus] tray: {e}");
                 }
+                // the real ID is registered only for real use: the checks use PLATYPUS_AUMID or nothing
                 #[cfg(windows)]
-                winnotify::register(engine::repo_root().as_deref());
+                if !tray::snapshot_mode() || std::env::var_os("PLATYPUS_AUMID").is_some() {
+                    winnotify::register(engine::repo_root().as_deref());
+                }
                 tray::listen(&handle);
                 tray::snapshot_menu(&handle);
             });

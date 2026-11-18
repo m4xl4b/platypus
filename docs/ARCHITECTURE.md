@@ -123,12 +123,13 @@ Electron stays the default. A second shell in Tauri 2 is being built next to it,
 - **The window** is a Tauri webview on `http://127.0.0.1:<port>/`, without decorations (the page draws its own title bar), like Electron's. Navigation stays on the engine's own pages; external `http`/`https` links open in the browser.
 - **`window.officeApp`** has the same functions as in Electron (table above). An initialisation script, built with the real port, defines it on top of Tauri's `invoke`, and only on the engine's own origin. Only the shell's own commands are allowed to that page (one permission each, no `core:default`, no plugin permissions); the full `window.__TAURI__` API is not exposed. No command takes a path, a URL or a command line. Messages from the shell to the page (`onMaximized`, `onGoto`) are plain calls into the page.
 - **Notifications and counters** come from the engine's `/api/shell/events` stream (`notify.js`), so both shells notify the same things. The tray menu has the same items as Electron's; its actions go through the engine's API (demo, Cowork, settings), and "connect to Claude Code" runs `node src/hooks-cli.js` after a confirmation.
-- **Plugins:** `single-instance`, `window-state`, `autostart` (the same entry name as Electron's, so the two are never both active), `notification`, `opener`. They are called from Rust only, never from the page.
+- **Plugins:** `single-instance`, `autostart` (the same entry name as Electron's, so the two are never both active), `notification` (macOS and Linux), `opener`, `dialog`. They are called from Rust only, never from the page. The window position is remembered with the same rule as Electron (`src/bounds.js`); closing the window quits, as in Electron.
+- **Starting it:** `npm run tauri:build` once, then `node scripts/launch.js --shell tauri` (with no build, the launcher explains how to make one and opens Electron). `npm run tauri:dev` runs it from source with the demo.
 
 **Limits** (from the Tauri 2 documentation; to be confirmed by the measurements and the tests):
 
 - Building from source needs Rust 1.90+ and the system libraries: on Windows the Microsoft C++ Build Tools (WebView2 is already part of Windows 10 1803+ and 11), on Linux `webkit2gtk-4.1` and `libayatana-appindicator`, on macOS the Xcode Command Line Tools. Node.js is still needed for the engine.
-- A click on a desktop notification cannot be intercepted: at most the window is brought to the front. On Windows, notifications from a build that is not installed may need a Start menu shortcut, as Electron does.
+- On Windows the shell shows its own toasts, with the ID `com.platypus.desktop` registered for the current user, so they say "Platypus" and a click opens the floor, also from source. On macOS and Linux the notification plugin cannot report a click: the floor of the last notification is shown the next time the window is opened.
 - On Linux the tray icon has no click event and no tooltip: everything is in its menu.
 - On Wayland, WebKitGTK has the same limits as Electron (no always on top, no window position).
 

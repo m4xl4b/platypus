@@ -49,6 +49,7 @@ $psi.UseShellExecute = $false; $psi.WorkingDirectory = $Worktree
 $e = $psi.EnvironmentVariables
 $e['HOME'] = $home2; $e['USERPROFILE'] = $home2; $e['APPDATA'] = (Join-Path $home2 'AppData\Roaming'); $e['LOCALAPPDATA'] = (Join-Path $home2 'AppData\Local')
 $e['CLAUDE_CONFIG_DIR'] = (Join-Path $home2 '.claude'); $e['PLATYPUS_PORT'] = "$Port"; $e['PLATYPUS_DATA_DIR'] = (Join-Path $Worktree '.platypus-dev')
+$aumid = 'com.platypus.desktop.measure'; $e['PLATYPUS_AUMID'] = $aumid  # Tauri registers this test ID for its toasts: removed below
 $e.Remove('ELECTRON_RUN_AS_NODE')
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 $p = [System.Diagnostics.Process]::Start($psi)
@@ -77,5 +78,6 @@ foreach ($id in ($tree | Where-Object { $_ -ne $p.Id })) { Stop-Process -Id $id 
 Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 Remove-Item -Recurse -Force $home2 -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force "HKCU:\Software\Classes\AppUserModelId\$aumid" -ErrorAction SilentlyContinue
 [pscustomobject]@{ shell = $Shell; stateMs = $tState; windowMs = $tWin; readyMs = $ready; memory = $mem; portFree = -not (Test-State) } | ConvertTo-Json -Compress -Depth 4
 
