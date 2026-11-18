@@ -3167,11 +3167,47 @@ function settingsStatus() {
   }
   return `<div class="stat"><p>${wtxt}${fest}</p><p>${ctxt}</p><button data-do="rescan">${tr('CERCA DI NUOVO LE SESSIONI COWORK')}</button></div>`;
 }
+// gli hook di feedback (2.11): si installano e si tolgono da qui, a parte da quelli che osservano,
+// e sempre dopo aver visto le righe esatte che finiscono nelle impostazioni di Claude Code
+function feedbackHooksHtml() {
+  const on = !!(snap && snap.hooks && snap.hooks.feedback);
+  return `<fieldset class="fbhooks"><legend>${esc(tr('FEEDBACK AGLI AGENTI'))}</legend>` +
+    `<p>${esc(tr('Platypus può dire all\'agente quello che vede (una lezione del Libro, un giro in tondo) attraverso gli hook di Claude Code. Servono hook a parte, che si installano solo da qui e solo dopo la tua conferma.'))}</p>` +
+    `<p class="${on ? 'on' : 'dim'}">${esc(on ? tr('Hook di feedback: installati.') : tr('Hook di feedback: non installati.'))} ${esc(tr('Da soli non dicono niente all\'agente.'))}</p>` +
+    `<button type="button" data-do="fbhooks">${esc(on ? tr('RIMUOVI GLI HOOK DI FEEDBACK…') : tr('INSTALLA GLI HOOK DI FEEDBACK…'))}</button><div class="fbconfirm" hidden></div></fieldset>`;
+}
+function bindFeedbackHooks(box) {
+  const btn = box.querySelector('[data-do=fbhooks]'), cf = box.querySelector('.fbconfirm');
+  btn.onclick = async () => {
+    if (!cf.hidden) { cf.hidden = true; return; }
+    let p = null;
+    try { p = await (await fetch('/api/feedback/hooks')).json(); } catch {}
+    if (!p || !p.ok) return toast(tr('Non riesco a leggere le impostazioni di Claude Code'), false);
+    const on = !!p.installed;
+    cf.innerHTML = (on
+      ? `<p>${esc(tr('Tolgo gli hook di feedback da {path}. Il resto del file resta com\'è.', { path: p.path }))}</p>`
+      : `<p>${esc(tr('Aggiungo queste righe a {path}. Il resto del file resta com\'è; la prima volta ne salvo una copia accanto ({backup}).', { path: p.path, backup: 'settings.json.platypus-backup' }))}</p>` +
+        `<pre>${esc(p.text)}</pre>` +
+        `<p class="dim">${esc(tr('Valgono per le sessioni di Claude Code aperte da adesso in poi. Se Platypus è chiuso, Claude Code prosegue come sempre.'))}</p>`) +
+      `<div class="btns"><button type="button" data-do="fbyes">${esc(on ? tr('SÌ, RIMUOVI') : tr('SÌ, INSTALLA'))}</button><button type="button" data-do="fbno">${esc(tr('ANNULLA'))}</button></div>`;
+    cf.hidden = false;
+    cf.querySelector('[data-do=fbno]').onclick = () => { cf.hidden = true; };
+    cf.querySelector('[data-do=fbyes]').onclick = async () => {
+      const r = await api('/api/feedback/hooks', { action: on ? 'uninstall' : 'install', confirm: true });
+      if (!r || !r.ok) return toast((r && r.reason) || tr('Non sono riuscito a modificare le impostazioni di Claude Code'), false);
+      if (snap && snap.hooks) snap.hooks.feedback = !!r.installed;
+      toast(r.installed ? tr('Hook di feedback installati') : tr('Hook di feedback rimossi'));
+      // si ridisegna solo questo riquadro: le altre opzioni modificate e non salvate restano come sono
+      box.querySelector('.fbhooks').outerHTML = feedbackHooksHtml();
+      bindFeedbackHooks(box);
+    };
+  };
+}
 function toggleSettings() {
   const box = $('#settings');
   if (!box.hidden) { if (box._tryClose) box._tryClose(); else box.hidden = true; return; }
   const st = (snap && snap.settings) || {};
-  box.innerHTML = '<span class="x">X</span><h3>' + tr('OPZIONI') + '</h3>' + settingsGroupsHtml(st) + settingsStatus() +
+  box.innerHTML = '<span class="x">X</span><h3>' + tr('OPZIONI') + '</h3>' + settingsGroupsHtml(st) + feedbackHooksHtml() + settingsStatus() +
     `<p class="dim">${tr('Le opzioni restano salvate anche alla prossima apertura.')}</p>` +
     `<div class="btns save-bar"><button data-do="save">${tr('SALVA')}</button><span class="dirty" hidden>${tr('Modifiche non salvate')}</span></div>`;
   // chiudere con X dopo una modifica: la prima volta avvisa, la seconda chiude senza salvare
@@ -3182,6 +3218,7 @@ function toggleSettings() {
     box.hidden = true;
   };
   box.querySelector('.x').onclick = box._tryClose;
+  bindFeedbackHooks(box);
   box.querySelector('[data-do=rescan]').onclick = async () => {
     const r = await api('/api/cowork-scan', {});
     if (r) { snap.cowork = r; toast(tr('Cowork: {found} cartelle trovate, {watched} seguite', { found: r.found, watched: r.watched })); box.hidden = true; toggleSettings(); }

@@ -204,6 +204,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(fb3.status === 204 && core.feedbackStats.late === 1, `feedback oltre i 300 ms: la risposta in ritardo non si manda → ${fb3.status} (in ritardo: ${core.feedbackStats.late})`);
   const fb4 = await get(port, '/platypus-hook/feedback', 'POST', 'non è json {');
   ok(fb4.status === 204, 'feedback con un corpo che non è JSON: 204 → ' + fb4.status);
+  // gli hook di feedback dal pannello delle opzioni: prima le righe da vedere, poi si scrive solo con la conferma
+  const fbSet = path.join(base, 'settings.json');
+  const fbPrev = JSON.parse((await get(port, '/api/feedback/hooks')).body);
+  ok(fbPrev.ok && fbPrev.installed === false && fbPrev.path === fbSet && /"type": "http"/.test(fbPrev.text) && fbPrev.text.includes(`http://127.0.0.1:${port}/platypus-hook/feedback`), 'hook di feedback: anteprima delle righe, con la porta del server');
+  const fbNo = await get(port, '/api/feedback/hooks', 'POST', JSON.stringify({ action: 'install' }));
+  ok(fbNo.status === 400 && !fs.existsSync(fbSet), 'hook di feedback: senza conferma non si scrive niente → ' + fbNo.status);
+  const fbYes = JSON.parse((await get(port, '/api/feedback/hooks', 'POST', JSON.stringify({ action: 'install', confirm: true }))).body);
+  ok(fbYes.ok && fbYes.installed && fs.readFileSync(fbSet, 'utf8').includes('/platypus-hook/feedback'), 'hook di feedback: con la conferma finiscono in settings.json');
+  const fbOff = JSON.parse((await get(port, '/api/feedback/hooks', 'POST', JSON.stringify({ action: 'uninstall', confirm: true }))).body);
+  ok(fbOff.ok && !fbOff.installed && fbOff.removed && !fs.readFileSync(fbSet, 'utf8').includes('platypus-hook'), 'hook di feedback: rimossi dal pannello');
+  fs.rmSync(fbSet, { force: true });
   const bad = await new Promise(resolve => {
     const req = http.request({ host: '127.0.0.1', port, path: '/api/state', headers: { Host: 'evil.example' } }, res => resolve(res.statusCode));
     req.on('error', () => resolve(0)); req.end();
@@ -254,6 +265,37 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(hooks.status({ base }) && !hooks.outdated({ base }), 'installati in una configurazione di prova');
   hooks.uninstall({ base });
   ok(!hooks.status({ base }), 'rimossi');
+  // gli hook di feedback (2.11) si installano e si tolgono a parte: gli altri, e quelli dell'utente, restano come sono
+  const sp = path.join(base, 'settings.json');
+  const mine = { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo mio' }] };
+  fs.writeFileSync(sp, JSON.stringify({ model: 'opus', hooks: { PostToolUse: [mine] } }, null, 2));
+  hooks.install({ port: 47800, base });
+  const readS = () => JSON.parse(fs.readFileSync(sp, 'utf8'));
+  const isFb = h => [h.url, h.command].some(x => typeof x === 'string' && x.includes('/platypus-hook/feedback'));
+  const others = s => JSON.stringify(Object.fromEntries(Object.entries(s.hooks).map(([ev, gs]) => [ev, gs.map(g => ({ ...g, hooks: g.hooks.filter(h => !isFb(h)) })).filter(g => g.hooks.length)]).filter(([, gs]) => gs.length).sort((a, b) => a[0].localeCompare(b[0])))); // l'ordine degli eventi nel file non conta
+  const countFb = s => Object.values(s.hooks).flat().flatMap(g => g.hooks).filter(isFb).length;
+  const before = others(readS());
+  ok(!hooks.feedbackStatus({ base }), 'hook di feedback: non installati insieme a quelli che osservano');
+  const fi = hooks.installFeedback({ port: 47800, base });
+  let cur = readS();
+  ok(hooks.feedbackStatus({ base }) && hooks.status({ base }) && fi.events === 5 && countFb(cur) === 5 && cur.model === 'opus', `hook di feedback installati a parte: ${countFb(cur)} eventi`);
+  ok(others(cur) === before, 'gli hook che osservano e quelli dell\'utente restano identici');
+  ok(cur.hooks.Stop.some(g => g.hooks.some(h => h.type === 'http' && h.timeout === 3 && !h.async)) && cur.hooks.PostToolUseFailure.some(g => g.matcher === hooks.FEEDBACK_TOOLS && g.hooks.some(isFb)) && !cur.hooks.PreToolUse.some(g => g.hooks.some(isFb)), 'hook di feedback: http, sincroni, sui soli eventi previsti (mai PreToolUse)');
+  hooks.installFeedback({ port: 47800, base });
+  ok(countFb(readS()) === 5, 'installarli due volte non li raddoppia');
+  hooks.installFeedback({ port: 47800, base, curl: true });
+  cur = readS();
+  ok(countFb(cur) === 5 && cur.hooks.Stop.some(g => g.hooks.some(h => h.type === 'command' && /curl/.test(h.command) && isFb(h))), 'con curl: comandi al posto degli hook http, sempre cinque');
+  hooks.install({ port: 47800, base }); // reinstallare (o aggiornare) quelli che osservano non tocca quelli di feedback, nemmeno se sono comandi curl
+  ok(countFb(readS()) === 5 && !hooks.outdated({ base }), 'reinstallare gli hook che osservano lascia quelli di feedback');
+  hooks.uninstall({ base });
+  ok(!hooks.status({ base }) && hooks.feedbackStatus({ base }) && countFb(readS()) === 5, 'togliere gli hook che osservano lascia quelli di feedback');
+  hooks.install({ port: 47800, base });
+  const ru = hooks.uninstallFeedback({ base });
+  cur = readS();
+  ok(ru.removed && !hooks.feedbackStatus({ base }) && hooks.status({ base }) && others(cur) === before && cur.hooks.PostToolUse.some(g => g.hooks.some(h => h.command === 'echo mio')), 'tolti gli hook di feedback: il resto è com\'era');
+  ok(hooks.uninstallFeedback({ base }).removed === false, 'toglierli due volte: niente da fare');
+  hooks.uninstall({ base });
 
   console.log('finestra della sessione (Windows)');
   const osint = require(path.join(ROOT, 'src', 'core', 'osint'));

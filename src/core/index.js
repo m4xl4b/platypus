@@ -4,6 +4,8 @@
 //   GET  /events             stream SSE dello stato (evento "replay" per il seminterrato)
 //   POST /platypus-hook      eventi dagli hook di Claude Code (anche il vecchio /agent-office-hook)
 //   POST /platypus-hook/feedback  hook sincrono: quello che Platypus dice all'agente (o 204), sempre entro un tempo massimo
+//   GET  /api/feedback/hooks  gli hook di feedback: installati o no, e le righe che l'installazione scriverebbe
+//   POST /api/feedback/hooks  {action: install|uninstall, confirm: true}  li scrive o li toglie da settings.json
 //   POST /api/demo           {on}
 //   POST /api/cowork         {on}
 //   GET/POST /api/settings   soglie degli avvisi, budget, prezzo di stima
@@ -233,14 +235,15 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     } catch {}
   }
 
-  let hooksCache = { t: 0, v: false };
+  let hooksCache = { t: 0, v: false, f: false };
   function hooksInstalled() {
-    if (Date.now() - hooksCache.t > 5000) hooksCache = { t: Date.now(), v: hooks.status({ base }) };
+    if (Date.now() - hooksCache.t > 5000) hooksCache = { t: Date.now(), v: hooks.status({ base }), f: hooks.feedbackStatus({ base }) };
     return hooksCache.v;
   }
   function payload() {
     const snap = state.snapshot();
     snap.hooks.installed = hooksInstalled();
+    snap.hooks.feedback = hooksCache.f; // gli hook di feedback, installati a parte
     snap.replay = replay ? { key: replay.key } : null;
     return 'data: ' + JSON.stringify(snap) + '\n\n';
   }
@@ -379,6 +382,17 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       case '/api/cowork':
         state.setIncludeCowork(typeof j.on === 'boolean' ? j.on : !state.includeCowork);
         return json(res, 200, { includeCowork: state.includeCowork });
+      case '/api/feedback/hooks': {
+        // installa o toglie gli hook di feedback in settings.json di Claude Code: mai senza la conferma esplicita
+        if (j.action !== 'install' && j.action !== 'uninstall') return json(res, 400, { ok: false, reason: 'action' });
+        if (j.confirm !== true) return json(res, 400, { ok: false, reason: 'confirm' });
+        try {
+          const r = j.action === 'install' ? hooks.installFeedback({ port, base, curl: j.curl === true }) : hooks.uninstallFeedback({ base });
+          hooksCache.t = 0;
+          state.touch();
+          return json(res, 200, { ok: true, installed: hooks.feedbackStatus({ base }), ...r });
+        } catch (e) { return json(res, 200, { ok: false, reason: tr('Non sono riuscito a modificare le impostazioni di Claude Code: {error}', { error: e.message }) }); }
+      }
       case '/api/bottega/claudemd': {
         const p = claudeMdPlan(j);
         if (!p) return json(res, 404, { ok: false });
@@ -505,6 +519,11 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     if (url.pathname === '/api/grounding') return json(res, 200, agentGrounding(url.searchParams));
     if (url.pathname === '/api/bottega/list') return json(res, 200, { ok: true, books: bottega.list() });
     if (url.pathname === '/api/bottega/claudemd') { const p = claudeMdPlan(Object.fromEntries(url.searchParams)); return p ? json(res, 200, { ok: true, ...p }) : json(res, 404, { ok: false }); }
+    // gli hook di feedback: se ci sono, e le righe esatte che l'installazione scriverebbe (da mostrare prima della conferma)
+    if (url.pathname === '/api/feedback/hooks') {
+      try { return json(res, 200, { ok: true, installed: hooks.feedbackStatus({ base }), ...hooks.feedbackPreview({ port, base, curl: url.searchParams.get('curl') === '1' }) }); }
+      catch (e) { return json(res, 200, { ok: false, reason: e.message }); }
+    }
     if (url.pathname === '/api/bottega/hints') {
       const s = state.sessions.get(url.searchParams.get('sid') || '');
       if (!s || !s.cwd) return json(res, 404, { ok: false });
@@ -580,6 +599,9 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     install: () => hooks.install({ port, base }),
     uninstall: () => hooks.uninstall({ base }),
     status: () => hooks.status({ base }),
+    installFeedback: opts => hooks.installFeedback({ port, base, ...opts }),
+    uninstallFeedback: () => hooks.uninstallFeedback({ base }),
+    feedbackStatus: () => hooks.feedbackStatus({ base }),
   } };
 }
 
