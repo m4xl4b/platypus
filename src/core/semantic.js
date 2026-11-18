@@ -209,6 +209,55 @@ function kmeans(vecs, k, weights) {
   return lab;
 }
 
+// ---------------------------------------------------------------- stella polare
+// Allineamento con l'obiettivo: per ogni azione, quanto parla della stessa cosa.
+// L'obiettivo viene "allargato" con le prime azioni che gli somigliano di più (retroazione di pertinenza):
+// "rifai il login" impara così che anche auth/ e token.ts fanno parte del compito.
+// Una riga per azione: [t, punteggio, media delle ultime 6, base (le prime 8 del compito), indice del compito, etichetta, errore]
+function alignment(mind, corpus) {
+  const align = [];
+  const acts = mind.pieces.filter(p => p.kind === 'action');
+  const gv = mind.goals.map((g, gi) => {
+    const v0 = corpus.vector(g.terms);
+    const end = gi + 1 < mind.goals.length ? mind.goals[gi + 1].t : Infinity;
+    const early = acts.filter(p => p.t >= g.t && p.t < end).slice(0, 10).map(p => corpus.vector(p.terms));
+    const top = early.map(v => [cosine(v, v0), v]).sort((a, b) => b[0] - a[0]).slice(0, 3).filter(x => x[0] > 0);
+    if (!top.length) return { t: g.t, v: v0 };
+    const v = new Float32Array(v0.length);
+    for (let i = 0; i < v.length; i++) { v[i] = v0[i]; for (const [, x] of top) v[i] += 0.6 * x[i] / top.length; }
+    let nn = 0; for (let i = 0; i < v.length; i++) nn += v[i] * v[i]; nn = Math.sqrt(nn) || 1;
+    for (let i = 0; i < v.length; i++) v[i] /= nn;
+    return { t: g.t, v };
+  });
+  let gi = -1, win = [], base = [];
+  for (const p of acts) {
+    while (gi + 1 < gv.length && gv[gi + 1].t <= p.t) { gi++; win = []; base = []; }
+    if (gi < 0) continue;
+    const s = Math.max(0, cosine(corpus.vector(p.terms), gv[gi].v));
+    win.push(s); if (win.length > 6) win.shift();
+    if (base.length < 8) base.push(s);
+    const avg = win.reduce((a, x) => a + x, 0) / win.length;
+    const b = Math.max(0.03, base.reduce((a, x) => a + x, 0) / base.length);
+    align.push([p.t, +s.toFixed(3), +avg.toFixed(3), +b.toFixed(3), gi, p.label, p.err ? 1 : 0]);
+  }
+  return align;
+}
+// Alla deriva: la stessa regola della mappa (worldmap.js). L'allineamento (media su base) resta sotto DRIFT_REL per
+// DRIFT_RUN azioni di fila, tutte del compito in corso. Con una base minima le parole del compito non compaiono mai nel
+// lavoro, e non si può giudicare (weak).
+const DRIFT_REL = 0.35, DRIFT_RUN = 6, WEAK_BASE = 0.031;
+function drift(mind, corpus) {
+  if (!mind || !corpus || !mind.goals || !mind.goals.length) return null;
+  const al = alignment(mind, corpus);
+  if (!al.length) return null;
+  const last = al[al.length - 1], gi = last[4];
+  if (gi !== mind.goals.length - 1) return null; // c'è una richiesta più nuova, ancora senza azioni
+  let run = 0;
+  for (let i = al.length - 1; i >= 0 && al[i][4] === gi && al[i][2] / al[i][3] < DRIFT_REL; i--) run++;
+  const weak = last[3] <= WEAK_BASE, g = mind.goals[gi];
+  return { goal: { t: g.t, label: g.label }, run, rel: +(last[2] / last[3]).toFixed(3), weak, drifting: !weak && run >= DRIFT_RUN };
+}
+
 // ---------------------------------------------------------------- vista per la pagina
 const cache = new Map();
 function snapshotMinds(minds, corpus, key, ctxLimitHint) {
@@ -235,37 +284,7 @@ function snapshotMinds(minds, corpus, key, ctxLimitHint) {
     const top = [...w.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([t]) => corpus.surface.get(t) || t);
     clusters.push({ id: j, label: top.join(' · '), n: idx.length });
   }
-  // allineamento con l'obiettivo (stella polare): per ogni azione, quanto parla della stessa cosa.
-  // L'obiettivo viene "allargato" con le prime azioni che gli somigliano di più (retroazione di pertinenza):
-  // "rifai il login" impara così che anche auth/ e token.ts fanno parte del compito.
-  const align = [];
-  if (minds.length === 1) {
-    const { mind } = minds[0];
-    const acts = mind.pieces.filter(p => p.kind === 'action');
-    const gv = mind.goals.map((g, gi) => {
-      const v0 = corpus.vector(g.terms);
-      const end = gi + 1 < mind.goals.length ? mind.goals[gi + 1].t : Infinity;
-      const early = acts.filter(p => p.t >= g.t && p.t < end).slice(0, 10).map(p => corpus.vector(p.terms));
-      const top = early.map(v => [cosine(v, v0), v]).sort((a, b) => b[0] - a[0]).slice(0, 3).filter(x => x[0] > 0);
-      if (!top.length) return { t: g.t, v: v0 };
-      const v = new Float32Array(v0.length);
-      for (let i = 0; i < v.length; i++) { v[i] = v0[i]; for (const [, x] of top) v[i] += 0.6 * x[i] / top.length; }
-      let nn = 0; for (let i = 0; i < v.length; i++) nn += v[i] * v[i]; nn = Math.sqrt(nn) || 1;
-      for (let i = 0; i < v.length; i++) v[i] /= nn;
-      return { t: g.t, v };
-    });
-    let gi = -1, win = [], base = [];
-    for (const p of acts) {
-      while (gi + 1 < gv.length && gv[gi + 1].t <= p.t) { gi++; win = []; base = []; }
-      if (gi < 0) continue;
-      const s = Math.max(0, cosine(corpus.vector(p.terms), gv[gi].v));
-      win.push(s); if (win.length > 6) win.shift();
-      if (base.length < 8) base.push(s);
-      const avg = win.reduce((a, x) => a + x, 0) / win.length;
-      const b = Math.max(0.03, base.reduce((a, x) => a + x, 0) / base.length);
-      align.push([p.t, +s.toFixed(3), +avg.toFixed(3), +b.toFixed(3), gi, p.label, p.err ? 1 : 0]);
-    }
-  }
+  const align = minds.length === 1 ? alignment(minds[0].mind, corpus) : [];
   const pieces = recent.map((x, i) => {
     const c = P ? P.coords[i] : [0, 0, 0];
     return [x.p.t, x.p.kind, x.p.label, x.p.tokens, x.p.gen, +c[0].toFixed(3), +c[1].toFixed(3), +c[2].toFixed(3), lab[i] ?? 0, x.owner, x.p.err ? 1 : 0];
@@ -278,4 +297,4 @@ function snapshotMinds(minds, corpus, key, ctxLimitHint) {
   return v;
 }
 
-module.exports = { AgentMind, Corpus, terms, cosine, snapshotMinds, DIM };
+module.exports = { AgentMind, Corpus, terms, cosine, snapshotMinds, alignment, drift, DIM, DRIFT_REL, DRIFT_RUN };

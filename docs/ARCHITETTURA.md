@@ -16,6 +16,7 @@ Platypus è diviso in tre strati indipendenti. È quello che permette di farlo g
 │                       dipendenza esterna)                  │  stato, serve pagina e API su HTTP
 └────────────────────────────────────────────────────────────┘
         ▲ transcript e registro (~/.claude)      ▲ hook (curl → 127.0.0.1:47800)
+                                                 ▲▼ hook di feedback (http → /platypus-hook/feedback, facoltativi)
 ```
 
 ## Motore (`src/core`)
@@ -27,7 +28,7 @@ Solo moduli di Node.js, nessun pacchetto npm: per questo la modalità browser pa
 | `index.js` | avvio, server HTTP solo su 127.0.0.1, SSE, API, permessi in sospeso |
 | `sources.js` | lettura dei transcript (`projects/**/*.jsonl`, compresi gli agenti dei Workflow in `<sessione>/subagents/workflows/<runId>/` con il loro `journal.jsonl`, e i riepiloghi in `<sessione>/workflows/<runId>.json`) e del registro delle sessioni, ricerca delle cartelle Cowork |
 | `state.js` | stato di sessioni, agenti e sottoagenti, costi, avvisi, lavagne, rilasci, esecuzioni dei Workflow (fasi, costo e tempi per agente) e messaggi tra agenti |
-| `hooks.js` | installazione e rimozione degli hook in `settings.json` |
+| `hooks.js` | installazione e rimozione degli hook in `settings.json`; quelli di feedback a parte, con un loro marcatore |
 | `archive.js` | archivio e replay con orologio virtuale |
 | `osint.js` | integrazione con il sistema: finestra in primo piano, riprendi sessione, apri cartella (Windows / macOS / Linux) |
 | `stats.js` | statistiche per giorno e settimana, report |
@@ -37,6 +38,10 @@ Solo moduli di Node.js, nessun pacchetto npm: per questo la modalità browser pa
 | `surprise.js` | classificazione dei fallimenti (Jest, pytest, go, cargo, npm, tsc, Node, Python, PowerShell…), estratti degli errori e file citati, sorpresa, reazioni (si corregge/insiste/si ferma) e catene causali |
 | `bottega.js` | Libro della bottega: lezioni per progetto dedotte dai fatti qui sopra, peso che si dimezza in 30 giorni, apprendimento dal vivo e dall'archivio, suggerimenti del Nonno, sezione per il `CLAUDE.md` |
 | `claudemd.js` | scrittura prudente della sezione nel `CLAUDE.md` di un progetto: tra i marcatori, copia di sicurezza prima, il resto byte per byte, scrittura atomica |
+| `feedback.js` | feedback agli agenti: dall'input di un hook alla risposta per Claude Code, come funzioni pure; i tre modi di ogni funzione, i limiti di frequenza (`Gate`), i progetti zittiti |
+| `feedback-rules.js` | che cosa dice Platypus: una regola per funzione (lezioni a inizio sessione, Nonno, giro in tondo, modifica sopra il cambiamento di un altro agente, affermazioni senza prove, ritorno al compito), ogni testo costruito in inglese per l'agente e nella lingua dell'ufficio per il registro |
+| `outcomes.js` | che cosa ha fatto un agente dopo un messaggio: probabilmente utile, ignorato o non si può dire, dai suoi passi successivi |
+| `feedbacklog.js` | il registro dei messaggi, un file per progetto, solo aggiunte in coda; la demo usa una versione in memoria con la stessa interfaccia |
 | `weather.js`, `releases.js`, `describe.js`, `demo.js`, `demoworld.js` | meteo, rilasci git/gh, descrizioni degli strumenti, demo |
 | `../i18n` | traduzioni (chiave = testo italiano, `locales/<lingua>/*.json`) |
 
@@ -62,8 +67,22 @@ Tutto ciò che dipende dal sistema operativo sta in tre punti: `osint.js`, `sour
 | `GET /api/bottega`, `/api/bottega/list`, `/api/bottega/hints` | il libro di un progetto (`sid`, `cwd` o `key`), i progetti con un libro, cosa direbbe adesso il Nonno |
 | `POST /api/bottega`, `/api/bottega/learn` | fissa/ignora/ripristina/dimentica una lezione; impara dall'archivio del progetto in background |
 | `GET`/`POST /api/bottega/claudemd` | anteprima della sezione per il `CLAUDE.md`; scriverla (solo con `confirm: true`) |
+| `POST /platypus-hook/feedback` | hook di feedback sincrono: la risposta per Claude Code, oppure un `204` vuoto |
+| `GET`/`POST /api/feedback/hooks` | se gli hook di feedback sono installati e le righe esatte; installarli o toglierli (solo con `confirm: true`) |
+| `GET /api/feedback/log`, `/api/feedback/counts` | i messaggi agli agenti di un progetto con i loro esiti (`sid`, `cwd` o `key`); quanti per funzione negli ultimi 7 giorni |
 
 Il server rifiuta le richieste con un `Host` o un `Origin` diversi da `127.0.0.1`/`localhost` (protezione dal DNS rebinding e dai siti web).
+
+### Feedback agli agenti
+
+`POST /platypus-hook/feedback` risponde entro 300 ms, usando solo quello che è già in memoria (lo stato, i libri, il registro). Una risposta più lenta, o qualunque errore, diventa un `204` vuoto e Claude Code prosegue come se Platypus non ci fosse. Le risposte usano solo questi formati degli hook:
+
+| Evento | Risposta |
+|---|---|
+| `SessionStart`, `PostToolUse`, `PostToolUseFailure` | `{"hookSpecificOutput": {"hookEventName": …, "additionalContext": "Platypus: …"}}` |
+| `Stop`, `SubagentStop` | `{"decision": "block", "reason": "Platypus: …"}`, mai quando `stop_hook_active` è vero; nella 2.11 l'unica funzione che lo userebbe (le affermazioni) si ferma all'ombra, quindi non parte mai |
+
+Mai `permissionDecision`, `updatedInput` o `updatedToolOutput`: Platypus aggiunge contesto, non decide al posto tuo. Ogni funzione è `off`, `shadow` oppure `on` (`fbSessionLessons`, `fbElder`, `fbLoop`, `fbStale`, `fbClaims`, `fbDrift` nelle opzioni; le ultime tre nella 2.11 arrivano al massimo a `shadow`). Limiti: un messaggio ogni 2 minuti per agente, 6 all'ora per sessione, la stessa lezione una volta sola per agente; i messaggi in ombra contano come quelli mandati. La demo chiama la stessa funzione senza passare dalla rete, con i suoi modi e un registro in memoria.
 
 ## Interfaccia (`renderer/`)
 
@@ -112,5 +131,6 @@ Il vantaggio sarebbero programmi compilati molto più piccoli (circa 10 MB invec
 | `~/.platypus/settings.json` | opzioni dell'ufficio |
 | `~/.platypus/stats.json` | statistiche per giorno e settimana |
 | `~/.platypus/bottega/<chiave>.json` | il Libro della bottega di ogni progetto (un file per cartella di progetto) |
+| `~/.platypus/feedback/<chiave>.jsonl` | i messaggi agli agenti di ogni progetto, mandati e in ombra, con i loro esiti (oltre 5 MB passa a `<chiave>.1.jsonl`) |
 | `~/.platypus/launch.log` | messaggi dell'ultimo avvio della finestra |
 | cartella dati di Electron (`Platypus`) | posizione della finestra e preferenze del guscio |

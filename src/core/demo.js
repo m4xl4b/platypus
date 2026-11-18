@@ -15,9 +15,12 @@ const { errorPattern } = require('./bottega');
 function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
 
 class Demo {
-  constructor(state, { bottega } = {}) {
+  constructor(state, { bottega, feedback, dropFeedback } = {}) {
     this.state = state;
     this.bottega = bottega || null; // per il libro finto dei progetti della demo
+    // feedback agli agenti (C3): la stessa funzione dell'hook vero, chiamata senza rete; dropFeedback svuota il suo registro
+    this.feedback = feedback || null;
+    this.dropFeedback = dropFeedback || null;
     this.timer = null;
     this.n = 0;
     this.ids = {};
@@ -67,10 +70,12 @@ class Demo {
       this.world.seed(x, x.main, 14);
       for (const a of x.subs.values()) this.world.seed(x, a, a._demoStuck ? 10 : a._demoDrift ? 24 : 5 + Math.floor(Math.random() * 14), a._demoStuck ? 'npm run test:e2e' : null);
     }
-    this.groundingScenario(this.ids.a, { explore: team[0], architect: arch, tester: team[2], plan: planId }, scale);
+    this.groundingScenario(this.ids.a, { explore: team[0], finder: team[1], architect: arch, tester: team[2], plan: planId }, scale);
     this.startWorkflows(this.ids.c);
     this.demoMessage(this.ids.a, arch, tr('Usa i refresh token a rotazione'));
     this.seedBooks();
+    // feedback agli agenti, piano 2: una sessione che parte riceve le lezioni del suo progetto
+    this.later(2 * scale, () => this.say(this.ids.b, { hook_event_name: 'SessionStart', source: 'startup' }));
     this.timer = setInterval(() => this.step(), 900);
     this.state.touch();
   }
@@ -168,18 +173,31 @@ class Demo {
     this.bottega.seedDemo('D:/dev/mes-clone', rev);
   }
 
+  // un evento fra qualche secondo (accorciato da scale), cancellato se la demo si ferma
+  later(sec, fn) { const tm = setTimeout(() => { this.world.timers.delete(tm); try { fn(); } catch {} }, sec * 1000); this.world.timers.add(tm); }
+  // un hook di feedback come quello che Claude Code manderebbe per questa sessione (vedi index.js: feedbackAnswer)
+  say(sid, input) {
+    const s = this.state.sessions.get(sid);
+    if (!s || !this.feedback) return;
+    try { this.feedback({ session_id: sid, cwd: s.cwd, ...input }); } catch {}
+  }
+
   // mappa contro territorio, costruita apposta sul piano 1: un ricordo scaduto, un percorso inventato,
   // un'affermazione senza prove che nel turno dopo diventa ancorata. Il disco è finto (s.demoDisk).
+  // Sullo stesso filo, il feedback agli agenti (C3): una scena per funzione, con gli hook che Claude Code manderebbe.
   groundingScenario(sid, ids, scale) {
     const s = this.state.sessions.get(sid);
     if (!s) return;
     const ag = { main: s.main, explore: s.subs.get(ids.explore), architect: s.subs.get(ids.architect), tester: s.subs.get(ids.tester), plan: s.subs.get(ids.plan) };
     if (!ag.explore || !ag.architect || !ag.tester || !ag.plan) return;
+    const finder = s.subs.get(ids.finder);
     s.demoDisk = new Map([['src/auth/oldToken.ts', { exists: false }]]);
     const hold = Date.now() + 150000 * scale; // intanto questi agenti non fanno altro: lo scenario resta leggibile
-    for (const a of Object.values(ag)) a._demoHold = hold;
-    const at = (sec, fn) => { const tm = setTimeout(() => { this.world.timers.delete(tm); try { fn(); } catch {} }, sec * 1000 * scale); this.world.timers.add(tm); };
-    const tool = (sec, a, name, input, out, err, dur = 1) => {
+    for (const a of [...Object.values(ag), finder]) if (a) a._demoHold = hold;
+    const at = (sec, fn) => this.later(sec * scale, fn);
+    const who = a => (a.kind === 'main' ? {} : { agent_id: a.id, agent_type: a.type });
+    // fb: dopo lo strumento parte anche l'hook di feedback (PostToolUse, o PostToolUseFailure se è fallito)
+    const tool = (sec, a, name, input, out, err, dur = 1, fb = false) => {
       const id = 'demo-gr-' + (++this.n);
       at(sec, () => {
         this.hook(sid, 'PreToolUse', { agent_id: a.kind === 'main' ? undefined : a.id, agent_type: a.kind === 'main' ? undefined : a.type, tool_name: name, tool_input: input });
@@ -187,7 +205,9 @@ class Demo {
       });
       at(sec + dur, () => {
         this.state.worldEnd(s, a, id, !!err, { content: out }, { toolUseResult: {} }, Date.now());
-        if (name === 'Edit' && !err) s.demoDisk.set(input.file_path, { mtime: Date.now() });
+        if ((name === 'Edit' || name === 'Write') && !err) s.demoDisk.set(input.file_path, { mtime: Date.now() });
+        if (fb) this.say(sid, { hook_event_name: err ? 'PostToolUseFailure' : 'PostToolUse', ...who(a), tool_name: name, tool_input: input, tool_use_id: id,
+          ...(err ? { error: (name === 'Bash' ? 'Exit code 1\n' : '') + out } : { tool_response: {} }) });
       });
     };
     const reply = (sec, text) => at(sec, () => {
@@ -199,8 +219,24 @@ class Demo {
     tool(8, ag.architect, 'Edit', { file_path: 'src/auth/session.ts' }, 'ok');
     tool(12, ag.tester, 'Read', { file_path: 'src/auth/oldToken.ts' }, 'File does not exist.', true);
     tool(14, s.main, 'Read', { file_path: 'src/auth/refresh.ts' }, "import { session } from './session';"); // rilegge prima di modificare: niente modifica alla cieca
-    tool(16, s.main, 'Edit', { file_path: 'src/auth/refresh.ts' }, 'ok');
-    reply(19, tr('Ho corretto il refresh in {file} e i test passano.', { file: '`src/auth/refresh.ts`' }));
+    // feedback: refresh.ts è fragile, il Nonno lo dice a CLAUDE («lancia i test adesso»)
+    tool(16, s.main, 'Edit', { file_path: 'src/auth/refresh.ts' }, 'ok', false, 1, true);
+    const claim = tr('Ho corretto il refresh in {file} e i test passano.', { file: '`src/auth/refresh.ts`' });
+    reply(19, claim);
+    // feedback: a fine turno dice che i test passano, ma dopo la modifica non li ha lanciati (in ombra)
+    at(20, () => this.say(sid, { hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: claim }));
+    // feedback: ARCHITECT legge cookies.ts, il cercatore lo cambia, ARCHITECT lo riscrive senza rileggerlo (in ombra), poi lo rilegge
+    tool(21, ag.architect, 'Read', { file_path: 'src/auth/cookies.ts' }, 'export const cookie = {};');
+    // feedback: lo stesso lint fallisce due volte di fila allo stesso modo; al secondo arriva il giro in tondo, poi cambia qualcosa
+    if (finder) {
+      const lint = "src/auth/token.ts:12:3  error  'exp' is assigned a value but never used  no-unused-vars\n✖ 1 problem (1 error, 0 warnings)";
+      tool(25, finder, 'Edit', { file_path: 'src/auth/cookies.ts' }, 'ok');
+      tool(30, finder, 'Bash', { command: 'npm run lint' }, lint, true, 2);
+      tool(34, finder, 'Bash', { command: 'npm run lint' }, lint, true, 2, true);
+      tool(39, finder, 'Edit', { file_path: 'src/auth/token.ts' }, 'ok');
+      tool(44, ag.architect, 'Write', { file_path: 'src/auth/cookies.ts', content: 'export const cookie = { secure: true };' }, 'ok', false, 1, true);
+      tool(48, ag.architect, 'Read', { file_path: 'src/auth/cookies.ts' }, 'export const cookie = { secure: true };');
+    }
     at(50, () => this.hook(sid, 'UserPromptSubmit', { prompt: tr('Hai lanciato i test?') }));
     tool(53, s.main, 'Bash', { command: 'npm test' }, 'Tests: 42 passed, 42 total', false, 7);
     reply(62, tr('Ho lanciato {cmd}: ora tutti i test passano.', { cmd: '`npm test`' }));
@@ -210,7 +246,13 @@ class Demo {
     tool(64, ag.tester, 'Read', { file_path: 'package.json' }, '{ "scripts": { "test": "jest" } }');
     tool(67, ag.tester, 'Read', { file_path: 'tests/auth.test.ts' }, "import { renew } from '../src/auth/refresh';");
     tool(70, ag.tester, 'Bash', { command: 'npm test' }, 'Tests: 42 passed, 42 total', false, 3);
-    tool(76, ag.tester, 'Bash', { command: 'npm test' }, trace, true, 3);
+    tool(76, ag.tester, 'Bash', { command: 'npm test' }, trace, true, 3, true); // feedback: il Nonno sa dove si è già sistemato
+    // feedback: PLAN (il piano di migrazione del DB) è da un pezzo tra i componenti grafici: lontano dal compito (in ombra).
+    // Prima del suo tsc su migrate.ts, che parla di nuovo del compito e farebbe ripartire il conto
+    // sei letture di fila tra colori, icone e animazioni, poi la settima con l'hook: la deriva è netta, non al limite
+    ['Button.tsx', 'theme/palette.css', 'icons/gradient.svg', 'Tooltip.tsx', 'theme/dark.css', 'Header.tsx'].forEach((f, i) =>
+      tool(56 + i * 2, ag.plan, 'Read', { file_path: 'src/ui/components/' + f }, 'export const style = { color: palette.dark, hover: gradient, shadow: glow, icon: sparkle, animation: fadeIn };'));
+    tool(70, ag.plan, 'Read', { file_path: 'src/ui/components/Sidebar.tsx' }, "import { Menu } from './Menu';\nexport const Sidebar = () => <nav className=\"sidebar dark\" style={{ hover: gradient, icon: sparkle }} />;", false, 1, true);
     tool(81, ag.tester, 'Read', { file_path: 'src/auth/refresh.ts' }, "import { session } from './session';");
     tool(85, ag.tester, 'Edit', { file_path: 'src/auth/refresh.ts' }, 'ok');
     tool(89, ag.tester, 'Bash', { command: 'npm test' }, 'Tests: 42 passed, 42 total', false, 3);
@@ -224,6 +266,7 @@ class Demo {
     this.world.stop();
     this.wf = null;
     if (this.bottega) this.bottega.dropDemo();
+    if (this.dropFeedback) this.dropFeedback();
     this.state.demo = false;
     this.state.removeDemo();
   }

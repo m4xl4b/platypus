@@ -22,6 +22,23 @@ function walk(dir, out = []) {
   }
   return out;
 }
+// il primo stato che la pagina riceve dal flusso degli eventi (quello di /api/state più quello che aggiunge il server)
+function sseFirst(port) {
+  return new Promise(resolve => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/events' }, res => {
+      let d = '';
+      res.on('data', c => {
+        d += c;
+        const m = /(?:^|\n)data: (.*)\n\n/.exec(d);
+        if (!m) return;
+        req.destroy();
+        try { resolve(JSON.parse(m[1])); } catch { resolve({}); }
+      });
+    });
+    req.on('error', () => resolve({}));
+    req.setTimeout(5000, () => { req.destroy(); resolve({}); });
+  });
+}
 function get(port, p, method = 'GET', body) {
   return new Promise(resolve => {
     const req = http.request({ host: '127.0.0.1', port, path: p, method, headers: { 'Content-Type': 'application/json' } }, res => {
@@ -122,6 +139,23 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(['stale-trap', 'ghost-path', 'flaky-command', 'known-fix', 'fragile-file'].every(k => demoKinds.has(k)), 'libro della demo coerente con gli scenari (file conteso, percorso inventato, test instabile, correzione nota, file fragile)');
   const hd = JSON.parse((await get(port, '/api/bottega/hints?sid=' + p1.id)).body);
   ok(hd.ok && hd.hints.length >= 1, `il Nonno ha qualcosa da dire sul piano 1: «${hd.hints && hd.hints[0] ? hd.hints[0].text : '-'}»`);
+  // C3 · feedback agli agenti nella demo: una scena per funzione sul piano 1 (e le lezioni a inizio sessione sul piano 2),
+  // passando dalla stessa funzione dell'hook vero; un registro tutto della demo, in memoria
+  const p2 = st.sessions.find(s => /mes-clone/.test(s.cwd));
+  let dfb = [];
+  for (let k = 0; k < 40; k++) { dfb = p1 ? (JSON.parse((await get(port, '/api/feedback/log?sid=' + p1.id)).body).entries || []) : []; if (dfb.length >= 6) break; await sleep(100); }
+  const dByF = f => dfb.filter(e => e.feature === f);
+  const dNames = dfb.map(e => e.feature + ':' + e.name + ':' + e.mode).join(', ');
+  ok(dByF('elder').some(e => e.name === 'CLAUDE' && e.mode === 'on') && dByF('elder').some(e => /TEST-RUNNER/.test(e.name) && e.event === 'PostToolUseFailure') && dByF('claims').some(e => e.name === 'CLAUDE' && e.mode === 'shadow' && e.event === 'Stop'), 'demo, feedback: il Nonno a CLAUDE e al test-runner, l\'affermazione senza prove in ombra → ' + dNames);
+  ok(dByF('loop').some(e => e.mode === 'on' && /failed 2 times|fallito 2 volte/.test(e.text + e.sent)) && dByF('stale').some(e => /ARCHITECT/.test(e.name) && e.mode === 'shadow') && dByF('drift').some(e => e.mode === 'shadow'), 'demo, feedback: giro in tondo, file cambiato da un altro e ritorno al compito');
+  const dfb2 = p2 ? (JSON.parse((await get(port, '/api/feedback/log?sid=' + p2.id)).body).entries || []) : [];
+  ok(dfb2.some(e => e.feature === 'sessionLessons' && e.mode === 'on') && !core.feedbackLog.recent(p1.cwd).length && !core.feedbackLog.recent(p2.cwd).length, 'demo, feedback: le lezioni a inizio sessione sul piano 2, e niente nel registro vero');
+  ok(core.feedbackSaid().some(x => x.sid === p1.id && x.feature === 'loop'), 'demo, feedback: i fumetti dell\'ufficio li mostrano');
+  core.judgeFeedback(Date.now() + 20 * 60000);
+  const dOc = JSON.parse((await get(port, '/api/feedback/log?sid=' + p1.id)).body).entries;
+  const oc = f => (dOc.find(e => e.feature === f) || {}).outcome;
+  const ocE = dOc.filter(e => e.feature === 'elder').map(e => e.name + '=' + e.outcome).sort().join(' ');
+  ok(oc('loop') === 'helped' && oc('stale') === 'helped' && oc('claims') === 'ignored' && oc('drift') === 'unclear' && /CLAUDE=ignored/.test(ocE) && /TEST-RUNNER\S*=helped/.test(ocE), `demo, esiti: giro in tondo ${oc('loop')}, file cambiato ${oc('stale')}, affermazione ${oc('claims')}, deriva ${oc('drift')}, Nonno ${ocE}`);
   const bk404 = p1 ? await get(port, '/api/bottega', 'POST', JSON.stringify({ sid: p1.id, action: 'pin', id: 'nessuna' })) : { status: 0 };
   ok(bk404.status === 404, 'azione su una lezione che non c\'è → ' + bk404.status);
   const learned = core.learnLive();
@@ -182,6 +216,200 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(hook.status === 204, 'hook ricevuto → ' + hook.status);
   const perm = await get(port, '/platypus-hook/permission', 'POST', JSON.stringify({ session_id: 'smoke-1', hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } }));
   ok(perm.status === 204, 'permesso senza finestre aperte: decide il terminale → ' + perm.status);
+  // feedback agli agenti (2.11): l'hook sincrono risponde sempre, e quando non ha niente da dire Claude Code non riceve nulla
+  const fbMod = require(path.join(__dirname, '..', 'src', 'core', 'feedback'));
+  const fbIn = (ev, extra = {}) => JSON.stringify({ session_id: 'fb-none', hook_event_name: ev, cwd: tmp, tool_name: 'Bash', tool_input: { command: 'npm test' }, ...extra });
+  const fb0 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUse'));
+  ok(fb0.status === 204 && fb0.body === '', 'feedback senza regole: 204 e corpo vuoto → ' + fb0.status);
+  ok(!JSON.parse((await get(port, '/api/state')).body).sessions.some(s => s.id === 'fb-none'),'feedback: l\'hook non crea sessioni né tocca lo stato');
+  const fbSay = () => ({ text: 'npm test is flaky here: rerun it once before investigating.', lessonId: 'L-smoke' });
+  const fbRule = { feature: 'elder', run: fbSay };
+  // le prove usano regole loro: quelle vere si mettono da parte e tornano alla fine
+  const fbKeep = Object.fromEntries(Object.entries(fbMod.RULES).map(([ev, l]) => [ev, l.slice()]));
+  const fbOnly = (ev, ...rs) => fbMod.RULES[ev].splice(0, Infinity, ...rs);
+  for (const ev of Object.keys(fbMod.RULES)) fbOnly(ev);
+  fbOnly('PostToolUseFailure', fbRule);
+  const fbFail = extra => get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUseFailure', { error: 'Exit code 1', ...extra }));
+  const fbOffR = await fbFail();
+  ok(fbOffR.status === 204 && core.feedbackLog.recent(tmp).length === 0, 'feedback, funzione spenta (come di base): niente all\'agente e niente nel registro → ' + fbOffR.status);
+  core.state.setSettings({ fbElder: 'shadow' });
+  const fbSh = await fbFail();
+  let fbLog = core.feedbackLog.recent(tmp);
+  ok(fbSh.status === 204 && fbLog.length === 1 && fbLog[0].mode === 'shadow' && fbLog[0].feature === 'elder' && fbLog[0].agent === 'main' && /^Platypus: npm test/.test(fbLog[0].text), 'feedback in ombra: niente all\'agente, ma nel registro c\'è che cosa avrebbe detto → ' + fbSh.status);
+  core.state.setSettings({ fbElder: 'on' });
+  const fb1 = await fbFail({ session_id: 'fb-on' });
+  let fb1j = {}; try { fb1j = JSON.parse(fb1.body); } catch {}
+  ok(fb1.status === 200 && fb1j.hookSpecificOutput && fb1j.hookSpecificOutput.hookEventName === 'PostToolUseFailure' && /^Platypus: npm test is flaky/.test(fb1j.hookSpecificOutput.additionalContext), 'feedback acceso: il contesto arriva nella forma di Claude Code → ' + fb1.status);
+  const fbRep = await fbFail({ session_id: 'fb-on' });
+  const fbSub = await fbFail({ session_id: 'fb-on', agent_id: 'sub-1' });
+  ok(fbRep.status === 204 && fbSub.status === 200, `feedback: allo stesso agente non due volte di fila (${fbRep.status}), a un sottoagente sì (${fbSub.status})`);
+  const fbMute = JSON.parse((await get(port, '/api/bottega', 'POST', JSON.stringify({ cwd: tmp, action: 'mute' }))).body);
+  const fbMuted = await fbFail({ session_id: 'fb-muted' });
+  const fbView = JSON.parse((await get(port, '/api/bottega?cwd=' + encodeURIComponent(tmp))).body);
+  await get(port, '/api/bottega', 'POST', JSON.stringify({ cwd: tmp, action: 'unmute' }));
+  ok(fbMute.ok && fbMute.mute === true && fbView.mute === true && fbMuted.status === 204 && !core.feedbackLog.recent(tmp).some(e => e.sid === 'fb-muted'), 'feedback: un progetto zittito dal Libro non riceve né registra messaggi → ' + fbMuted.status);
+  fbOnly('PostToolUseFailure');
+  fbOnly('PostToolUse', { feature: 'elder', run: () => { throw new Error('regola rotta'); } });
+  const fb2 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUse', { session_id: 'fb-broken' }));
+  fbOnly('PostToolUse');
+  ok(fb2.status === 204, 'feedback, una regola che lancia: 204, mai un errore → ' + fb2.status);
+  fbOnly('PostToolUse', { feature: 'elder', run: () => { const t = Date.now(); while (Date.now() - t < 350); return fbSay(); } }); // più lenta del tempo massimo
+  const fb3 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUse', { session_id: 'fb-slow' }));
+  fbOnly('PostToolUse');
+  fbLog = core.feedbackLog.recent(tmp);
+  ok(fb3.status === 204 && core.feedbackStats.late === 1 && fbLog.some(e => e.sid === 'fb-slow' && e.outcome === 'late'), `feedback oltre i 300 ms: la risposta in ritardo non si manda, e il registro lo dice → ${fb3.status} (in ritardo: ${core.feedbackStats.late})`);
+  core.state.setSettings({ fbElder: 'off' });
+  for (const [ev, l] of Object.entries(fbKeep)) fbOnly(ev, ...l);
+  // B1 · le lezioni del progetto a inizio sessione, con la regola vera e il libro imparato poco sopra
+  const fbStart = sid => get(port, '/platypus-hook/feedback', 'POST', JSON.stringify({ session_id: sid, hook_event_name: 'SessionStart', source: 'startup', cwd: fakeCwd }));
+  ok((await fbStart('fb-start-off')).status === 204, 'lezioni a inizio sessione: spente di base, niente');
+  core.state.setSettings({ fbSessionLessons: 'on' });
+  const fbI18n = require(path.join(__dirname, '..', 'src', 'i18n')), fbLangWas = fbI18n.getLang();
+  fbI18n.setLang('it'); // l'ufficio in italiano: il messaggio all'agente resta in inglese
+  // più sopra la prova del CLAUDE.md ha scritto davvero la sezione in questo progetto: la mettiamo da parte e poi torna
+  const fbMd = path.join(fakeCwd, 'CLAUDE.md'), fbMdWas = fs.existsSync(fbMd) ? fs.readFileSync(fbMd) : null;
+  fs.rmSync(fbMd, { force: true });
+  const fbS = await fbStart('fb-start-1');
+  let fbSj = {}; try { fbSj = JSON.parse(fbS.body); } catch {}
+  const fbCtx = (fbSj.hookSpecificOutput && fbSj.hookSpecificOutput.additionalContext) || '';
+  ok(fbS.status === 200 && fbSj.hookSpecificOutput.hookEventName === 'SessionStart' && /^Platypus \(project memory\)/.test(fbCtx) && /\n- .*vecchio\.ts.*doesn't exist/.test(fbCtx), 'lezioni a inizio sessione: arrivano in inglese anche con l\'ufficio in italiano → ' + fbS.status + ' «' + fbCtx.split('\n').slice(1, 2).join('') + '»');
+  ok(core.feedbackLog.recent(fakeCwd).some(e => e.sid === 'fb-start-1' && e.feature === 'sessionLessons' && e.mode === 'on' && e.event === 'SessionStart'), 'lezioni a inizio sessione: il messaggio resta nel registro del progetto');
+  fs.mkdirSync(fakeCwd, { recursive: true });
+  fs.writeFileSync(fbMd, '# Progetto\n\n<!-- platypus:bottega:start -->\n## Lezioni\n<!-- platypus:bottega:end -->\n');
+  const fbS2 = await fbStart('fb-start-2');
+  ok(fbS2.status === 204, 'lezioni a inizio sessione: se il CLAUDE.md ha già la sezione non si ripetono → ' + fbS2.status);
+  if (fbMdWas) fs.writeFileSync(fbMd, fbMdWas); else fs.rmSync(fbMd, { force: true });
+  ok(fbI18n.getLang() === 'it', 'e la lingua dell\'ufficio resta quella di prima');
+  fbI18n.setLang(fbLangWas);
+  core.state.setSettings({ fbSessionLessons: 'off' });
+  // B2 · il Nonno parla all'agente: un comando che il libro conosce come instabile fallisce di nuovo, scritto in un altro modo
+  const fbFlaky = core.bottega.view(fakeCwd).lessons.find(l => l.kind === 'flaky-command' && l.level === 'lesson');
+  const fbElderIn = (sid, extra = {}) => get(port, '/platypus-hook/feedback', 'POST', JSON.stringify({ session_id: sid, hook_event_name: 'PostToolUseFailure', cwd: fakeCwd, tool_name: 'Bash', tool_input: { command: 'cd ' + fakeCwd.replace(/\\/g, '/') + ' && CI=1 ' + (fbFlaky ? fbFlaky.key : 'x') + ' 2>&1 | tail -5' }, error: 'Exit code 1\nFAIL', ...extra }));
+  ok(fbFlaky && (await fbElderIn('fb-elder-off')).status === 204, 'il Nonno all\'agente: spento di base, niente');
+  core.state.setSettings({ fbElder: 'on' });
+  const fbE = await fbElderIn('fb-elder-1');
+  let fbEj = {}; try { fbEj = JSON.parse(fbE.body); } catch {}
+  const fbEt = (fbEj.hookSpecificOutput && fbEj.hookSpecificOutput.additionalContext) || '';
+  ok(fbE.status === 200 && fbEj.hookSpecificOutput.hookEventName === 'PostToolUseFailure' && /^Platypus: /.test(fbEt) && fbEt.includes(fbFlaky.key), 'il Nonno all\'agente, acceso: la lezione arriva dopo il comando fallito → ' + fbE.status + ' «' + fbEt.slice(0, 90) + '…»');
+  ok(core.feedbackGate.told('fb-elder-1', 'main', fbFlaky.id) && core.feedbackLog.recent(fakeCwd).some(e => e.sid === 'fb-elder-1' && e.feature === 'elder' && e.lessonId === fbFlaky.id), 'il Nonno all\'agente: l\'ufficio sa che gliel\'ha detto, e resta nel registro');
+  const fbE2 = await fbElderIn('fb-elder-2', { tool_input: { command: 'git status' } });
+  ok(fbE2.status === 204, 'il Nonno all\'agente: un comando senza lezione fallisce e basta → ' + fbE2.status);
+  core.state.setSettings({ fbElder: 'off' });
+  // B3 · fuori dal giro in tondo: nella sessione aperta «npm test» è già fallito tre volte allo stesso modo; l'hook porta il quarto
+  const fbLoopIn = (extra = {}) => get(port, '/platypus-hook/feedback', 'POST', JSON.stringify({ session_id: 'bottega-smoke-0001', hook_event_name: 'PostToolUseFailure', cwd: fakeCwd, tool_name: 'Bash', tool_input: { command: 'npm test' }, tool_use_id: 't5', error: 'Exit code 1\nFAIL src/a.test.ts\nTests: 1 failed', ...extra }));
+  ok((await fbLoopIn()).status === 204, 'giro in tondo: spento di base, niente');
+  core.state.setSettings({ fbLoop: 'on' });
+  const fbL0 = await fbLoopIn({ tool_input: { command: 'npm run lint' } });
+  const fbL1 = await fbLoopIn({ agent_id: 'sub-che-non-esiste' });
+  ok(fbL0.status === 204 && fbL1.status === 204, `giro in tondo: un altro comando (${fbL0.status}) o un agente che l'ufficio non conosce (${fbL1.status}) → niente`);
+  const fbL = await fbLoopIn();
+  let fbLj = {}; try { fbLj = JSON.parse(fbL.body); } catch {}
+  const fbLt = (fbLj.hookSpecificOutput && fbLj.hookSpecificOutput.additionalContext) || '';
+  ok(fbL.status === 200 && /^Platypus: this command failed 4 times in a row with the same error \(«FAIL src\/a\.test\.ts»\) and no edit in between\./.test(fbLt), 'giro in tondo, acceso: i tentativi di prima vengono dallo stato dell\'ufficio → ' + fbL.status + ' «' + fbLt.slice(0, 80) + '…»');
+  ok(core.feedbackLog.recent(fakeCwd).some(e => e.sid === 'bottega-smoke-0001' && e.feature === 'loop' && e.mode === 'on' && e.event === 'PostToolUseFailure'), 'giro in tondo: il messaggio resta nel registro del progetto');
+  ok((await fbLoopIn({ tool_use_id: 't6' })).status === 204, 'giro in tondo: lo stesso avviso non torna allo stesso agente');
+  core.state.setSettings({ fbLoop: 'off' });
+  // B4 · memoria non aggiornata: il principale legge un file, un sottoagente lo modifica, il principale lo riscrive.
+  // Nella 2.11 resta in ombra: niente all'agente, la riga nel registro.
+  const fbStSid = 'fb-stale-0001', fbStFile = path.join(fakeCwd, 'src', 'carrello.ts'), fbStT0 = Date.now() - 20000;
+  const fbStLine = (k, role, content) => ({ type: role, timestamp: new Date(fbStT0 + k * 1000).toISOString(), sessionId: fbStSid, cwd: fakeCwd, message: role === 'assistant' ? { id: 'fbst' + k, role, content, usage: { input_tokens: 10, output_tokens: 10 } } : { role, content } });
+  core.state.applyTranscriptLine(fbStSid, null, fbStLine(1, 'assistant', [{ type: 'tool_use', id: 'st1', name: 'Read', input: { file_path: fbStFile } }]));
+  core.state.applyTranscriptLine(fbStSid, null, fbStLine(2, 'user', [{ type: 'tool_result', tool_use_id: 'st1', content: 'export const carrello = {}' }]));
+  core.state.applyTranscriptLine(fbStSid, 'sub-stale', fbStLine(3, 'assistant', [{ type: 'tool_use', id: 'st2', name: 'Edit', input: { file_path: fbStFile, old_string: 'a', new_string: 'b' } }]), { meta: { agentType: 'Explore' } });
+  core.state.applyTranscriptLine(fbStSid, 'sub-stale', fbStLine(4, 'user', [{ type: 'tool_result', tool_use_id: 'st2', content: 'The file has been updated.' }]), { meta: { agentType: 'Explore' } });
+  const fbStIn = (extra = {}) => get(port, '/platypus-hook/feedback', 'POST', JSON.stringify({ session_id: fbStSid, hook_event_name: 'PostToolUse', cwd: fakeCwd, tool_name: 'Write', tool_input: { file_path: fbStFile, content: 'x' }, tool_response: {}, tool_use_id: 'st3', ...extra }));
+  const fbStOff = await fbStIn();
+  ok(fbStOff.status === 204 && !core.feedbackLog.recent(fakeCwd).some(e => e.feature === 'stale'), 'memoria non aggiornata: spenta di base, niente nemmeno nel registro');
+  core.state.setSettings({ fbStale: 'on' });
+  const fbStOwn = await fbStIn({ agent_id: 'sub-stale' });
+  const fbSt = await fbStIn();
+  const fbStE = core.feedbackLog.recent(fakeCwd).find(e => e.sid === fbStSid && e.feature === 'stale');
+  ok(core.state.settings.fbStale === 'shadow' && fbStOwn.status === 204 && fbSt.status === 204 && fbStE && fbStE.mode === 'shadow' && fbStE.agent === 'main' && /^Platypus: you just rewrote `src\/carrello\.ts`, but EXPLORE changed it at \d\d:\d\d/.test(fbStE.text), 'memoria non aggiornata: chi l\'ha cambiato viene dallo stato dell\'ufficio, e resta in ombra → ' + fbSt.status + ' «' + (fbStE ? fbStE.text.slice(0, 70) : '-') + '…»');
+  core.state.setSettings({ fbStale: 'off' });
+  // B5 · affermazioni senza prove a fine turno: una modifica, nessun test, e l'agente si ferma dicendo «All tests pass».
+  // Nella 2.11 resta in ombra: a Claude Code non arriva niente (nessun blocco), nel registro c'è che cosa avrebbe chiesto.
+  const fbClT0 = Date.now() - 20000;
+  const fbClTurn = (sid, withTest) => {
+    const line = (k, role, content) => ({ type: role, timestamp: new Date(fbClT0 + k * 1000).toISOString(), sessionId: sid, cwd: fakeCwd, message: role === 'assistant' ? { id: sid + k, role, content, usage: { input_tokens: 10, output_tokens: 10 } } : { role, content } });
+    core.state.applyTranscriptLine(sid, null, line(0, 'user', 'Sistema gli arrotondamenti del carrello'));
+    core.state.applyTranscriptLine(sid, null, line(1, 'assistant', [{ type: 'tool_use', id: sid + '-e', name: 'Edit', input: { file_path: path.join(fakeCwd, 'src', 'carrello.ts'), old_string: 'a', new_string: 'b' } }]));
+    core.state.applyTranscriptLine(sid, null, line(2, 'user', [{ type: 'tool_result', tool_use_id: sid + '-e', content: 'The file has been updated.' }]));
+    if (!withTest) return;
+    core.state.applyTranscriptLine(sid, null, line(3, 'assistant', [{ type: 'tool_use', id: sid + '-t', name: 'Bash', input: { command: 'npm test' } }]));
+    core.state.applyTranscriptLine(sid, null, line(4, 'user', [{ type: 'tool_result', tool_use_id: sid + '-t', content: 'PASS src/carrello.test.ts\nTests: 12 passed, 12 total' }]));
+  };
+  fbClTurn('fb-claims-0001', false);
+  fbClTurn('fb-claims-0002', true);
+  const fbClIn = (sid, extra = {}) => get(port, '/platypus-hook/feedback', 'POST', JSON.stringify({ session_id: sid, hook_event_name: 'Stop', cwd: fakeCwd, stop_hook_active: false, last_assistant_message: 'Fixed the rounding in the cart. All tests pass.', ...extra }));
+  const fbClOff = await fbClIn('fb-claims-0001');
+  ok(fbClOff.status === 204 && !core.feedbackLog.recent(fakeCwd).some(e => e.feature === 'claims'), 'affermazioni a fine turno: spente di base, niente nemmeno nel registro');
+  core.state.setSettings({ fbClaims: 'on' });
+  const fbClAct = await fbClIn('fb-claims-0001', { stop_hook_active: true });
+  const fbCl = await fbClIn('fb-claims-0001');
+  const fbClOk = await fbClIn('fb-claims-0002');
+  const fbClLog = core.feedbackLog.recent(fakeCwd).filter(e => e.feature === 'claims');
+  ok(core.state.settings.fbClaims === 'shadow' && fbClAct.status === 204 && fbCl.status === 204 && fbCl.body === '' && fbClOk.status === 204, `affermazioni a fine turno: nella 2.11 nessun blocco arriva a Claude Code → ${fbCl.status}`);
+  ok(fbClLog.length === 1 && fbClLog[0].sid === 'fb-claims-0001' && fbClLog[0].mode === 'shadow' && fbClLog[0].event === 'Stop' && fbClLog[0].tag === 'tests/ungrounded' && /^Platypus: you said «All tests pass\.», but no test ran after your last edit/.test(fbClLog[0].text), 'affermazioni a fine turno: nel registro solo il turno senza prove, con che cosa avrebbe chiesto «' + (fbClLog[0] ? fbClLog[0].text.slice(0, 80) : '-') + '…»');
+  core.state.setSettings({ fbClaims: 'off' });
+  // B6 · ritorno al compito (sperimentale): otto azioni sul compito, poi quattordici su tutt'altro. La stella polare
+  // dell'ufficio dice «alla deriva»; nella 2.11 resta in ombra: niente all'agente, la riga nel registro.
+  const fbDrSid = 'fb-drift-0001', fbDrT0 = Date.now() - 120000;
+  const fbDrLine = (k, role, content) => ({ type: role, timestamp: new Date(fbDrT0 + k * 1000).toISOString(), sessionId: fbDrSid, cwd: fakeCwd, message: role === 'assistant' ? { id: 'fbdr' + k, role, content, usage: { input_tokens: 10, output_tokens: 10 } } : { role, content } });
+  core.state.applyTranscriptLine(fbDrSid, null, fbDrLine(0, 'user', 'Fix the login token refresh in the auth module: expired tokens must be renewed'));
+  const fbDrOn = ['src/auth/login.ts', 'src/auth/token.ts', 'src/auth/refresh.ts', 'src/auth/login-token.ts'], fbDrOff = ['src/ui/Menu.tsx', 'src/ui/theme/palette.css', 'src/ui/Sidebar.tsx', 'src/ui/Button.tsx', 'src/ui/icons/gradient.css'];
+  for (let i = 0; i < 22; i++) {
+    const on = i < 8, f = on ? fbDrOn[i % fbDrOn.length] : fbDrOff[i % fbDrOff.length];
+    core.state.applyTranscriptLine(fbDrSid, null, fbDrLine(1 + 2 * i, 'assistant', [{ type: 'tool_use', id: 'dr' + i, name: 'Read', input: { file_path: path.join(fakeCwd, f) } }]));
+    core.state.applyTranscriptLine(fbDrSid, null, fbDrLine(2 + 2 * i, 'user', [{ type: 'tool_result', tool_use_id: 'dr' + i, content: on ? 'export function refreshToken(login) { /* renew the expired auth token */ }' : 'export const sidebar = { color: palette.dark, hover: gradient }' }]));
+  }
+  const fbDrIn = () => get(port, '/platypus-hook/feedback', 'POST', JSON.stringify({ session_id: fbDrSid, hook_event_name: 'PostToolUse', cwd: fakeCwd, tool_name: 'Read', tool_input: { file_path: path.join(fakeCwd, 'src/ui/Menu.tsx') }, tool_response: {}, tool_use_id: 'dr21' }));
+  const fbDrOffR = await fbDrIn();
+  ok(fbDrOffR.status === 204 && !core.feedbackLog.recent(fakeCwd).some(e => e.feature === 'drift'), 'ritorno al compito: spento di base, niente nemmeno nel registro');
+  core.state.setSettings({ fbDrift: 'on' });
+  const fbDr = await fbDrIn();
+  const fbDrE = core.feedbackLog.recent(fakeCwd).find(e => e.sid === fbDrSid && e.feature === 'drift');
+  const fbDrMind = JSON.parse((await get(port, `/api/agentmind?sid=${fbDrSid}&aid=main`)).body);
+  const fbDrLast = fbDrMind.align && fbDrMind.align[fbDrMind.align.length - 1];
+  ok(core.state.settings.fbDrift === 'shadow' && fbDr.status === 204 && fbDrE && fbDrE.mode === 'shadow' && /^Platypus: your last \d+ actions look far from the task you were given: «Fix the login token refresh/.test(fbDrE.text), 'ritorno al compito: la deriva viene dalla stella polare dell\'ufficio, e resta in ombra → ' + fbDr.status + ' «' + (fbDrE ? fbDrE.text.slice(0, 60) : '-') + '…»');
+  ok(fbDrLast && fbDrLast[2] / fbDrLast[3] < 0.35, `ritorno al compito: è la stessa serie che la mappa disegna (allineamento ${fbDrLast ? Math.round(100 * fbDrLast[2] / fbDrLast[3]) : '-'}%)`);
+  core.state.setSettings({ fbDrift: 'off' });
+  // C1 · quello che l'ufficio e il Libro mostrano: gli ultimi messaggi nello stato, il registro del progetto, i conteggi
+  const fbSaid = core.feedbackSaid();
+  ok(fbSaid.some(x => x.sid === 'bottega-smoke-0001' && x.agent === 'main' && x.feature === 'loop' && x.mode === 'on' && /^Platypus: /.test(x.text)) && fbSaid.some(x => x.sid === 'fb-claims-0001' && x.mode === 'shadow') && !fbSaid.some(x => x.sid === 'fb-slow'), `ufficio: gli ultimi messaggi (mandati e in ombra, non quelli in ritardo) sono pronti per i fumetti (${fbSaid.length})`);
+  const fbSse = await sseFirst(port);
+  ok(Array.isArray(fbSse.feedback) && fbSse.feedback.some(x => x.feature === 'loop' && x.sid === 'bottega-smoke-0001'), 'ufficio: arrivano alla pagina con lo stato');
+  const fbBook = JSON.parse((await get(port, '/api/feedback/log?cwd=' + encodeURIComponent(fakeCwd))).body);
+  const fbRowL = fbBook.entries && fbBook.entries.find(e => e.feature === 'loop');
+  ok(fbBook.ok && fbRowL && fbRowL.mode === 'on' && fbRowL.name === 'CLAUDE' && fbRowL.event === 'PostToolUseFailure' && /this command failed 4 times/.test(fbRowL.sent || fbRowL.text) && fbBook.entries.every((e, i, l) => !i || l[i - 1].t >= e.t), `Libro, scheda FEEDBACK: ${fbBook.entries ? fbBook.entries.length : '-'} righe del progetto, dalla più recente, con a chi e che cosa`);
+  ok(['stale', 'claims', 'drift', 'elder', 'sessionLessons'].every(f => fbBook.entries.some(e => e.feature === f)) && fbBook.entries.find(e => e.feature === 'claims').tag === 'tests/ungrounded' && (await get(port, '/api/feedback/log')).status === 404, 'Libro, scheda FEEDBACK: tutte le funzioni provate qui sopra, e niente senza un progetto');
+  const fbCnt = JSON.parse((await get(port, '/api/feedback/counts')).body);
+  ok(fbCnt.ok && fbCnt.days === 7 && fbCnt.counts.loop.on === 1 && fbCnt.counts.claims.shadow === 1 && fbCnt.counts.claims.on === 0 && fbCnt.counts.elder.on >= 2, 'opzioni: i conteggi degli ultimi 7 giorni per funzione → ' + JSON.stringify(fbCnt.counts));
+  // C2 · esiti: dopo il giro in tondo l'agente modifica un file e i test passano; dopo l'affermazione senza prove
+  // (in ombra) arriva una nuova richiesta senza che niente sia stato lanciato
+  const fbOcT = Date.now() + 1000;
+  const fbOcLine = (sid, k, role, content) => ({ type: role, timestamp: new Date(fbOcT + k * 1000).toISOString(), sessionId: sid, cwd: fakeCwd, message: role === 'assistant' ? { id: sid + 'oc' + k, role, content, usage: { input_tokens: 10, output_tokens: 10 } } : { role, content } });
+  core.state.applyTranscriptLine('bottega-smoke-0001', null, fbOcLine('bottega-smoke-0001', 0, 'assistant', [{ type: 'tool_use', id: 'oc1', name: 'Edit', input: { file_path: path.join(fakeCwd, 'src', 'a.ts'), old_string: 'a', new_string: 'b' } }]));
+  core.state.applyTranscriptLine('bottega-smoke-0001', null, fbOcLine('bottega-smoke-0001', 1, 'user', [{ type: 'tool_result', tool_use_id: 'oc1', content: 'The file has been updated.' }]));
+  core.state.applyTranscriptLine('fb-claims-0001', null, fbOcLine('fb-claims-0001', 2, 'user', 'Ora aggiungi lo sconto'));
+  const fbPend0 = core.feedbackPending.size;
+  const fbJudged = core.judgeFeedback(fbOcT + 5000);
+  const fbOc = JSON.parse((await get(port, '/api/feedback/log?cwd=' + encodeURIComponent(fakeCwd))).body).entries;
+  const fbOcL = fbOc.find(e => e.feature === 'loop'), fbOcC = fbOc.find(e => e.feature === 'claims'), fbOcS = fbOc.find(e => e.feature === 'sessionLessons' && e.mode === 'on');
+  ok(fbJudged >= 3 && core.feedbackPending.size === fbPend0 - fbJudged && fbOcL.outcome === 'helped' && fbOcL.why && fbOcC.outcome === 'ignored' && fbOcC.mode === 'shadow' && fbOcS.outcome === 'unclear', `esiti dai passi veri: giro in tondo → ${fbOcL.outcome} («${fbOcL.why}»), affermazione in ombra → ${fbOcC.outcome}, lezioni a inizio sessione → ${fbOcS.outcome} (${fbJudged} giudicati, ${core.feedbackPending.size} in attesa)`);
+  ok(!fbOc.some(e => e.sid === 'fb-slow' && e.outcome !== 'late') && [...core.feedbackPending.values()].every(p => p.entry.sid !== 'bottega-smoke-0001' || p.entry.feature !== 'loop'), 'esiti: la risposta arrivata tardi resta «in ritardo», e un messaggio giudicato non torna in attesa');
+  const fb4 = await get(port, '/platypus-hook/feedback', 'POST', 'non è json {');
+  ok(fb4.status === 204, 'feedback con un corpo che non è JSON: 204 → ' + fb4.status);
+  // gli hook di feedback dal pannello delle opzioni: prima le righe da vedere, poi si scrive solo con la conferma
+  const fbSet = path.join(base, 'settings.json');
+  const fbPrev = JSON.parse((await get(port, '/api/feedback/hooks')).body);
+  ok(fbPrev.ok && fbPrev.installed === false && fbPrev.path === fbSet && /"type": "http"/.test(fbPrev.text) && fbPrev.text.includes(`http://127.0.0.1:${port}/platypus-hook/feedback`), 'hook di feedback: anteprima delle righe, con la porta del server');
+  const fbNo = await get(port, '/api/feedback/hooks', 'POST', JSON.stringify({ action: 'install' }));
+  ok(fbNo.status === 400 && !fs.existsSync(fbSet), 'hook di feedback: senza conferma non si scrive niente → ' + fbNo.status);
+  const fbYes = JSON.parse((await get(port, '/api/feedback/hooks', 'POST', JSON.stringify({ action: 'install', confirm: true }))).body);
+  ok(fbYes.ok && fbYes.installed && fs.readFileSync(fbSet, 'utf8').includes('/platypus-hook/feedback'), 'hook di feedback: con la conferma finiscono in settings.json');
+  const fbOff = JSON.parse((await get(port, '/api/feedback/hooks', 'POST', JSON.stringify({ action: 'uninstall', confirm: true }))).body);
+  ok(fbOff.ok && !fbOff.installed && fbOff.removed && !fs.readFileSync(fbSet, 'utf8').includes('platypus-hook'), 'hook di feedback: rimossi dal pannello');
+  fs.rmSync(fbSet, { force: true });
   const bad = await new Promise(resolve => {
     const req = http.request({ host: '127.0.0.1', port, path: '/api/state', headers: { Host: 'evil.example' } }, res => resolve(res.statusCode));
     req.on('error', () => resolve(0)); req.end();
@@ -224,6 +452,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const malformed = await get(port, '/%');
   const stillUp = await get(port, '/api/settings');
   ok(malformed.status === 400 && stillUp.status === 200, `URL malformato (GET /%) → ${malformed.status}, il server risponde ancora → ${stillUp.status}`);
+  // C3 · la demo finisce: il suo registro di feedback si svuota e i suoi messaggi non aspettano più un esito
+  const p1Cwd = p1 && p1.cwd;
+  core.demo.stop();
+  const dAfter = p1Cwd ? JSON.parse((await get(port, '/api/feedback/log?cwd=' + encodeURIComponent(p1Cwd))).body) : {};
+  ok(dAfter.ok && dAfter.demo === false && dAfter.entries.length === 0 && ![...core.feedbackPending.values()].some(p => /^demo-/.test(p.entry.sid)) && !core.feedbackSaid().some(x => /^demo-/.test(x.sid)), 'demo spenta: niente più righe di feedback della demo, né in attesa né nei fumetti');
   core.stop();
 
   console.log('hook di Claude Code');
@@ -232,6 +465,37 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(hooks.status({ base }) && !hooks.outdated({ base }), 'installati in una configurazione di prova');
   hooks.uninstall({ base });
   ok(!hooks.status({ base }), 'rimossi');
+  // gli hook di feedback (2.11) si installano e si tolgono a parte: gli altri, e quelli dell'utente, restano come sono
+  const sp = path.join(base, 'settings.json');
+  const mine = { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo mio' }] };
+  fs.writeFileSync(sp, JSON.stringify({ model: 'opus', hooks: { PostToolUse: [mine] } }, null, 2));
+  hooks.install({ port: 47800, base });
+  const readS = () => JSON.parse(fs.readFileSync(sp, 'utf8'));
+  const isFb = h => [h.url, h.command].some(x => typeof x === 'string' && x.includes('/platypus-hook/feedback'));
+  const others = s => JSON.stringify(Object.fromEntries(Object.entries(s.hooks).map(([ev, gs]) => [ev, gs.map(g => ({ ...g, hooks: g.hooks.filter(h => !isFb(h)) })).filter(g => g.hooks.length)]).filter(([, gs]) => gs.length).sort((a, b) => a[0].localeCompare(b[0])))); // l'ordine degli eventi nel file non conta
+  const countFb = s => Object.values(s.hooks).flat().flatMap(g => g.hooks).filter(isFb).length;
+  const before = others(readS());
+  ok(!hooks.feedbackStatus({ base }), 'hook di feedback: non installati insieme a quelli che osservano');
+  const fi = hooks.installFeedback({ port: 47800, base });
+  let cur = readS();
+  ok(hooks.feedbackStatus({ base }) && hooks.status({ base }) && fi.events === 5 && countFb(cur) === 5 && cur.model === 'opus', `hook di feedback installati a parte: ${countFb(cur)} eventi`);
+  ok(others(cur) === before, 'gli hook che osservano e quelli dell\'utente restano identici');
+  ok(cur.hooks.Stop.some(g => g.hooks.some(h => h.type === 'http' && h.timeout === 3 && !h.async)) && cur.hooks.PostToolUseFailure.some(g => g.matcher === hooks.FEEDBACK_TOOLS && g.hooks.some(isFb)) && !cur.hooks.PreToolUse.some(g => g.hooks.some(isFb)), 'hook di feedback: http, sincroni, sui soli eventi previsti (mai PreToolUse)');
+  hooks.installFeedback({ port: 47800, base });
+  ok(countFb(readS()) === 5, 'installarli due volte non li raddoppia');
+  hooks.installFeedback({ port: 47800, base, curl: true });
+  cur = readS();
+  ok(countFb(cur) === 5 && cur.hooks.Stop.some(g => g.hooks.some(h => h.type === 'command' && /curl/.test(h.command) && isFb(h))), 'con curl: comandi al posto degli hook http, sempre cinque');
+  hooks.install({ port: 47800, base }); // reinstallare (o aggiornare) quelli che osservano non tocca quelli di feedback, nemmeno se sono comandi curl
+  ok(countFb(readS()) === 5 && !hooks.outdated({ base }), 'reinstallare gli hook che osservano lascia quelli di feedback');
+  hooks.uninstall({ base });
+  ok(!hooks.status({ base }) && hooks.feedbackStatus({ base }) && countFb(readS()) === 5, 'togliere gli hook che osservano lascia quelli di feedback');
+  hooks.install({ port: 47800, base });
+  const ru = hooks.uninstallFeedback({ base });
+  cur = readS();
+  ok(ru.removed && !hooks.feedbackStatus({ base }) && hooks.status({ base }) && others(cur) === before && cur.hooks.PostToolUse.some(g => g.hooks.some(h => h.command === 'echo mio')), 'tolti gli hook di feedback: il resto è com\'era');
+  ok(hooks.uninstallFeedback({ base }).removed === false, 'toglierli due volte: niente da fare');
+  hooks.uninstall({ base });
 
   console.log('finestra della sessione (Windows)');
   const osint = require(path.join(ROOT, 'src', 'core', 'osint'));

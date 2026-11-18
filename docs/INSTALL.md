@@ -86,6 +86,23 @@ npm run hooks:uninstall
 
 The hooks are `curl` commands to `127.0.0.1:47800`, added to `~/.claude/settings.json`. Your settings stay intact, and a backup is saved in `settings.json.platypus-backup`. Without hooks the office still works from the transcripts, with a few seconds of delay and without answering permissions from the balloons.
 
+### Feedback to the agents
+
+These are other hooks, installed and removed on their own: they let Platypus add a short message to what an agent reads after a tool, at the start of a session or at the end of a turn.
+
+```sh
+npm run hooks:install -- --feedback      # or: OPT → Feedback to the agents → INSTALL THE FEEDBACK HOOKS…
+npm run hooks:status -- --feedback
+npm run hooks:uninstall -- --feedback
+```
+
+- They are `http` hooks to `http://127.0.0.1:47800/platypus-hook/feedback` on `SessionStart`, `PostToolUse`, `PostToolUseFailure`, `Stop` and `SubagentStop`, with a 3-second timeout. If your Claude Code is too old for `http` hooks, add `--curl` to install them as `curl` commands instead.
+- Installing them changes nothing by itself: every feature in OPT → *Feedback to the agents* starts *off*. *Shadow* records what Platypus would have said without saying it; *on* says it. In this version three features stop at shadow.
+- If Platypus is closed, or takes more than 300 ms to answer, Claude Code goes on as usual. Platypus never answers for you on a permission and never changes a tool's input or output.
+- To keep a project out of it: in its Book tick *Don't talk to this project's agents*.
+
+Every message, sent or in shadow, goes to a log: `~/.platypus/feedback/<key>.jsonl`, one file per project folder (the same key as the Workshop book), with what was said, to which agent, and what the agent did next. Past 5 MB the file becomes `<key>.1.jsonl` and a new one starts, so at most two files per project. Nothing leaves your computer. To delete it, close Platypus and delete the file or the whole `~/.platypus/feedback` folder. The Book's FEEDBACK tab shows the same log.
+
 ## Browser mode
 
 ```sh
@@ -100,11 +117,11 @@ To update, run `git pull` and launch again. Dependencies re-sync automatically.
 
 To uninstall:
 
-1. Run `npm run hooks:uninstall`.
+1. Run `npm run hooks:uninstall`, and `npm run hooks:uninstall -- --feedback` if you installed the feedback hooks.
 2. Untick *Start when I log in* in the tray menu.
 3. Delete the repository folder.
 4. Optionally, also delete:
-   - `~/.platypus`, the settings, the stats and the Workshop book;
+   - `~/.platypus`, the settings, the stats, the Workshop book and the log of the messages to the agents;
    - the window preferences folder `Platypus` under AppData (Windows), Application Support (macOS) or `~/.config` (Linux).
 
 ### The Workshop book

@@ -198,6 +198,10 @@ class Bottega {
     return true;
   }
 
+  // "non parlare agli agenti di questo progetto": il feedback (feedback.js) lo rispetta prima di ogni altra cosa
+  setMute(cwd, on) { const b = this.book(cwd); b.mute = !!on; b.dirty = true; return b.mute; }
+  muted(cwd) { try { return !!this.book(cwd).mute; } catch { return false; } }
+
   // le lezioni pronte da mostrare: peso, livello e testi nella lingua di adesso
   view(cwd, now = Date.now()) {
     const b = this.book(cwd);
@@ -207,7 +211,7 @@ class Bottega {
       return { ...rest, weight: Math.round(weight * 100) / 100, level: l.pinned || (l.count > 1 && weight >= LESSON_WEIGHT) ? 'lesson' : 'observation', ...describe(l) };
     }).sort((x, y) => (y.pinned - x.pinned) || (y.weight - x.weight));
     const job = b.job ? { running: b.job.running, total: b.job.total, done: b.job.done, cases: b.job.cases, error: b.job.error } : null;
-    return { key: b.key, name: b.name, cwd: b.cwd, learnedSessions: Object.keys(b.learned || {}).length, learning: job, lessons };
+    return { key: b.key, name: b.name, cwd: b.cwd, mute: !!b.mute, learnedSessions: Object.keys(b.learned || {}).length, learning: job, lessons };
   }
 
   // i progetti che hanno un libro (sul disco o già in memoria), per la scheda BOTTEGA dell'atrio
@@ -316,10 +320,11 @@ function elderLine(l) {
 
 // ---- la sezione per il CLAUDE.md del progetto: le lezioni fissate e le più forti, brevi e operative
 const MAX_CLAUDEMD = 8;
-function renderSection(lessons, name) {
+// le lezioni da passare a un agente (fissate e forti, le più pesanti prima), una riga breve e operativa ciascuna:
+// le stesse nel CLAUDE.md e nel messaggio di inizio sessione
+function lessonLines(lessons, max = MAX_CLAUDEMD) {
   const pick = lessons.filter(l => !l.ignored && (l.pinned || l.level === 'lesson'))
-    .sort((x, y) => (y.pinned - x.pinned) || (y.weight - x.weight)).slice(0, MAX_CLAUDEMD);
-  if (!pick.length) return '';
+    .sort((x, y) => (y.pinned - x.pinned) || (y.weight - x.weight)).slice(0, max);
   const line = l => {
     const [pat, file] = l.key.split(' → ');
     switch (l.kind) {
@@ -333,12 +338,17 @@ function renderSection(lessons, name) {
       default: return l.title || l.key;
     }
   };
+  return pick.map(line);
+}
+function renderSection(lessons, name) {
+  const lines = lessonLines(lessons);
+  if (!lines.length) return '';
   return [
     '## ' + tr('Lezioni della bottega ({name})', { name }),
     '',
     tr('Dedotte da Platypus dalle sessioni di questo progetto: indizi, non regole certe.'),
     '',
-    ...pick.map(l => '- ' + line(l)),
+    ...lines.map(l => '- ' + l),
   ].join('\n');
 }
 
@@ -363,4 +373,4 @@ function describe(l) {
   }
 }
 
-module.exports = { Bottega, digest, hints, elderLine, renderSection, projectKey, normDir, errorPattern, weightOf, KINDS, HALF_LIFE };
+module.exports = { Bottega, digest, hints, elderLine, renderSection, lessonLines, sameCmd, cmdCore, projectKey, normDir, errorPattern, weightOf, KINDS, HALF_LIFE };

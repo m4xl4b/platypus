@@ -4,6 +4,23 @@ Le versioni di Platypus (fino alla 2.7 si chiamava Agent Office), dalla più rec
 
 *English version: [CHANGELOG.md](CHANGELOG.md).*
 
+## 2.11: feedback agli agenti
+
+Finora Platypus guardava e basta. Dalla 2.11 può anche dire a un agente quello che vede, nel momento in cui serve: una lezione del Libro della bottega del progetto, un giro in tondo su un comando che continua a fallire. È tutto spento finché non lo accendi, una funzione alla volta, e le funzioni meno provate registrano soltanto che cosa avrebbero detto.
+
+- **Hook nuovi, installati a parte**: OPZ → *Feedback agli agenti* → INSTALLA GLI HOOK DI FEEDBACK… mostra le righe esatte prima di scriverle nel `settings.json` di Claude Code; oppure `npm run hooks:install -- --feedback`. Sono separati dagli hook che osservano, e da soli non dicono niente. Se Platypus è chiuso o lento, Claude Code prosegue come sempre.
+- **Tre modi per ogni funzione**: *spenta* (di base), *ombra* (registra che cosa avrebbe detto, senza dirlo) e *accesa*. I messaggi sono rari (uno ogni 2 minuti per agente, 6 all'ora per sessione, mai due volte la stessa lezione allo stesso agente), brevi, firmati «Platypus» e in inglese, perché li legge il modello. Arrivano anche ai sottoagenti. Nel Libro di un progetto puoi spuntare *Non parlare agli agenti di questo progetto*.
+- **Che cosa può dire Platypus**:
+  - **lezioni a inizio sessione**: le lezioni più forti del progetto, quando una sessione parte, riprende o viene compattata (non se il `CLAUDE.md` del progetto ha già la sezione del Libro);
+  - **il Nonno parla all'agente**: subito dopo una trappola nota (un comando instabile appena fallito, un errore già sistemato altrove, un file che non c'è, un file fragile appena modificato, un comando lento) l'agente riceve la lezione del Nonno, e il suo fumetto dice «✓ Detto anche a CLAUDE»;
+  - **uscita dal giro in tondo**: quando lo stesso comando fallisce una seconda volta con lo stesso errore e in mezzo non è stato modificato niente, «cambia qualcosa prima di rilanciarlo, oppure fermati e di' che cosa ti blocca»;
+  - **solo in ombra in questa versione**: una modifica a un file che un altro agente ha cambiato dopo l'ultima lettura; «i test passano» o «ho verificato» a fine turno senza test o controlli lanciati dopo l'ultima modifica; il richiamo al compito quando la stella polare dice che l'agente è alla deriva.
+- **Vederlo**: il fumetto dell'agente mostra «Platypus ha detto: …» (o «avrebbe detto», per l'ombra); il Libro ha una nuova scheda **FEEDBACK** con ogni messaggio, mandato o in ombra, nella lingua dell'ufficio e con il testo inglese sotto; le opzioni dicono quanti messaggi ha mandato ogni funzione negli ultimi 7 giorni.
+- **Che cosa è successo dopo**: ogni messaggio riceve un esito dai passi successivi dell'agente (probabilmente utile, ignorato, non si può dire), e la scheda FEEDBACK mette i messaggi mandati accanto a quelli in ombra, così vedi se una funzione aiuta prima di accenderla.
+- **La demo** recita una scena per funzione: in circa 90 secondi sono comparsi tutti i fumetti e la scheda FEEDBACK è piena.
+- **Non ancora verificato su sessioni vere di Claude Code**: tutto è costruito sugli eventi degli hook documentati e provato con hook simulati. I passi per una prova su una sessione vera sono in `docs/plans/2.11-real-check.md`.
+- Il registro dei messaggi sta in `~/.platypus/feedback`, un file per progetto; come cancellarlo è in [docs/INSTALLAZIONE.md](docs/INSTALLAZIONE.md#feedback-agli-agenti).
+
 ## 2.10: workflow e squadre, mappe con lo zoom, un giro sulla sicurezza
 
 Platypus ora mostra i Workflow e i team di agenti di Claude Code, ti lascia ingrandire i grafici della mappa della realtà, riempie le lavagne anche nell'uso vero e ha avuto un giro di sicurezza su tutta l'app.

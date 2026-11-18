@@ -491,6 +491,14 @@ body.widget #widget { display: block; flex: 1; padding: 6px 8px; overflow: hidde
 #settings .stat { margin-top: 10px; padding: 8px; border: 2px dashed #2a2440; font-size: 16px; line-height: 1.1; color: var(--ink); }
 #settings .stat p { margin: 0 0 6px; word-break: break-word; }
 #settings .stat button { font-size: 7px; }
+#settings .fbhooks { min-width: 0; } /* un fieldset si allarga quanto il suo contenuto: il blocco di codice deve scorrere, non allargarlo */
+#settings .fbhooks p { margin: 4px 0 6px; font-size: 16px; line-height: 1.1; color: var(--ink); word-break: break-word; }
+#settings .fbhooks p.dim { color: #83769c; }
+#settings .fbhooks p.on { color: #00e436; }
+#settings .fbhooks > button { font-size: 7px; }
+#settings .fbconfirm { margin-top: 8px; padding: 8px; border: 2px solid var(--yellow); }
+#settings .fbconfirm pre { margin: 0 0 6px; padding: 6px; max-height: 190px; overflow: auto; background: #07060c; color: #c2c3c7; font-family: 'VT', monospace; font-size: 15px; line-height: 1; white-space: pre; }
+#settings .fbconfirm .btns button { font-size: 7px; }
 .balloon.asking .act { white-space: normal; }
 #settings select { font-family: 'VT'; font-size: 18px; background: #000; color: var(--yellow); border: 2px solid #2a2440; padding: 2px 4px; }
 
@@ -616,6 +624,7 @@ body.tiny .balloon .ung { display: none; }
 #bottega .x { position: absolute; right: 10px; top: 8px; font-family: 'PS2P'; font-size: 10px; cursor: pointer; color: var(--dim); }
 #bottega .honest { margin: 0 0 6px; color: var(--dim); font-size: 15px; }
 #bottega .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+#bottega .mute { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 16px; color: var(--ink); cursor: pointer; }
 #bottega button { font-family: 'PS2P'; font-size: 7px; background: #2a2440; color: var(--ink); border: 0; padding: 5px 7px; cursor: pointer; }
 #bottega button.danger { background: #3a1420; color: #ff77a8; }
 #bottega .prog { color: var(--yellow); }
@@ -639,6 +648,33 @@ body.tiny .balloon .ung { display: none; }
 #bottega .md .mh .dim { font-family: 'VT'; font-size: 14px; }
 #bottega .md pre { white-space: pre-wrap; font-family: 'VT'; font-size: 15px; background: #000; color: var(--ink); padding: 6px; margin: 0 0 6px; max-height: 30vh; overflow: auto; }
 #bottega button[disabled] { opacity: .45; cursor: not-allowed; }
+/* Libro: le due schede (lezioni e messaggi agli agenti) e le righe del registro */
+#bottega .tabs { display: flex; gap: 4px; margin: 0 0 8px; border-bottom: 2px solid #2a2440; }
+#bottega .tabs button { background: transparent; color: var(--dim); padding: 6px 9px; }
+#bottega .tabs button.on { background: #2a2440; color: var(--yellow); }
+#bottega .fbrow.sh { border-style: dashed; }
+#bottega .fbrow .w { color: var(--yellow); } #bottega .fbrow .ag { color: #9fd8ff; }
+#bottega .fbrow .ftx { color: var(--ink); margin: 3px 0 0; overflow-wrap: anywhere; white-space: pre-line; }
+#bottega .fbrow.sh .ftx { color: #c2c3c7; font-style: italic; }
+#bottega .fbrow .ld { overflow-wrap: anywhere; white-space: pre-line; }
+/* esito di un messaggio (C2) e riepilogo per funzione */
+#bottega .fbrow .oc { font-size: 15px; color: var(--dim); margin-top: 3px; overflow-wrap: anywhere; }
+#bottega .fbrow .oc b { font-family: 'PS2P'; font-size: 7px; font-weight: normal; padding: 2px 4px; margin-right: 4px; background: #2a2440; color: var(--dim); }
+#bottega .fbrow .oc.helped b { background: var(--green); color: #000; }
+#bottega .fbrow .oc.ignored b { background: var(--orange); color: #000; }
+#bottega .fbrow .oc.unclear b { background: #5f574f; color: #fff; }
+#bottega .fbsum { border: 2px solid #2a2440; padding: 6px 8px; margin-bottom: 8px; font-size: 15px; }
+#bottega .fbsum b { color: var(--yellow); font-weight: normal; margin-right: 6px; }
+#bottega .fbsum p { margin: 4px 0 0; font-size: 14px; }
+/* feedback agli agenti in ufficio: l'ultimo messaggio di Platypus nel fumetto di chi l'ha ricevuto (in ombra: tratteggiato) */
+.balloon .fbk { color: #1d2b53; border-top: 1px solid #1d2b53; margin-top: 2px; padding-top: 1px;
+  white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.05; } /* due righe, il resto al passaggio del mouse */
+.balloon .fbk.sh { color: #5f574f; font-style: italic; border-top-style: dashed; border-top-color: #5f574f; }
+.balloon.st-waiting .fbk { color: #fff; border-top-color: #fff; }
+body.tiny .balloon .fbk, .balloon.walking .fbk { display: none; }
+/* opzioni: sotto ogni funzione di feedback, quanti messaggi negli ultimi 7 giorni */
+#settings .fbhooks .fbn { display: block; color: var(--dim); font-size: 14px; }
+#settings .fbhooks .fbn:empty { display: none; }
 
 /* ---------- squadre: workflow, squadre e reparti, messaggi tra agenti ---------- */
 #teams { position: absolute; right: 10px; top: 10px; bottom: 10px; z-index: 4000; width: min(600px, calc(100% - 20px)); display: flex; flex-direction: column;

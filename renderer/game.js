@@ -1872,11 +1872,17 @@ function updateNpcs(dt, t) {
   if (gp && !gp.path.length) {
     const v = chars.get(gp.victim);
     const there = v && v.phase === 'seated' && deskFor(v.id);
+    // con il feedback acceso la stessa lezione arriva anche all'agente (dopo lo strumento, quindi spesso mentre il Nonno
+    // sta già parlando): quando succede il fumetto lo dice
+    const toldToo = () => { const h = elder.hints.find(x => x.agent === gp.victim && x.lessonId === gp.hint.lessonId); return !!((h && h.told) || gp.hint.told); };
+    const elderText = told => gp.hint.text + (told ? ' ' + tr('✓ Detto anche a {name}.', { name: v && v.data ? agentName(v.data) : tr('lui') }) : '');
     if (gp.state === 'go') {
       if (!there) { gp.state = 'exit'; npcGo(gp, { kind: 'elevator' }); }
-      else { gp.state = 'tell'; gp.until = t + 9000; gp.dir = 'right'; gp.speech = gp.hint.text; gp.last = ''; }
+      else { gp.state = 'tell'; gp.until = t + 9000; gp.dir = 'right'; gp.told = toldToo(); gp.speech = elderText(gp.told); gp.last = ''; }
     } else if (gp.state === 'tell' && (!there || t > gp.until)) {
       gp.speech = ''; gp.last = ''; gp.state = 'exit'; npcGo(gp, { kind: 'elevator' });
+    } else if (gp.state === 'tell' && !gp.told && toldToo()) {
+      gp.told = true; gp.speech = elderText(true); gp.last = ''; gp.until = Math.max(gp.until, t + 5000); // il tempo di leggerlo
     } else if (gp.state === 'exit') gp.fading = true;
   }
   if (gp && gp.fading) { gp.alpha -= dt * 2.5; if (gp.alpha <= 0) dropNpc(gp); }
@@ -2631,10 +2637,24 @@ function drawChar(c, t) {
 // ================================================================ fumetti
 const ICONS = { working: '>', writing: '>', thinking: '...', supervising: '*', idle: '-', waiting: '!', done: 'OK', leaving: '<' };
 
+// feedback agli agenti (2.11): l'ultimo messaggio di Platypus a questo agente, mandato o in ombra. Il motore lo tiene
+// nello stato per qualche decina di secondi; il testo intero si legge passandoci sopra, e tutto il registro sta nel Libro.
+function saidTo(c) {
+  if (!snap || !snap.feedback || c.npc || viewSid === 'replay') return null;
+  let best = null;
+  for (const f of snap.feedback) if (f.sid === c.sid && f.agent === c.id && (!best || f.t > best.t)) best = f;
+  return best;
+}
+function saidLine(f) {
+  const text = String(f.text || '').replace(/^Platypus[^:\n]*:\s*/, '').replace(/\s+/g, ' ');
+  return f.mode === 'shadow' ? tr('Platypus avrebbe detto: {text}', { text }) : tr('Platypus ha detto: {text}', { text });
+}
+
 function wantsBalloon(c) {
   const a = c.data || {};
   if (c.npc) return !!c.speech || hoverId === c.id;
   if (c.phase === 'leave' || c.fadeAway || c.fadeOut) return false;
+  if (saidTo(c)) return true;
   return allBalloons || c.role === 'boss' || c.role === 'manager' || a.status === 'waiting' || focusId === c.id || hoverId === c.id || c.phase === 'linger' || !!c.alert || !!c.errand || !!(groundFor(c) || {}).claim;
 }
 
@@ -2664,7 +2684,8 @@ function updateBalloon(c) {
   if (c.cheerUntil > performance.now() && c.role === 'boss' && floor && floor.s.party) action = tr('Evviva! {text}', { text: floor.s.party.text });
   const ap = c.npc ? null : approvalFor(c.sid, c.id);
   const gc = (groundFor(c) || {}).claim;
-  const sig = status + '|' + action + '|' + a.description + '|' + a.type + '|' + a.seq + '|' + (focusId === c.id) + '|' + !!c.alert + '|' + (c.errand ? c.errand.type : '') + '|' + (ap ? ap.id : '') + '|' + (gc ? gc.status + gc.t : '');
+  const fbk = c.npc ? null : saidTo(c);
+  const sig = status + '|' + action + '|' + a.description + '|' + a.type + '|' + a.seq + '|' + (focusId === c.id) + '|' + !!c.alert + '|' + (c.errand ? c.errand.type : '') + '|' + (ap ? ap.id : '') + '|' + (gc ? gc.status + gc.t : '') + '|' + (fbk ? fbk.mode + fbk.t : '');
   if (sig !== c.last) {
     c.last = sig;
     c.el.className = 'balloon st-' + (c.npc ? 'npc' : c.errand && c.errand.type === 'rage' ? 'rage' : c.alert && status !== 'waiting' ? 'alert' : status) + (focusId === c.id ? ' focus' : '') + (a.kind === 'main' || !a.description ? ' compact' : '') + (ap ? ' asking' : '') + (gc ? ' unground' : '');
@@ -2674,8 +2695,10 @@ function updateBalloon(c) {
       '<span class="act"><i class="ico">' + esc(ICONS[status] || '') + '</i>' + esc(action) + '</span>' +
       // affermazione dell'ultima risposta senza un fatto che la provi (o smentita dall'ultimo esito)
       (gc ? '<span class="ung">' + esc(gc.status === 'contradicted' ? tr('smentita: «{text}»', { text: gc.text }) : tr('senza prove: «{text}»', { text: gc.text })) + '</span>' : '') +
+      // quello che Platypus gli ha appena detto (o, in ombra, avrebbe detto)
+      (fbk ? '<span class="fbk' + (fbk.mode === 'shadow' ? ' sh' : '') + '">' + esc(saidLine(fbk)) + '</span>' : '') +
       (ap ? askButtons(ap) : '');
-    c.el.title = agentName(a) + (a.description ? ' — ' + a.description : '') + '\n' + action + (gc ? '\n' + (gc.status === 'contradicted' ? tr('smentita: «{text}»', { text: gc.text }) : tr('senza prove: «{text}»', { text: gc.text })) : '');
+    c.el.title = agentName(a) + (a.description ? ' — ' + a.description : '') + '\n' + action + (gc ? '\n' + (gc.status === 'contradicted' ? tr('smentita: «{text}»', { text: gc.text }) : tr('senza prove: «{text}»', { text: gc.text })) : '') + (fbk ? '\n' + saidLine(fbk) : '');
   }
   const walking = c.moving;
   c.el.classList.toggle('walking', walking);
@@ -3167,11 +3190,75 @@ function settingsStatus() {
   }
   return `<div class="stat"><p>${wtxt}${fest}</p><p>${ctxt}</p><button data-do="rescan">${tr('CERCA DI NUOVO LE SESSIONI COWORK')}</button></div>`;
 }
+// gli hook di feedback (2.11): si installano e si tolgono da qui, a parte da quelli che osservano,
+// e sempre dopo aver visto le righe esatte che finiscono nelle impostazioni di Claude Code
+// ogni funzione ha tre modi: spenta, ombra (registra che cosa direbbe, senza dirlo) e accesa; tre nella 2.11 arrivano solo all'ombra
+const FEEDBACK_FEATURES = [
+  ['fbSessionLessons', tr('Lezioni del progetto a inizio sessione'), true, 'sessionLessons'],
+  ['fbElder', tr('Il Nonno parla all\'agente dopo una trappola nota'), true, 'elder'],
+  ['fbLoop', tr('Uscita dal giro in tondo (stesso errore due volte)'), true, 'loop'],
+  ['fbStale', tr('File cambiato da un altro agente e modificato senza rileggerlo'), false, 'stale'],
+  ['fbClaims', tr('Affermazioni senza prove a fine turno'), false, 'claims'],
+  ['fbDrift', tr('Richiamo al compito quando va alla deriva'), false, 'drift'],
+];
+function feedbackStateHtml() {
+  const on = !!(snap && snap.hooks && snap.hooks.feedback);
+  return `<p class="${on ? 'on' : 'dim'}">${esc(on ? tr('Hook di feedback: installati.') : tr('Hook di feedback: non installati.'))} ${esc(tr('Da soli non dicono niente all\'agente.'))}</p>` +
+    `<button type="button" data-do="fbhooks">${esc(on ? tr('RIMUOVI GLI HOOK DI FEEDBACK…') : tr('INSTALLA GLI HOOK DI FEEDBACK…'))}</button><div class="fbconfirm" hidden></div>`;
+}
+function feedbackHooksHtml(st) {
+  const opt = (v, l, cur) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${esc(l)}</option>`;
+  const row = ([k, label, canOn, feature]) => { const cur = (st && st[k]) || 'off'; return `<label><span>${esc(label)}<small class="fbn" data-fbn="${feature}"></small></span><select name="${k}" data-fb>` +
+    opt('off', tr('spenta'), cur) + opt('shadow', tr('ombra'), cur) + (canOn ? opt('on', tr('accesa'), cur) : '') + '</select></label>'; };
+  return `<fieldset class="fbhooks"><legend>${esc(tr('FEEDBACK AGLI AGENTI'))}</legend>` +
+    `<p>${esc(tr('Platypus può dire all\'agente quello che vede (una lezione del Libro, un giro in tondo) attraverso gli hook di Claude Code. Servono hook a parte, che si installano solo da qui e solo dopo la tua conferma.'))}</p>` +
+    FEEDBACK_FEATURES.map(row).join('') +
+    `<p class="dim">${esc(tr('«Ombra» registra che cosa avrebbe detto, senza dirlo: serve a vedere se aiuterebbe. I messaggi sono rari (uno ogni 2 minuti per agente, 6 all\'ora per sessione) e mai due volte la stessa lezione. Le ultime tre funzioni per ora arrivano solo all\'ombra.'))}</p>` +
+    `<div class="fbstate">${feedbackStateHtml()}</div></fieldset>`;
+}
+// accanto a ogni interruttore: quanti messaggi negli ultimi 7 giorni, mandati e in ombra (da tutti i progetti)
+async function loadFeedbackCounts(box) {
+  let r = null;
+  try { r = await (await fetch('/api/feedback/counts')).json(); } catch {}
+  if (!r || !r.ok) return;
+  for (const el of box.querySelectorAll('[data-fbn]')) {
+    const c = r.counts[el.dataset.fbn] || { on: 0, shadow: 0 };
+    el.textContent = c.on || c.shadow ? tr('ultimi 7 giorni: {on} mandati, {shadow} in ombra', { on: c.on, shadow: c.shadow }) : tr('ultimi 7 giorni: nessun messaggio');
+  }
+}
+function bindFeedbackHooks(box) {
+  loadFeedbackCounts(box);
+  const btn = box.querySelector('[data-do=fbhooks]'), cf = box.querySelector('.fbconfirm');
+  btn.onclick = async () => {
+    if (!cf.hidden) { cf.hidden = true; return; }
+    let p = null;
+    try { p = await (await fetch('/api/feedback/hooks')).json(); } catch {}
+    if (!p || !p.ok) return toast(tr('Non riesco a leggere le impostazioni di Claude Code'), false);
+    const on = !!p.installed;
+    cf.innerHTML = (on
+      ? `<p>${esc(tr('Tolgo gli hook di feedback da {path}. Il resto del file resta com\'è.', { path: p.path }))}</p>`
+      : `<p>${esc(tr('Aggiungo queste righe a {path}. Il resto del file resta com\'è; la prima volta ne salvo una copia accanto ({backup}).', { path: p.path, backup: 'settings.json.platypus-backup' }))}</p>` +
+        `<pre>${esc(p.text)}</pre>` +
+        `<p class="dim">${esc(tr('Valgono per le sessioni di Claude Code aperte da adesso in poi. Se Platypus è chiuso, Claude Code prosegue come sempre.'))}</p>`) +
+      `<div class="btns"><button type="button" data-do="fbyes">${esc(on ? tr('SÌ, RIMUOVI') : tr('SÌ, INSTALLA'))}</button><button type="button" data-do="fbno">${esc(tr('ANNULLA'))}</button></div>`;
+    cf.hidden = false;
+    cf.querySelector('[data-do=fbno]').onclick = () => { cf.hidden = true; };
+    cf.querySelector('[data-do=fbyes]').onclick = async () => {
+      const r = await api('/api/feedback/hooks', { action: on ? 'uninstall' : 'install', confirm: true });
+      if (!r || !r.ok) return toast((r && r.reason) || tr('Non sono riuscito a modificare le impostazioni di Claude Code'), false);
+      if (snap && snap.hooks) snap.hooks.feedback = !!r.installed;
+      toast(r.installed ? tr('Hook di feedback installati') : tr('Hook di feedback rimossi'));
+      // si ridisegna solo lo stato degli hook: le opzioni modificate e non salvate restano come sono
+      box.querySelector('.fbstate').innerHTML = feedbackStateHtml();
+      bindFeedbackHooks(box);
+    };
+  };
+}
 function toggleSettings() {
   const box = $('#settings');
   if (!box.hidden) { if (box._tryClose) box._tryClose(); else box.hidden = true; return; }
   const st = (snap && snap.settings) || {};
-  box.innerHTML = '<span class="x">X</span><h3>' + tr('OPZIONI') + '</h3>' + settingsGroupsHtml(st) + settingsStatus() +
+  box.innerHTML = '<span class="x">X</span><h3>' + tr('OPZIONI') + '</h3>' + settingsGroupsHtml(st) + feedbackHooksHtml(st) + settingsStatus() +
     `<p class="dim">${tr('Le opzioni restano salvate anche alla prossima apertura.')}</p>` +
     `<div class="btns save-bar"><button data-do="save">${tr('SALVA')}</button><span class="dirty" hidden>${tr('Modifiche non salvate')}</span></div>`;
   // chiudere con X dopo una modifica: la prima volta avvisa, la seconda chiude senza salvare
@@ -3182,6 +3269,7 @@ function toggleSettings() {
     box.hidden = true;
   };
   box.querySelector('.x').onclick = box._tryClose;
+  bindFeedbackHooks(box);
   box.querySelector('[data-do=rescan]').onclick = async () => {
     const r = await api('/api/cowork-scan', {});
     if (r) { snap.cowork = r; toast(tr('Cowork: {found} cartelle trovate, {watched} seguite', { found: r.found, watched: r.watched })); box.hidden = true; toggleSettings(); }
@@ -3192,6 +3280,7 @@ function toggleSettings() {
     for (const [k] of SETTINGS_CHECKS) body[k] = box.querySelector(`input[name=${k}]`).checked;
     for (const [k] of SETTINGS_TEXTS) body[k] = box.querySelector(`input[name=${k}]`).value;
     body.lang = box.querySelector('select[name=lang]').value;
+    for (const sel of box.querySelectorAll('select[data-fb]')) body[sel.name] = sel.value;
     const r = await api('/api/settings', body);
     if (r && r.budgetUSD != null) { snap.settings = r; dress.t = -1e9; toast(tr('Opzioni salvate')); box.hidden = true; boardSig = ''; reconcile(); } else toast(tr('Non sono riuscito a salvare'), false);
   };

@@ -80,6 +80,13 @@ const DEFAULT_SETTINGS = {
   approveWaitSec: 120,  // quanto a lungo l'ufficio tiene in sospeso una richiesta
   groundingAlerts: false, // avvisi di ancoraggio: modifiche alla cieca e affermazioni smentite
   elderEnabled: true,   // il Nonno racconta le lezioni del Libro della bottega
+  // feedback agli agenti (2.11): ogni funzione è off | shadow | on, e parte spenta (vedi feedback.js)
+  fbSessionLessons: 'off', // le lezioni del progetto a inizio sessione
+  fbElder: 'off',          // il Nonno parla all'agente dopo una trappola nota
+  fbLoop: 'off',           // uscita dal giro in tondo
+  fbStale: 'off',          // file cambiato da un altro agente e modificato senza rileggerlo (nella 2.11 al massimo in ombra)
+  fbClaims: 'off',         // affermazioni senza prove a fine turno (nella 2.11 al massimo in ombra)
+  fbDrift: 'off',          // richiamo al compito (nella 2.11 al massimo in ombra)
   bottegaLearn: true,   // il Libro della bottega impara dalle sessioni (dal vivo e dall'archivio)
   coworkDirs: '',       // cartelle extra dove cercare le sessioni Cowork (separate da ;)
   claudeDirs: '',       // altre cartelle di configurazione di Claude Code (es. dentro WSL), separate da ;
@@ -87,6 +94,7 @@ const DEFAULT_SETTINGS = {
 };
 const LONG_STRINGS = { coworkDirs: 600, claudeDirs: 600 };
 const i18n = require('../i18n');
+const feedback = require('./feedback');
 const { AgentWorld } = require('./worldmap');
 const grounding = require('./grounding');
 const { AgentMind, Corpus } = require('./semantic');
@@ -193,6 +201,7 @@ class OfficeState extends EventEmitter {
       else if (typeof DEFAULT_SETTINGS[k] === 'string') {
         const str = String(v ?? '').replace(/[<>"]/g, '').trim().slice(0, LONG_STRINGS[k] || 40);
         if (k === 'lang') { this.settings.lang = str === 'auto' || i18n.LANGS[str] ? str : 'auto'; continue; }
+        if (Object.values(feedback.FEATURES).includes(k)) { this.settings[k] = feedback.cleanMode(k, str); continue; }
         this.settings[k] = str || (k === 'pestName' || k === 'hrName' ? DEFAULT_SETTINGS[k] : '');
       }
       else { const n = Number(v); if (Number.isFinite(n) && n >= 0) this.settings[k] = n; }
