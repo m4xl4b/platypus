@@ -15,6 +15,7 @@ const { classifyFailure, errorExcerpt } = require('./surprise');
 const { relKey, isProjectFile } = require('./worldmap');
 const { extractClaims, judgeClaim } = require('./grounding');
 const { isTestCommand } = require('./releases');
+const { drift: semanticDrift } = require('./semantic');
 
 const en = fn => i18n.withLang('en', fn);
 
@@ -229,6 +230,21 @@ function claims(input, ctx) {
   };
 }
 
+// ---- B6 · ritorno al compito (sperimentale): la stella polare dice che l'agente è alla deriva, con la stessa regola
+// della mappa (semantic.drift). Gli ricorderebbe il compito, citato. Il motore lessicale non distingue una deviazione
+// necessaria da una deriva: per questo il testo lo ammette, e nella 2.11 la funzione resta in ombra.
+function driftBack(input, ctx) {
+  if (!ctx.agent) return null;
+  const me = ctx.agent(input);
+  if (!me || !me.mind || !me.corpus) return null;
+  const d = semanticDrift(me.mind, me.corpus);
+  if (!d || !d.drifting || !d.goal.label) return null;
+  return {
+    text: `your last ${d.run} actions look far from the task you were given: «${clip(d.goal.label, 160)}». If this detour is needed, carry on; otherwise go back to the task.`,
+    once: 'drift|' + (input.agent_id || 'main') + '|' + d.goal.t, tag: 'run=' + d.run,
+  };
+}
+
 // le regole entrano in RULES una volta sola, nell'ordine in cui devono parlare. Dopo un fallimento il Nonno viene prima:
 // quello che il progetto ha già imparato (dove l'errore è stato sistemato, che il comando è instabile) è più preciso
 // dell'avviso generico; se poi l'agente insiste, al fallimento dopo tocca al giro in tondo. Dopo una modifica riuscita
@@ -236,7 +252,7 @@ function claims(input, ctx) {
 const ALL = [
   ['SessionStart', 'sessionLessons', sessionLessons],
   ['PostToolUseFailure', 'elder', elder], ['PostToolUseFailure', 'loop', loop],
-  ['PostToolUse', 'stale', stale], ['PostToolUse', 'elder', elder],
+  ['PostToolUse', 'stale', stale], ['PostToolUse', 'elder', elder], ['PostToolUse', 'drift', driftBack],
   ['Stop', 'claims', claims], ['SubagentStop', 'claims', claims],
 ];
 function register(rules = feedback.RULES) {
@@ -245,4 +261,4 @@ function register(rules = feedback.RULES) {
 }
 register();
 
-module.exports = { register, sessionLessons, elder, loop, stale, claims, MAX_START };
+module.exports = { register, sessionLessons, elder, loop, stale, claims, driftBack, MAX_START };

@@ -317,6 +317,28 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(core.state.settings.fbClaims === 'shadow' && fbClAct.status === 204 && fbCl.status === 204 && fbCl.body === '' && fbClOk.status === 204, `affermazioni a fine turno: nella 2.11 nessun blocco arriva a Claude Code → ${fbCl.status}`);
   ok(fbClLog.length === 1 && fbClLog[0].sid === 'fb-claims-0001' && fbClLog[0].mode === 'shadow' && fbClLog[0].event === 'Stop' && fbClLog[0].tag === 'tests/ungrounded' && /^Platypus: you said «All tests pass\.», but no test ran after your last edit/.test(fbClLog[0].text), 'affermazioni a fine turno: nel registro solo il turno senza prove, con che cosa avrebbe chiesto «' + (fbClLog[0] ? fbClLog[0].text.slice(0, 80) : '-') + '…»');
   core.state.setSettings({ fbClaims: 'off' });
+  // B6 · ritorno al compito (sperimentale): otto azioni sul compito, poi quattordici su tutt'altro. La stella polare
+  // dell'ufficio dice «alla deriva»; nella 2.11 resta in ombra: niente all'agente, la riga nel registro.
+  const fbDrSid = 'fb-drift-0001', fbDrT0 = Date.now() - 120000;
+  const fbDrLine = (k, role, content) => ({ type: role, timestamp: new Date(fbDrT0 + k * 1000).toISOString(), sessionId: fbDrSid, cwd: fakeCwd, message: role === 'assistant' ? { id: 'fbdr' + k, role, content, usage: { input_tokens: 10, output_tokens: 10 } } : { role, content } });
+  core.state.applyTranscriptLine(fbDrSid, null, fbDrLine(0, 'user', 'Fix the login token refresh in the auth module: expired tokens must be renewed'));
+  const fbDrOn = ['src/auth/login.ts', 'src/auth/token.ts', 'src/auth/refresh.ts', 'src/auth/login-token.ts'], fbDrOff = ['src/ui/Menu.tsx', 'src/ui/theme/palette.css', 'src/ui/Sidebar.tsx', 'src/ui/Button.tsx', 'src/ui/icons/gradient.css'];
+  for (let i = 0; i < 22; i++) {
+    const on = i < 8, f = on ? fbDrOn[i % fbDrOn.length] : fbDrOff[i % fbDrOff.length];
+    core.state.applyTranscriptLine(fbDrSid, null, fbDrLine(1 + 2 * i, 'assistant', [{ type: 'tool_use', id: 'dr' + i, name: 'Read', input: { file_path: path.join(fakeCwd, f) } }]));
+    core.state.applyTranscriptLine(fbDrSid, null, fbDrLine(2 + 2 * i, 'user', [{ type: 'tool_result', tool_use_id: 'dr' + i, content: on ? 'export function refreshToken(login) { /* renew the expired auth token */ }' : 'export const sidebar = { color: palette.dark, hover: gradient }' }]));
+  }
+  const fbDrIn = () => get(port, '/platypus-hook/feedback', 'POST', JSON.stringify({ session_id: fbDrSid, hook_event_name: 'PostToolUse', cwd: fakeCwd, tool_name: 'Read', tool_input: { file_path: path.join(fakeCwd, 'src/ui/Menu.tsx') }, tool_response: {}, tool_use_id: 'dr21' }));
+  const fbDrOffR = await fbDrIn();
+  ok(fbDrOffR.status === 204 && !core.feedbackLog.recent(fakeCwd).some(e => e.feature === 'drift'), 'ritorno al compito: spento di base, niente nemmeno nel registro');
+  core.state.setSettings({ fbDrift: 'on' });
+  const fbDr = await fbDrIn();
+  const fbDrE = core.feedbackLog.recent(fakeCwd).find(e => e.sid === fbDrSid && e.feature === 'drift');
+  const fbDrMind = JSON.parse((await get(port, `/api/agentmind?sid=${fbDrSid}&aid=main`)).body);
+  const fbDrLast = fbDrMind.align && fbDrMind.align[fbDrMind.align.length - 1];
+  ok(core.state.settings.fbDrift === 'shadow' && fbDr.status === 204 && fbDrE && fbDrE.mode === 'shadow' && /^Platypus: your last \d+ actions look far from the task you were given: «Fix the login token refresh/.test(fbDrE.text), 'ritorno al compito: la deriva viene dalla stella polare dell\'ufficio, e resta in ombra → ' + fbDr.status + ' «' + (fbDrE ? fbDrE.text.slice(0, 60) : '-') + '…»');
+  ok(fbDrLast && fbDrLast[2] / fbDrLast[3] < 0.35, `ritorno al compito: è la stessa serie che la mappa disegna (allineamento ${fbDrLast ? Math.round(100 * fbDrLast[2] / fbDrLast[3]) : '-'}%)`);
+  core.state.setSettings({ fbDrift: 'off' });
   const fb4 = await get(port, '/platypus-hook/feedback', 'POST', 'non è json {');
   ok(fb4.status === 204, 'feedback con un corpo che non è JSON: 204 → ' + fb4.status);
   // gli hook di feedback dal pannello delle opzioni: prima le righe da vedere, poi si scrive solo con la conferma

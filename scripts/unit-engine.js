@@ -861,6 +861,65 @@ function claimsRuleTests(ok, fb, inp, rules, AgentWorld) {
   const r1 = go({ fbClaims: 'on' });
   ok(r1.out === null && r1.entry && r1.entry.mode === 'shadow' && r1.entry.feature === 'claims' && r1.entry.event === 'Stop' && r1.entry.tag === 'tests/ungrounded', 'affermazioni: anche «accesa» resta in ombra: niente a Claude Code, nel registro con che cosa ha trovato');
   ok(go({ fbClaims: 'shadow' }).entry === null, 'affermazioni: una volta sola per turno');
+  driftRuleTests(ok, fb, inp, rules);
+}
+
+// B6 · ritorno al compito (sperimentale): la stella polare dice «alla deriva», con la stessa regola della mappa
+function driftRuleTests(ok, fb, inp, rules) {
+  const sem = require(path.join(ROOT, 'src', 'core', 'semantic'));
+  const now = Date.parse('2026-11-18T10:00:00Z'), T0 = now - 600000;
+  const TASK = 'Fix the login token refresh in the auth module: expired tokens must be renewed';
+  const ON = ['Read src/auth/login.ts token refresh', 'Grep refresh token expired in src/auth', 'Read src/auth/token.ts renew expired token', 'Edit src/auth/refresh.ts renew the login token', 'Bash npm test auth login refresh'];
+  const OFF = ['Read src/ui/Menu.tsx sidebar colors', 'Edit src/ui/theme.css palette dark mode', 'Read src/ui/Button.tsx hover animation', 'Grep gradient shadow in src/ui/styles', 'Edit src/ui/Sidebar.tsx icon spacing layout'];
+  // una mente vera: il compito, n azioni sul compito e poi m azioni su tutt'altro
+  const mind = (on, off, { goal = TASK, again = null } = {}) => {
+    const corpus = new sem.Corpus(), m = new sem.AgentMind(corpus);
+    let t = T0, k = 0;
+    const act = text => m.action('tu' + (++k), t += 1000, text.slice(0, 40), text + ' step ' + k);
+    m.setGoal(T0, goal);
+    for (let i = 0; i < on; i++) act(ON[i % ON.length]);
+    for (let i = 0; i < off; i++) act(OFF[i % OFF.length]);
+    if (again) m.setGoal(t += 1000, again);
+    return { id: 'main', steps: [], nodes: new Map(), goals: m.goals, mind: m, corpus };
+  };
+  const hook = (me, extra = {}) => rules.driftBack(inp('PostToolUse', { tool_name: 'Edit', tool_input: { file_path: '/p/src/ui/theme.css' }, tool_response: {}, ...extra }), { now: () => now, agent: () => me });
+  // sul compito: niente; poi abbastanza azioni lontane di fila
+  ok(hook(mind(12, 0)) === null && hook(mind(8, 3)) === null, 'ritorno al compito: finché lavora sul compito, o per poche azioni lontane, niente');
+  const far = mind(8, 14), d = sem.drift(far.mind, far.corpus);
+  let m = hook(far);
+  ok(d && d.drifting && d.run >= sem.DRIFT_RUN && d.rel < sem.DRIFT_REL && !d.weak, `stella polare: alla deriva dopo ${d ? d.run : '-'} azioni di fila sotto la soglia (allineamento ${d ? Math.round(d.rel * 100) : '-'}%)`);
+  ok(m && m.text === `your last ${d.run} actions look far from the task you were given: «${TASK}». If this detour is needed, carry on; otherwise go back to the task.` && m.tag === 'run=' + d.run && /^drift\|main\|/.test(m.once) && !m.block, 'ritorno al compito, alla deriva: «' + (m && m.text) + '»');
+  ok(fb.say(m.text).length <= fb.MAX_TEXT, 'ritorno al compito: il messaggio sta nel limite');
+  // la soglia è quella della mappa: una azione prima della sesta di fila non basta
+  let first = 0;
+  for (let n = 1; n <= 14 && !first; n++) { const x = mind(8, n), dx = sem.drift(x.mind, x.corpus); if (dx.drifting) first = n; }
+  const before = mind(8, first - 1), db = sem.drift(before.mind, before.corpus);
+  ok(first > 0 && db.run === sem.DRIFT_RUN - 1 && hook(before) === null && hook(mind(8, first)), `ritorno al compito: scatta alla sesta azione di fila sotto la soglia (dopo ${first} azioni lontane), non prima`);
+  // la stessa serie che disegna la mappa
+  const snap = sem.snapshotMinds([{ id: 'main', name: 'CLAUDE', mind: far.mind }], far.corpus, 'unit-drift');
+  ok(JSON.stringify(snap.align) === JSON.stringify(sem.alignment(far.mind, far.corpus)) && snap.align.length === 22, 'stella polare: la regola usa la stessa serie della mappa');
+  // un compito che non si può misurare, una nuova richiesta, un agente senza mente
+  const weak = mind(0, 14, { goal: 'Zzyzx quux frobnicate' }), dw = sem.drift(weak.mind, weak.corpus);
+  ok(dw && dw.weak && !dw.drifting && hook(weak) === null, 'ritorno al compito: se le parole del compito non compaiono mai nel lavoro non si giudica');
+  ok(hook(mind(8, 14, { again: 'Now restyle the sidebar menu colors' })) === null, 'ritorno al compito: una nuova richiesta dell\'utente sposta la stella, e si riparte');
+  ok(hook(null) === null && hook({ id: 'main', steps: [] }) === null && sem.drift(null, null) === null && sem.drift(mind(0, 0).mind, mind(0, 0).corpus) === null, 'ritorno al compito: senza agente, senza mente o senza azioni → niente');
+  m = rules.driftBack(inp('PostToolUse', { agent_id: 'sub-1', tool_name: 'Read' }), { agent: () => far });
+  ok(m && /^drift\|sub-1\|/.test(m.once), 'ritorno al compito: vale per i sottoagenti, sul compito che hanno ricevuto');
+  // abbastanza veloce per stare nell'hook anche con una mente piena
+  const big = mind(450, 450), t0 = Date.now();
+  sem.drift(big.mind, big.corpus);
+  const ms = Date.now() - t0;
+  ok(ms < 150, `stella polare: ${big.mind.pieces.length} pezzi giudicati in ${ms} ms`);
+  // nel giro completo: nella 2.11 al massimo in ombra, dopo le altre regole, una volta per compito
+  const post = fb.RULES.PostToolUse.map(r => r.run);
+  ok(post.indexOf(rules.driftBack) > post.indexOf(rules.elder) && post.indexOf(rules.elder) > post.indexOf(rules.stale) && fb.RULES.PostToolUse.find(r => r.run === rules.driftBack).feature === 'drift', 'ritorno al compito: registrato per ultimo dopo uno strumento riuscito');
+  const gate = new fb.Gate({ now: () => now });
+  const real = { PostToolUse: [{ feature: 'drift', run: rules.driftBack }] };
+  const go = settings => fb.respond(inp('PostToolUse', { tool_name: 'Edit', tool_input: {}, tool_response: {} }), { cwd: '/p', now: () => now, settings, agent: () => far }, gate, real);
+  ok(go({ fbDrift: 'off' }).entry === null, 'ritorno al compito: spento di base, niente');
+  const r1 = go({ fbDrift: 'on' });
+  ok(r1.out === null && r1.entry && r1.entry.mode === 'shadow' && r1.entry.feature === 'drift' && /^Platypus: your last \d+ actions look far/.test(r1.entry.text) && /^run=\d+$/.test(r1.entry.tag), 'ritorno al compito: anche «acceso» resta in ombra, con la riga nel registro');
+  ok(go({ fbDrift: 'shadow' }).entry === null, 'ritorno al compito: una volta sola per compito');
 }
 
 // feedback (2.11, A3): i tre modi di ogni funzione, i limiti di frequenza, il progetto zittito e il registro
