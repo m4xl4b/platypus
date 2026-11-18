@@ -2327,35 +2327,27 @@ function pixText(str, x, y, col, size = 5) {
 // ================================================================ modello ed effort: età e superpoteri
 // Più il modello è vecchio rispetto al più recente, più il personaggio è anziano.
 // Più l'effort è alto, più è vestito da supereroe (ma l'età resta quella).
-const NEWEST_KNOWN = 5.5; // versione più recente conosciuta; se ne arrivano di più nuove si aggiornano da sole
-const FAMILY_NAME = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', fable: 'Fable' };
-const modelCache = new Map();
+// Le regole stanno in src/core/models.js (window.PlatypusModels, da /models.js), le stesse del motore: famiglia e
+// versione, il contesto da 1M ([1m]), l'età rispetto alla versione più recente della stessa famiglia.
+const MODELS = window.PlatypusModels;
+const modelLabels = new Map();
 function modelInfo(id) {
-  if (!id) return null;
-  if (modelCache.has(id)) return modelCache.get(id);
-  const m = String(id).toLowerCase();
-  let fam = null, ver = null;
-  // claude-3-5-sonnet-20241022 (versione prima) oppure claude-sonnet-4-5-20250929 (versione dopo)
-  let r = /claude-(\d)(?:-(\d))?-(opus|sonnet|haiku|fable)/.exec(m);
-  if (r) { fam = r[3]; ver = Number(r[1]) + (r[2] ? Number(r[2]) / 10 : 0); }
-  else if ((r = /(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2})(?!\d))?/.exec(m))) { fam = r[1]; ver = Number(r[2]) + (r[3] ? Number(r[3]) / 10 : 0); }
-  else if ((r = /(opus|sonnet|haiku|fable)/.exec(m))) fam = r[1];
-  const info = { id, fam, ver, label: fam ? FAMILY_NAME[fam] + (ver ? ' ' + dec(ver) : '') : id.replace(/^claude-/, '') };
-  modelCache.set(id, info);
-  return info;
+  const i = MODELS.info(id);
+  if (!i) return null;
+  // l'etichetta con la virgola dei decimali della lingua dell'ufficio (Opus 4,8 · 1M)
+  if (!modelLabels.has(i.id)) modelLabels.set(i.id, (i.name ? i.name + (i.ver != null ? ' ' + dec(i.ver) : '') : i.rest) + (i.ctx1m ? ' · 1M' : ''));
+  return { ...i, label: modelLabels.get(i.id) };
 }
-let newestSeen = NEWEST_KNOWN;
+// la versione più recente vista per famiglia (si aggiorna da sola quando ne arrivano di più nuove)
+let newestSeen = MODELS.newest();
 function noteNewest() {
-  for (const s of sessions()) for (const a of [s.main, ...s.subs]) { const mi = modelInfo(a.model); if (mi && mi.ver && mi.ver > newestSeen) newestSeen = mi.ver; }
+  const ids = [];
+  for (const s of sessions()) for (const a of [s.main, ...s.subs]) if (a.model) ids.push(a.model);
+  newestSeen = MODELS.newest(ids);
 }
 // 0 giovane · 1 maturo (tempie grigie) · 2 anziano (capelli grigi, occhiali) · 3 vecchietto (capelli bianchi, bastone, passo lento)
 const AGE_NAMES = [tr('giovane'), tr('maturo'), tr('anziano'), tr('vecchietto')];
-function ageTier(model) {
-  const mi = modelInfo(model);
-  if (!mi || mi.ver == null) return 0;
-  const gap = newestSeen - mi.ver;
-  return gap <= 0.3 ? 0 : gap <= 0.8 ? 1 : gap <= 1.5 ? 2 : 3;
-}
+function ageTier(model) { return MODELS.ageTier(model, newestSeen); }
 const EFFORT_NAMES = { low: tr('basso'), medium: tr('medio'), high: tr('alto'), xhigh: tr('altissimo'), max: tr('massimo') };
 const HERO_NAMES = ['', tr('con il mantello'), tr('mantello e stemma'), tr('supereroe completo')];
 // 0 niente · 1 mantello · 2 mantello e stemma · 3 costume completo con maschera e aura

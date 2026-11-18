@@ -145,6 +145,8 @@ function shellEvents(port, headers = {}) {
   ok(map.ok && map.nodes.length > 0 && map.trajectories.length > 0, `mappa della realtà: ${map.nodes.length} luoghi, ${map.trajectories.length} traiettorie`);
   const mind = JSON.parse((await get(port, `/api/agentmind?sid=${sid}&aid=main`)).body);
   ok(mind.ok && mind.pieces && mind.pieces.length > 0, `bolla del contesto: ${mind.pieces ? mind.pieces.length : 0} pezzi`);
+  const modelsJs = await get(port, '/models.js');
+  ok(modelsJs.status === 200 && modelsJs.body === fs.readFileSync(path.join(ROOT, 'src', 'core', 'models.js'), 'utf8') && mind.models && typeof mind.models.main === 'string', `modelli: /models.js è il modulo del motore, e la bolla sa il modello di ogni mente (${mind.models && mind.models.main})`);
   // E3 · significato con un Ollama finto: la bolla parte lessicale e passa ai vettori neurali quando arrivano
   {
     const fo = await require('./unit-embed').fakeOllama();

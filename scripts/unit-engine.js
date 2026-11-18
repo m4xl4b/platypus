@@ -325,6 +325,27 @@ function urlTests(ok) {
   ok(bad.every(u => !isExternalUrl(u)), 'file:, smb:, protocolli di altre app, javascript: e credenziali nell\'indirizzo: mai a openExternal');
 }
 
+// 2.12.1 · nomi dei modelli (src/core/models.js): il contesto da 1M con [1m], e l'età dei modelli nuovi o sconosciuti
+function modelTests(ok) {
+  const M = require(path.join(ROOT, 'src', 'core', 'models'));
+  const { AgentWorld } = require(path.join(ROOT, 'src', 'core', 'worldmap'));
+  // [1m]: contesto da 1M, nell'etichetta, nella finestra e nella stima del contesto del motore
+  const big = M.info('claude-opus-4-8[1m]'), plain = M.info('claude-opus-4-8');
+  ok(big.ctx1m && big.fam === 'opus' && big.ver === 4.8 && big.label === 'Opus 4.8 · 1M' && !plain.ctx1m && plain.label === 'Opus 4.8', 'modelli: [1m] vuol dire contesto da 1M, e la versione resta quella (Opus 4.8 · 1M)');
+  ok(M.contextLimit('claude-opus-4-8[1m]', 5000) === 1e6 && M.contextLimit('claude-opus-4-8', 5000) === 2e5 && M.contextLimit('claude-opus-4-8', 250000) === 1e6 && M.contextLimit('', 0) === 2e5 && M.contextLimit('claude-sonnet-4-5[1M]', 0) === 1e6, 'modelli: finestra di contesto 1M con [1m] (anche maiuscolo), altrimenti 200k finché il contesto visto non li supera');
+  const ctxDim = model => { const w = new AgentWorld(); w.model = model; w.start('t1', 'Read', { file_path: '/p/a.ts' }, 1000, '/p', 150000); return w.steps[0].vec[6]; };
+  ok(ctxDim('claude-opus-4-8[1m]') === 0.15 && ctxDim('claude-opus-4-8') === 0.75, `modelli: la stima del contesto del motore (150k token) è ${ctxDim('claude-opus-4-8[1m]')} su 1M con [1m] e ${ctxDim('claude-opus-4-8')} su 200k senza`);
+  // età: un modello nuovo è un personaggio giovane, anche di una famiglia nuova o sconosciuta
+  const age = (id, seen) => M.ageTier(id, seen && M.newest(seen));
+  ok(age('claude-fable-5') === 0 && age('claude-fable-5-2') === 0 && age('claude-opus-5-5') === 0 && age('claude-mythos-5-2') === 0 && age('claude-zeta-7') === 0 && age('gpt-4o') === 0, 'modelli: Fable 5, Fable 5.2, Opus 5.5 e le famiglie sconosciute recenti (Mythos 5.2, Zeta 7) sono giovani; un nome senza versione anche');
+  ok(age('claude-opus-4-8') === 1 && age('claude-opus-4-1') === 2 && age('claude-3-5-haiku-20241022') === 3 && age('claude-instant-1-2', ['claude-instant-1-2']) === 3 && age('claude-2-1', ['claude-2-1']) === 3, 'modelli: i vecchi invecchiano, anche di una famiglia sconosciuta vista da sola (Instant 1.2, Claude 2.1)');
+  ok(age('claude-fable-5', ['claude-fable-6-1']) === 2 && age('claude-opus-5-5', ['claude-fable-6-1']) === 0 && age('claude-mythos-5-2', ['claude-mythos-6-2']) === 2, "modelli: l'età si misura nella stessa famiglia (un Fable 6.1 invecchia Fable 5, non Opus 5.5); una famiglia sconosciuta contro la versione più recente di tutte");
+  ok(M.info('claude-sonnet-4-5-20250929').ver === 4.5 && M.info('claude-3-opus-20240229').ver === 3 && M.info('claude-2-1').label === 'Claude 2.1' && M.info('gpt-4o').label === 'gpt-4o' && M.info(null) === null, 'modelli: nomi con la data, con la versione prima della famiglia, e nomi che non sono di Claude');
+  // la pagina usa lo stesso modulo (niente regole scritte due volte), caricato prima di game.js
+  const game = fs.readFileSync(path.join(ROOT, 'renderer', 'game.js'), 'utf8'), wm = fs.readFileSync(path.join(ROOT, 'renderer', 'worldmap.js'), 'utf8'), html = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
+  ok(/PlatypusModels/.test(game) && !/NEWEST_KNOWN|opus|sonnet|haiku/.test(game) && /PlatypusModels.contextLimit/.test(wm) && !/mx > 200000 ? 1000000/.test(wm.replace(/: mx > 200000 ? 1000000 : 200000; }/, '')) && html.indexOf('models.js') > 0 && html.indexOf('models.js') < html.indexOf('game.js'), 'modelli: età e bolla della pagina usano models.js, caricato prima di game.js');
+}
+
 // PLATYPUS_DATA_DIR: un'altra cartella al posto di ~/.platypus (prove e loop in parallelo), creata se manca,
 // senza copiare il vecchio Agent Office e senza toccare ~/.platypus
 function dataDirOverrideTests(ok) {
@@ -495,6 +516,7 @@ function run(ok) {
   nodeVersionTests(ok);
   dataDirTests(ok);
   dataDirOverrideTests(ok);
+  modelTests(ok);
   urlTests(ok);
   boundsTests(ok);
   forgetTests(ok);

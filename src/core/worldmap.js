@@ -148,6 +148,8 @@ function listedPaths(text, r) {
   return out.slice(0, 200);
 }
 
+const { contextLimit } = require('./models');
+
 class AgentWorld {
   constructor() {
     this.nodes = new Map(); // key -> {seen, read, edit, created, n, last, lastSync, edits}
@@ -313,7 +315,7 @@ class AgentWorld {
     for (const v of sigs.values()) if (v > 1) dup += v - 1;
     const repeat = n > 1 ? dup / (n - 1) : 0;
     const st = this.steps[i];
-    const limit = st.ctx > 200000 ? 1000000 : 200000;
+    const limit = contextLimit(this.model, st.ctx); // 1M con [1m] nel nome del modello, o quando il contesto supera 200k
     const context = Math.min(1, (st.ctx || 0) / limit);
     st.vec = [explore, build, Math.min(1, verify), novelty, errors, repeat, context].map(v => Math.round(v * 1000) / 1000);
     st.phase = phaseOf(st.vec, n);
