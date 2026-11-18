@@ -342,12 +342,84 @@ async function ollamaTests(ok) {
   st.stop && st.stop();
 }
 
+// ---------------------------------------------------------------- E4 · ONNX con un modulo finto
+// Un transformers.js finto (CommonJS): vettori deterministici di 12 dimensioni, rifiuta di girare se i modelli remoti
+// non sono spenti, e sbaglia apposta con il testo «BOOM».
+const FAKE_TRANSFORMERS = `'use strict';
+const env = {};
+${wordVec.toString()}
+async function pipeline(task, model, opts) {
+  if (env.allowRemoteModels !== false) throw new Error('remote models must be off');
+  if (task !== 'feature-extraction') throw new Error('task ' + task);
+  return async (texts, o) => {
+    if (!o || o.pooling !== 'mean' || !o.normalize) throw new Error('pooling');
+    if (texts.some(t => /BOOM/.test(t))) throw new Error('fake failure');
+    const dim = 12, data = new Float32Array(texts.length * dim);
+    texts.forEach((t, i) => data.set(wordVec(t, dim), i * dim));
+    return { dims: [texts.length, dim], data };
+  };
+}
+module.exports = { env, pipeline };
+`;
+
+async function onnxTests(ok) {
+  const os = require('os');
+  const { spawnSync } = require('child_process');
+  const onnxLoader = require(path.join(ROOT, 'src', 'core', 'embed', 'onnx'));
+  const mod = require(path.join(ROOT, 'optional', 'embed-onnx'));
+  const embed = require(path.join(ROOT, 'src', 'core', 'embed'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-onnx-'));
+  const fake = path.join(dir, 'fake-transformers.js'), models = path.join(dir, 'models');
+  fs.writeFileSync(fake, FAKE_TRANSFORMERS);
+  const stops = [];
+  try {
+    // il modulo che manca, i pacchetti che mancano, il modello che manca: «non installato», con il comando
+    const a = onnxLoader.create({}, { onnxModule: path.join(dir, 'non-esiste') });
+    const b = onnxLoader.create({}, { modelsDir: models, transformers: path.join(dir, 'non-esiste.js') });
+    const c = onnxLoader.create({}, { modelsDir: models, transformers: fake });
+    const ra = await a.ready(), rb = await b.ready(), rc = await c.ready();
+    ok(!ra && !rb && !rc && [a, b, c].every(p => p.state === 'not-installed' && p.hint === 'npm run embed:onnx:install') && /missing/.test(a.detail) && /packages/.test(b.detail) && /model not downloaded/.test(c.detail), 'embedding E4: modulo, pacchetti o modello mancanti → «non installato», con «npm run embed:onnx:install»');
+    // con il modello "scaricato" (il segno lasciato dall'installazione): gira in un worker_thread
+    fs.mkdirSync(path.dirname(mod.markerOf(models)), { recursive: true });
+    fs.writeFileSync(mod.markerOf(models), '{}');
+    const p = onnxLoader.create({}, { modelsDir: models, transformers: fake });
+    stops.push(p);
+    const r = await p.ready();
+    const [q, d] = [await p.embed(['rifai il login'], 'query'), await p.embed(['correggi l\'autenticazione'], 'document')];
+    const same = (x, y) => x.length === y.length && x.every((v, i) => Math.abs(v - y[i]) < 1e-6);
+    ok(r && p.state === 'ready' && p.id === 'onnx:Xenova/multilingual-e5-small' && p.dim === 12 && p.worker && p.worker.threadId > 0 && same(q[0], wordVec('query: rifai il login', 12)) && same(d[0], wordVec('passage: correggi l\'autenticazione', 12)), `embedding E4: modulo finto → ${p.id}, ${p.dim} dimensioni, in un worker_thread (n. ${p.worker && p.worker.threadId}), prefissi e5 query:/passage:`);
+    let err = ''; try { await p.embed(['BOOM'], 'document'); } catch (e) { err = e.message; }
+    const after = await p.embed(['ancora'], 'document');
+    ok(/fake failure/.test(err) && after.length === 1, 'embedding E4: un errore del modello arriva come errore, e il worker resta in piedi');
+    // nella catena: Ollama spento, ONNX installato → ONNX
+    const emb = new embed.Embedder({ settings: { embedEngine: 'auto' }, factories: { ollama: () => fakeProvider('ollama', { up: false }), onnx: (s, deps) => onnxLoader.create(s, deps) }, deps: { modelsDir: models, transformers: fake } });
+    stops.push(emb);
+    emb.space(1); await settle(emb, 10000);
+    const st = emb.status();
+    ok(st.active === 'onnx:Xenova/multilingual-e5-small' && st.sources.onnx.state === 'ready' && st.sources.ollama.state === 'not-found', 'embedding E4: in automatico, con Ollama spento, la catena prende l\'ONNX installato');
+    // nel motore vero di questa cartella, senza installazione: non installato
+    if (!mod.installed()) {
+      const real = onnxLoader.create({}, { modelsDir: models });
+      ok(!(await real.ready()) && real.state === 'not-installed', 'embedding E4: qui il provider ONNX non è installato, e lo dice');
+    }
+    // l'installazione chiede conferma, dice quanto pesa e, se la risposta è no, non scarica niente
+    const env = { ...process.env, PLATYPUS_DATA_DIR: path.join(dir, 'data') };
+    const before = fs.existsSync(path.join(ROOT, 'optional', 'embed-onnx', 'node_modules'));
+    const ins = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'embed-onnx-install.js')], { input: 'n\n', encoding: 'utf8', env, timeout: 20000 });
+    ok(ins.status === 1 && /118 MB/.test(ins.stdout) && /Annullato/.test(ins.stdout) && fs.existsSync(path.join(ROOT, 'optional', 'embed-onnx', 'node_modules')) === before && !fs.existsSync(path.join(dir, 'data', 'models')), 'embedding E4: «npm run embed:onnx:install» chiede conferma con le dimensioni; con «no» non scarica niente');
+  } finally {
+    for (const x of stops) x.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function run(ok) {
   console.log('significato (embedding)');
   pinnedTests(ok);
   anyLengthTests(ok);
   await providerTests(ok);
   await ollamaTests(ok);
+  await onnxTests(ok);
 }
 
 module.exports = { run, demoScenario, fakeOllama, wordVec };

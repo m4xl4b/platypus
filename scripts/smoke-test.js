@@ -55,7 +55,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   console.log(`Platypus smoke test · ${process.platform} ${process.arch} · Node ${process.versions.node}`);
 
   console.log('sintassi');
-  for (const f of walk(path.join(ROOT, 'src')).concat(walk(path.join(ROOT, 'renderer')), walk(path.join(ROOT, 'scripts')))) {
+  for (const f of walk(path.join(ROOT, 'src')).concat(walk(path.join(ROOT, 'renderer')), walk(path.join(ROOT, 'scripts')), walk(path.join(ROOT, 'optional')))) {
     const r = spawnSync(process.execPath, ['--check', f], { encoding: 'utf8' });
     if (r.status !== 0) ok(false, path.relative(ROOT, f) + '\n' + r.stderr);
   }

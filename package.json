@@ -22,6 +22,7 @@
     "hooks:status": "node src/hooks-cli.js status",
     "test": "node scripts/smoke-test.js",
     "i18n:check": "node scripts/i18n-check.js",
+    "embed:onnx:install": "node scripts/embed-onnx-install.js",
     "dist:win": "npm run dist:tools && electron-builder --win zip --x64",
     "dist:mac": "npm run dist:tools && electron-builder --mac zip",
     "dist:linux": "npm run dist:tools && electron-builder --linux AppImage",

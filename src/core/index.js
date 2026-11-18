@@ -211,7 +211,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const FEEDBACK_MS = 300;
   const feedbackStats = { calls: 0, said: 0, shadow: 0, late: 0, errors: 0 };
   const feedbackLog = new FeedbackLog(path.join(path.dirname(settingsPath), 'feedback')); // accanto alle opzioni: ~/.platypus/feedback
-  const embedder = new Embedder({ settings: state.settings, dir: path.join(path.dirname(settingsPath), 'embed-cache') }); // significato neurale (embed/)
+  const embedder = new Embedder({ settings: state.settings, dir: path.join(path.dirname(settingsPath), 'embed-cache'), deps: { modelsDir: path.join(path.dirname(settingsPath), 'models') } }); // significato neurale (embed/)
   const feedbackGate = new feedback.Gate(); // i limiti di frequenza, in memoria: ripartono con Platypus
   // la demo (C3): agenti finti, quindi ogni funzione nel modo più alto che ha nella 2.11, qualunque cosa dicano le
   // opzioni; un registro tutto suo, in memoria, che si svuota quando la demo finisce

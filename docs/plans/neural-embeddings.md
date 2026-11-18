@@ -91,7 +91,7 @@ Everything in `docs/plans/parallel.md` still applies. In addition:
   - a timeout;
   - a non-loopback host refused.
 
-## E4 · Optional ONNX provider  [ ]
+## E4 · Optional ONNX provider  [x]
 
 - **`optional/embed-onnx/`:**
   - `package.json` with `@huggingface/transformers`;
@@ -227,3 +227,22 @@ Today's thresholds are valid for TF-IDF, not for neural vectors, which have much
 - `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing.
 
 **Doubt for Max.** With `auto` as the default, a Platypus on a computer where Ollama is running with an embedding model will start sending snippets of the agents' text to that local Ollama on its own. It stays on the computer, as the plan requires, but it also loads the model into memory. If you prefer, the default can be `tfidf` and the neural engine opt-in; I kept `auto` because the plan describes it as the chain's default.
+
+### 2026-11-18 · E4 · Optional ONNX provider
+
+**Done.**
+- `optional/embed-onnx/`: `package.json` (dependency `@huggingface/transformers` `~3.7.0`), `index.js` with the provider contract (`create`, plus `download`, `installed`, `hasModel` for the install script), `worker.js` where the model runs in a `worker_thread`. During use remote models are switched off (`env.allowRemoteModels = false`): nothing goes on the network. The first request loads the model (60 s allowance), then the usual 5 s per batch.
+- `src/core/embed/onnx.js`: loads `optional/embed-onnx` with `require` inside `try`. Missing module, missing npm packages or missing model → state `not-installed` with the hint `npm run embed:onnx:install`, and the chain moves on. The engine passes `modelsDir` = `<data folder>/models`.
+- `scripts/embed-onnx-install.js` and the npm script `embed:onnx:install` (one line in `package.json`): says what it downloads and how big (npm packages, about 200 MB; the model, about 118 MB, into `<data folder>/models`; from registry.npmjs.org and huggingface.co), asks `[s/y/N]`, and only on yes runs `npm ci` (or `npm install` while there is no lockfile) in the folder, then downloads the model and writes the marker `.platypus-ok` next to it. The marker is how the provider knows the model is complete, without relying on transformers.js's cache layout. Messages are bilingual, like `scripts/launch.js`.
+- `scripts/smoke-test.js` also checks the syntax of `optional/`.
+
+**Model choice (decision).** `Xenova/multilingual-e5-small`, quantized `q8`:
+- size: about 118 MB (fp32 is about 470 MB); 384 dimensions, so cheap vectors in memory and on disk (1.5 KB each);
+- quality on Italian: trained on about 100 languages including Italian, and it is a retrieval model (query vs passage), which matches "task vs actions" better than a paraphrase model; `paraphrase-multilingual-MiniLM-L12-v2` (Apache-2.0, similar size) was the alternative, trained for sentence similarity rather than retrieval;
+- licence: MIT;
+- prefixes `query: ` (goals) and `passage: ` (pieces), added by the provider.
+This is on paper: E5 measures it only if the real model is installed.
+
+**Checks.** Automatic tests never download anything: a fake `transformers.js` written to a temporary folder (deterministic 12-dimension vectors; it refuses to run if remote models are not off) goes through the real `optional/embed-onnx` and its worker. Covered: module / packages / model missing → `not-installed` with the command; with the marker the provider is ready, runs in a worker thread, adds the e5 prefixes; a model error comes back as an error and the worker stays up; in `auto` with Ollama off the chain takes ONNX; in this worktree, without installation, the real provider says `not-installed`; the install script answered "n" exits with code 1, shows the 118 MB, and creates neither `node_modules` nor the models folder. `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing.
+
+**Not done, needs Max's permission.** The real test: `npm run embed:onnx:install` (about 320 MB of downloads), then one run with the real model. Also, there is no `package-lock.json` in `optional/embed-onnx/` yet: generating it needs the npm registry, so the first install uses `npm install` with the `~3.7.0` range. The packaged Electron app does not include `optional/`, so there ONNX shows as "not installed" (Ollama still works).
