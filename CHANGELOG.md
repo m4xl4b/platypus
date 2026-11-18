@@ -4,6 +4,20 @@ Platypus releases (up to 2.7 it was called Agent Office), newest first.
 
 *Versione italiana: [CHANGELOG.it.md](CHANGELOG.it.md).*
 
+## Next version: meaning with neural embeddings
+
+The context bubble and the north star in the map of reality used to compare words: "fix the login" and "repair the authentication" looked like two different tasks. Now, if a local Ollama with an embedding model is running, they compare meanings, and the drift judgement no longer mistakes synonyms for a detour.
+
+- **Automatic, and local only**: Platypus uses a local Ollama when it answers (only at `127.0.0.1`, `::1` or `localhost`; other hosts are refused), otherwise it stays lexical as before. It never downloads models: if one is missing, the options show the command (`ollama pull qwen3-embedding:0.6b`).
+- **Measured, not assumed**: each model was measured on a set of 30 tasks in Italian and English (`scripts/embed-eval.js`, results in `docs/plans/embedding-calibration.md`). Six Ollama models beat the lexical engine (on synonyms the separation goes from close to chance to near perfect) and have their own drift thresholds; `qwen3-embedding:0.6b` is the best and is picked first. Automatic mode uses only measured models; any other source chosen by hand shows its picture, but says "not measurable" instead of guessing at drift.
+- **Options → Meaning engine**: automatic, lexical only, Ollama or ONNX; the state of each source, the model in use, the cache and a button to clear it.
+- **The bubble says where its meaning comes from** ("meaning: Ollama · qwen3-embedding:0.6b" or "lexical (TF-IDF): compares words, not concepts"); while the vectors arrive the lexical picture is shown at once, with "refining…".
+- **Never in the way**: one queue, batches of 16 texts, 5 s per request (up to 60 s the first time a model is loaded); a source that keeps failing is set aside for 5 minutes.
+- **Privacy**: snippets of the agents' text go only to the local model and are never written to disk; the cache in `~/.platypus/embed-cache/` (at most 50 MB per model) holds only vectors and hashes.
+- **Optional ONNX model**: `npm run embed:onnx:install` installs a small multilingual model that runs without Ollama (about 320 MB, it asks first; the only download of this feature). It is weaker than the Ollama models at spotting drift, so automatic mode does not use it: choose ONNX in the options.
+- **Demo**: a new "synonyms" scene, where an agent asked to fix the login works on authentication with other words: drifting for the lexical engine, on course for a meaning engine.
+- **One drift rule**: the engine, the "back to the task" feedback and the map now use the same rule and the same thresholds, so they never disagree.
+
 ## 2.11: feedback to the agents
 
 Until now Platypus only watched. From 2.11 it can also tell an agent what it sees, at the moment it matters: a lesson from the project's Workshop book, a loop on a command that keeps failing. It is all off until you turn it on, one feature at a time, and the less tested features only record what they would have said.

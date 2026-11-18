@@ -74,7 +74,7 @@ Gli **hook di feedback**, quelli con cui Platypus parla agli agenti, sono a part
 
 ## Privacy
 
-Tutto avviene **sul tuo computer, in sola lettura**: niente cloud, niente chiavi API. Il server dell'ufficio ascolta solo su `127.0.0.1:47800` e rifiuta richieste da altri host o da siti web. L'unica connessione esterna, facoltativa, è il meteo (Open-Meteo, solo il nome della città scelto nelle opzioni; si spegne lasciando vuota la città).
+Tutto avviene **sul tuo computer, in sola lettura**: niente cloud, niente chiavi API. Il server dell'ufficio ascolta solo su `127.0.0.1:47800` e rifiuta richieste da altri host o da siti web. L'unica connessione esterna, facoltativa, è il meteo (Open-Meteo, solo il nome della città scelto nelle opzioni; si spegne lasciando vuota la città). Il significato neurale (Opzioni → Motore del significato, automatico di base) usa solo un modello sul tuo computer: un Ollama locale se è acceso, oppure un modello ONNX che `npm run embed:onnx:install` scarica una volta, dopo aver chiesto.
 
 ## Comandi principali
 

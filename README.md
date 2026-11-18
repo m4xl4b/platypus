@@ -74,7 +74,7 @@ The **feedback hooks**, the ones that let Platypus talk to the agents, are separ
 
 ## Privacy
 
-Everything happens **on your computer, read-only**: no cloud, no API keys. The office server only listens on `127.0.0.1:47800` and rejects requests from other hosts or from websites. The only outside connection, optional, is the weather (Open-Meteo, only the city name chosen in the options; turn it off by leaving the city empty).
+Everything happens **on your computer, read-only**: no cloud, no API keys. The office server only listens on `127.0.0.1:47800` and rejects requests from other hosts or from websites. The only outside connection, optional, is the weather (Open-Meteo, only the city name chosen in the options; turn it off by leaving the city empty). The neural meaning (Options → Meaning engine, automatic by default) uses only a model on your computer: a local Ollama if one is running, or an ONNX model that `npm run embed:onnx:install` downloads once, after asking.
 
 ## Main controls
 

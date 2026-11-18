@@ -4,6 +4,20 @@ Le versioni di Platypus (fino alla 2.7 si chiamava Agent Office), dalla più rec
 
 *English version: [CHANGELOG.md](CHANGELOG.md).*
 
+## Prossima versione: significato con gli embedding neurali
+
+La bolla del contesto e la stella polare nella mappa della realtà confrontavano le parole: "aggiusta il login" e "correggi l'autenticazione" sembravano due compiti diversi. Ora, se c'è un Ollama locale acceso con un modello di embedding, confrontano i significati, e il giudizio sulla deriva non scambia più i sinonimi per una deviazione.
+
+- **Automatico, e solo in locale**: Platypus usa un Ollama locale quando risponde (solo su `127.0.0.1`, `::1` o `localhost`; gli altri host vengono rifiutati), altrimenti resta lessicale come prima. Non scarica mai modelli: se ne manca uno, le opzioni mostrano il comando (`ollama pull qwen3-embedding:0.6b`).
+- **Misurato, non dato per scontato**: ogni modello è stato misurato su un insieme di 30 compiti in italiano e in inglese (`scripts/embed-eval.js`, risultati in `docs/plans/embedding-calibration.md`). Sei modelli di Ollama battono il motore lessicale (sui sinonimi si passa da poco più del caso a quasi perfetto) e hanno le loro soglie per la deriva; `qwen3-embedding:0.6b` è il migliore e si sceglie per primo. In automatico si usano solo modelli misurati; un'altra fonte scelta a mano mostra la sua immagine, ma per la deriva dice "non misurabile" invece di tirare a indovinare.
+- **Opzioni → Motore del significato**: automatico, solo lessicale, Ollama o ONNX; lo stato di ogni fonte, il modello in uso, la cache e un pulsante per svuotarla.
+- **La bolla dice da dove viene il significato** ("significato: Ollama · qwen3-embedding:0.6b" oppure "lessicale (TF-IDF): confronta parole, non concetti"); mentre arrivano i vettori si vede subito l'immagine lessicale, con "affino…".
+- **Mai d'intralcio**: una coda sola, lotti di 16 testi, 5 s a richiesta (fino a 60 s la prima volta che si carica un modello); una fonte che continua a fallire si mette da parte per 5 minuti.
+- **Privacy**: gli estratti del testo degli agenti vanno solo al modello locale e non finiscono mai su disco; la cache in `~/.platypus/embed-cache/` (al massimo 50 MB per modello) tiene solo vettori e hash.
+- **Modello ONNX facoltativo**: `npm run embed:onnx:install` installa un piccolo modello multilingue che gira senza Ollama (circa 320 MB, chiede prima conferma; è l'unico scaricamento di questa funzione). Riconosce la deriva peggio dei modelli di Ollama, per questo in automatico non si usa: va scelto ONNX nelle opzioni.
+- **Demo**: una nuova scena "sinonimi", con un agente che deve sistemare il login e lavora sull'autenticazione con altre parole: alla deriva per il motore lessicale, sulla rotta per un motore del significato.
+- **Una regola della deriva sola**: il motore, il feedback "ritorno al compito" e la mappa usano la stessa regola e le stesse soglie, così non sono mai in disaccordo.
+
 ## 2.11: feedback agli agenti
 
 Finora Platypus guardava e basta. Dalla 2.11 può anche dire a un agente quello che vede, nel momento in cui serve: una lezione del Libro della bottega del progetto, un giro in tondo su un comando che continua a fallire. È tutto spento finché non lo accendi, una funzione alla volta, e le funzioni meno provate registrano soltanto che cosa avrebbero detto.

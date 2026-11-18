@@ -149,6 +149,15 @@ npm run hooks:uninstall -- --feedback
 
 Ogni messaggio, mandato o in ombra, finisce in un registro: `~/.platypus/feedback/<chiave>.jsonl`, un file per cartella di progetto (la stessa chiave del Libro della bottega), con che cosa è stato detto, a quale agente e che cosa ha fatto l'agente dopo. Oltre i 5 MB il file diventa `<chiave>.1.jsonl` e se ne comincia uno nuovo, quindi al massimo due file per progetto. Niente esce dal computer. Per cancellarlo chiudi Platypus e cancella il file, oppure l'intera cartella `~/.platypus/feedback`. La scheda FEEDBACK del Libro mostra lo stesso registro.
 
+## Significato più preciso (facoltativo)
+
+La bolla del contesto e la stella polare nella mappa della realtà misurano di che cosa parla un agente. Confrontando le parole (lessicale, TF-IDF), "aggiusta il login" e "correggi l'autenticazione" sembrano lontane; un modello neurale capisce anche i sinonimi. Platypus ne usa uno da solo se c'è un Ollama locale acceso con un modello di embedding, altrimenti resta lessicale. **Opzioni → Motore del significato** mostra che cosa è in uso e permette di scegliere ("solo lessicale" lo spegne); tutto resta sul tuo computer.
+
+- **Ollama** (se lo usi già): avvia Ollama e scarica un modello di embedding, per esempio `ollama pull qwen3-embedding:0.6b` (circa 0,6 GB, multilingue, il migliore misurato su italiano e inglese). Platypus gli parla solo su `http://127.0.0.1:11434` (o un altro indirizzo di questo computer: gli altri host vengono rifiutati) e non scarica mai modelli da solo; se manca un modello le opzioni mostrano il comando.
+- **Modello ONNX** (senza Ollama): `npm run embed:onnx:install` installa i pacchetti npm di `optional/embed-onnx` (circa 200 MB) e scarica `Xenova/multilingual-e5-small` (circa 118 MB) in `~/.platypus/models/`. Dice quanto pesa e chiede conferma prima di scaricare. Questo scaricamento, da registry.npmjs.org e huggingface.co, è l'unica chiamata di rete della funzione; poi il modello gira in locale, in un thread a parte. Sull'italiano è più debole dei modelli di Ollama e non batte il lessicale nel riconoscere la deriva, per questo in automatico non si usa: va scelto ONNX nelle opzioni.
+- **Cosa resta in locale:** gli estratti del testo degli agenti vanno solo al modello locale e non finiscono mai su disco; la cache (`~/.platypus/embed-cache/`, al massimo 50 MB per modello, si svuota dalle opzioni) tiene solo vettori e hash.
+- Un modello neurale giudica la deriva solo dopo essere stato calibrato (`node scripts/embed-eval.js --source ollama --model <nome>`); sei modelli di Ollama lo sono già (qwen3-embedding 0.6b e 4b, embeddinggemma-2, snowflake-arctic-embed2, nomic-embed-text-v2-moe, bge-m3). Per gli altri la stella polare dice "non misurabile" invece di tirare a indovinare.
+
 ## Modalità browser
 
 ```sh
