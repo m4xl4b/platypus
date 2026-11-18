@@ -16,6 +16,7 @@ Platypus is split into three independent layers. That is what lets it run the sa
 │                       dependencies)                        │  state, serves page and API over HTTP
 └────────────────────────────────────────────────────────────┘
         ▲ transcripts and registry (~/.claude)    ▲ hooks (curl → 127.0.0.1:47800)
+                                                  ▲▼ feedback hooks (http → /platypus-hook/feedback, optional)
 ```
 
 ## Engine (`src/core`)
@@ -27,7 +28,7 @@ Node.js modules only, no npm packages: that's why browser mode starts without `n
 | `index.js` | startup, HTTP server on 127.0.0.1 only, SSE, API, pending permissions |
 | `sources.js` | reading the transcripts (`projects/**/*.jsonl`, including Workflow agents in `<session>/subagents/workflows/<runId>/` with their `journal.jsonl`, and run summaries in `<session>/workflows/<runId>.json`) and the session registry, finding Cowork folders |
 | `state.js` | state of sessions, agents and subagents, costs, alerts, whiteboards, releases, Workflow runs (phases, per-agent cost and times) and messages between agents |
-| `hooks.js` | installing and removing the hooks in `settings.json` |
+| `hooks.js` | installing and removing the hooks in `settings.json`; the feedback hooks apart, with their own marker |
 | `archive.js` | archive and replay with a virtual clock |
 | `osint.js` | system integration: bring window to front, resume session, open folder (Windows / macOS / Linux) |
 | `stats.js` | daily and weekly statistics, report |
@@ -37,6 +38,10 @@ Node.js modules only, no npm packages: that's why browser mode starts without `n
 | `surprise.js` | failure classifier (Jest, pytest, go, cargo, npm, tsc, Node, Python, PowerShell…), error excerpts and the files they cite, surprise score, reactions (corrects/insists/stops) and causal chains |
 | `bottega.js` | Workshop book: lessons per project deduced from the facts above, weight with a 30-day half-life, live learning and learning from the archive, Grandpa's hints, the section for `CLAUDE.md` |
 | `claudemd.js` | safe writer for the section in a project's `CLAUDE.md`: between markers, backup first, the rest byte for byte, atomic write |
+| `feedback.js` | feedback to the agents: from a hook's input to the answer for Claude Code, as pure functions; the three modes of each feature, the rate limits (`Gate`), the muted projects |
+| `feedback-rules.js` | what Platypus says: one rule per feature (lessons at session start, Grandpa, loop, edit over another agent's change, claims without evidence, back to the task), each text built in English for the agent and in the office language for the log |
+| `outcomes.js` | what an agent did after a message: likely helped, ignored or can't tell, from its next steps |
+| `feedbacklog.js` | the log of the messages, one append-only file per project; the demo uses an in-memory version with the same interface |
 | `weather.js`, `releases.js`, `describe.js`, `demo.js`, `demoworld.js` | weather, git/gh releases, tool descriptions, demo |
 | `../i18n` | translations (key = Italian text, `locales/<language>/*.json`) |
 
@@ -62,8 +67,22 @@ Everything that depends on the operating system lives in three places: `osint.js
 | `GET /api/bottega`, `/api/bottega/list`, `/api/bottega/hints` | a project's book (`sid`, `cwd` or `key`), the projects with a book, what Grandpa would say now |
 | `POST /api/bottega`, `/api/bottega/learn` | pin/ignore/unignore/forget a lesson; learn from the project's archive in the background |
 | `GET`/`POST /api/bottega/claudemd` | preview of the `CLAUDE.md` section; write it (only with `confirm: true`) |
+| `POST /platypus-hook/feedback` | synchronous feedback hook: the answer for Claude Code, or an empty `204` |
+| `GET`/`POST /api/feedback/hooks` | whether the feedback hooks are installed and the exact lines; install or remove them (only with `confirm: true`) |
+| `GET /api/feedback/log`, `/api/feedback/counts` | a project's messages to agents with their outcomes (`sid`, `cwd` or `key`); how many per feature in the last 7 days |
 
 The server rejects requests whose `Host` or `Origin` is not `127.0.0.1`/`localhost` (protection against DNS rebinding and websites).
+
+### Feedback to the agents
+
+`POST /platypus-hook/feedback` answers within 300 ms, using only what is already in memory (the state, the books, the log). A later answer, or any error, becomes an empty `204` and Claude Code goes on as if Platypus were not there. The answers use only these hook formats:
+
+| Event | Answer |
+|---|---|
+| `SessionStart`, `PostToolUse`, `PostToolUseFailure` | `{"hookSpecificOutput": {"hookEventName": …, "additionalContext": "Platypus: …"}}` |
+| `Stop`, `SubagentStop` | `{"decision": "block", "reason": "Platypus: …"}`, never while `stop_hook_active` is true; in 2.11 the only feature that would use it (claims) stops at shadow, so it is never sent |
+
+Never `permissionDecision`, `updatedInput` or `updatedToolOutput`: Platypus adds context, it does not decide for you. Each feature is `off`, `shadow` or `on` (`fbSessionLessons`, `fbElder`, `fbLoop`, `fbStale`, `fbClaims`, `fbDrift` in the options; the last three are `shadow` at most in 2.11). Limits: one message per agent every 2 minutes, 6 per session per hour, the same lesson once per agent; shadow messages count like sent ones. The demo calls the same function without the network, with its own modes and an in-memory log.
 
 ## Interface (`renderer/`)
 
@@ -112,5 +131,6 @@ The benefit would be much smaller binaries (about 10 MB instead of 150) and less
 | `~/.platypus/settings.json` | office options |
 | `~/.platypus/stats.json` | daily and weekly statistics |
 | `~/.platypus/bottega/<key>.json` | the Workshop book of each project (one file per project folder) |
+| `~/.platypus/feedback/<key>.jsonl` | the messages to the agents of each project, sent and in shadow, with their outcomes (rotated at 5 MB into `<key>.1.jsonl`) |
 | `~/.platypus/launch.log` | messages from the last window launch |
 | Electron data folder (`Platypus`) | window position and shell preferences |

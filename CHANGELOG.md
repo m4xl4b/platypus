@@ -4,6 +4,23 @@ Platypus releases (up to 2.7 it was called Agent Office), newest first.
 
 *Versione italiana: [CHANGELOG.it.md](CHANGELOG.it.md).*
 
+## 2.11: feedback to the agents
+
+Until now Platypus only watched. From 2.11 it can also tell an agent what it sees, at the moment it matters: a lesson from the project's Workshop book, a loop on a command that keeps failing. It is all off until you turn it on, one feature at a time, and the less tested features only record what they would have said.
+
+- **New hooks, installed apart**: OPT → *Feedback to the agents* → INSTALL THE FEEDBACK HOOKS… shows the exact lines before writing them to Claude Code's `settings.json`; or `npm run hooks:install -- --feedback`. They are separate from the observing hooks, and by themselves they say nothing. If Platypus is closed or slow, Claude Code goes on as usual.
+- **Three modes for each feature**: *off* (the default), *shadow* (records what it would have said, without saying it) and *on*. Messages are rare (one every 2 minutes per agent, 6 an hour per session, never the same lesson twice to the same agent), short, signed "Platypus" and in English, since the model reads them. Subagents get them too. In a project's Book you can tick *Don't talk to this project's agents*.
+- **What Platypus can say**:
+  - **lessons at session start**: the project's strongest lessons, when a session starts, resumes or is compacted (not if the project's `CLAUDE.md` already has the Book's section);
+  - **Grandpa talks to the agent**: right after a known trap (a flaky command that failed, an error already fixed elsewhere, a file that doesn't exist, a fragile file just edited, a slow command) the agent gets Grandpa's lesson, and his balloon says "✓ CLAUDE was told too";
+  - **out of the loop**: when the same command fails a second time with the same error and nothing was edited in between, "change something before running it again, or stop and say what is blocking you";
+  - **shadow only in this version**: an edit over a file another agent changed since this one read it; "the tests pass" or "I verified" at the end of a turn with no test or check run after the last edit; a reminder of the task when the north star says the agent has drifted.
+- **Seeing it**: the agent's balloon shows "Platypus said: …" (or "would have said", for shadow); the Book has a new **FEEDBACK** tab with every message, sent or in shadow, in the office's language with the English text under it; the options show how many messages each feature sent in the last 7 days.
+- **What happened next**: each message gets an outcome from the agent's next steps (likely helped, ignored, can't tell), and the FEEDBACK tab puts sent and shadow messages side by side, so you can see whether a feature helps before turning it on.
+- **The demo** plays one scene per feature: within about 90 seconds every balloon has shown up and the FEEDBACK tab is full.
+- **Not yet verified on real Claude Code sessions**: everything is built on documented hook events and tested with simulated hooks. The steps for a check on a real session are in `docs/plans/2.11-real-check.md`.
+- The log of the messages lives in `~/.platypus/feedback`, one file per project; see [docs/INSTALL.md](docs/INSTALL.md#feedback-to-the-agents) for how to delete it.
+
 ## 2.10: workflows and teams, zoomable maps, a security pass
 
 Platypus now shows Claude Code Workflows and agent teams, lets you zoom into the charts of the map of reality, fills the whiteboards in real use, and has had a security pass over the whole app.

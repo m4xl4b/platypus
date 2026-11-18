@@ -132,6 +132,23 @@ Gli hook sono comandi `curl` verso `127.0.0.1:47800`, aggiunti a `~/.claude/sett
 
 Se usi `CLAUDE_CONFIG_DIR`, avvia l'ufficio con la stessa variabile. Se cambi porta con `PLATYPUS_PORT`, reinstalla gli hook.
 
+### Feedback agli agenti
+
+Sono altri hook, che si installano e si tolgono per conto loro: permettono a Platypus di aggiungere un breve messaggio a quello che un agente legge dopo uno strumento, a inizio sessione o a fine turno.
+
+```sh
+npm run hooks:install -- --feedback      # oppure: OPZ → Feedback agli agenti → INSTALLA GLI HOOK DI FEEDBACK…
+npm run hooks:status -- --feedback
+npm run hooks:uninstall -- --feedback
+```
+
+- Sono hook `http` verso `http://127.0.0.1:47800/platypus-hook/feedback` su `SessionStart`, `PostToolUse`, `PostToolUseFailure`, `Stop` e `SubagentStop`, con un tempo massimo di 3 secondi. Se il tuo Claude Code è troppo vecchio per gli hook `http`, aggiungi `--curl` per installarli come comandi `curl`.
+- Installarli da solo non cambia niente: in OPZ → *Feedback agli agenti* ogni funzione parte *spenta*. *Ombra* registra che cosa Platypus avrebbe detto, senza dirlo; *accesa* lo dice. In questa versione tre funzioni si fermano all'ombra.
+- Se Platypus è chiuso, o ci mette più di 300 ms a rispondere, Claude Code prosegue come sempre. Platypus non risponde mai al posto tuo a un permesso e non cambia mai l'input o l'output di uno strumento.
+- Per lasciare fuori un progetto: nel suo Libro spunta *Non parlare agli agenti di questo progetto*.
+
+Ogni messaggio, mandato o in ombra, finisce in un registro: `~/.platypus/feedback/<chiave>.jsonl`, un file per cartella di progetto (la stessa chiave del Libro della bottega), con che cosa è stato detto, a quale agente e che cosa ha fatto l'agente dopo. Oltre i 5 MB il file diventa `<chiave>.1.jsonl` e se ne comincia uno nuovo, quindi al massimo due file per progetto. Niente esce dal computer. Per cancellarlo chiudi Platypus e cancella il file, oppure l'intera cartella `~/.platypus/feedback`. La scheda FEEDBACK del Libro mostra lo stesso registro.
+
 ## Modalità browser
 
 ```sh
@@ -146,11 +163,11 @@ Usa solo Node.js, senza Electron e senza `npm install`: è il modo più leggero,
 **Aggiornare**: `git pull` nella cartella del repository, poi rilancia. Le dipendenze si riallineano da sole.
 
 **Disinstallare**:
-1. `npm run hooks:uninstall`;
+1. `npm run hooks:uninstall`, e `npm run hooks:uninstall -- --feedback` se hai installato gli hook di feedback;
 2. togli la spunta *Avvia all'accesso al computer* dal menu dell'icona;
 3. cancella la cartella del repository;
 4. se vuoi, cancella anche:
-   - impostazioni, statistiche e Libro della bottega: `~/.platypus`;
+   - impostazioni, statistiche, Libro della bottega e registro dei messaggi agli agenti: `~/.platypus`;
    - preferenze della finestra: `%APPDATA%\Platypus`, `~/Library/Application Support/Platypus` oppure `~/.config/Platypus`;
    - i collegamenti creati con `npm run shortcut`.
 
