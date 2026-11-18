@@ -92,8 +92,9 @@ const DEFAULT_SETTINGS = {
   claudeDirs: '',       // altre cartelle di configurazione di Claude Code (es. dentro WSL), separate da ;
   lang: 'auto',         // lingua: auto (quella del sistema), it, en
   // significato con gli embedding (vedi embed/): auto | ollama | onnx | tfidf; Ollama solo su loopback.
-  // Di base lessicale: una fonte neurale diventa la scelta di base solo quando batte il TF-IDF (scripts/embed-eval.js)
-  embedEngine: 'tfidf',
+  // Di base automatico (deciso da Max il 2026-11-18, dopo che sei modelli di Ollama hanno battuto il TF-IDF con
+  // scripts/embed-eval.js): un Ollama locale se risponde, poi l'ONNX se installato, altrimenti il lessicale
+  embedEngine: 'auto',
   embedModel: '',       // vuoto = il primo modello di embedding presente, preferendo i multilingue
   ollamaUrl: 'http://127.0.0.1:11434',
 };

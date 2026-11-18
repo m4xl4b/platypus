@@ -4,7 +4,7 @@
 (function () {
   'use strict';
   const esc = s => String(s ?? '').replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
-  const ENGINES = () => [['tfidf', tr('Solo lessicale (TF-IDF)')], ['auto', tr('Automatico: Ollama, poi ONNX, poi lessicale')], ['ollama', tr('Ollama (su questo computer)')], ['onnx', tr('Modello ONNX facoltativo')]];
+  const ENGINES = () => [['auto', tr('Automatico: Ollama, poi ONNX, poi lessicale')], ['tfidf', tr('Solo lessicale (TF-IDF)')], ['ollama', tr('Ollama (su questo computer)')], ['onnx', tr('Modello ONNX facoltativo')]];
   const STATES = () => ({ ready: tr('pronto'), 'not-found': tr('non trovato'), 'not-installed': tr('non installato'), error: tr('errore'), unknown: tr('non ancora controllato') });
   const NAMES = () => ({ tfidf: tr('Lessicale (TF-IDF)'), ollama: 'Ollama', onnx: 'ONNX' });
   const mb = n => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB');
@@ -19,7 +19,7 @@
   }
 
   function html(st) {
-    const cur = st.embedEngine || 'tfidf';
+    const cur = st.embedEngine || 'auto';
     return `<fieldset class="embedopts"><legend>${esc(tr('MOTORE DEL SIGNIFICATO'))}</legend>` +
       `<p>${esc(tr('Come la bolla e la stella polare misurano di che cosa parla un agente. Il lessicale confronta le parole; un modello neurale capisce anche i sinonimi («login» e «autenticazione»). I testi restano sul computer.'))}</p>` +
       `<label><span>${esc(tr('Fonte dei vettori'))}</span><select name="embedEngine">` +

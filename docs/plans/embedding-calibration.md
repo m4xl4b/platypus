@@ -61,4 +61,4 @@ The script measures the background and `widen`, uses them as the engine would, a
 Still true:
 
 - a neural source without a row in the table (the ONNX model, `nomic-embed-text:v1.5`, any other model) is "not calibrated": the bubble and the north star show its geometry, but the drift rule says "not measurable" (engine, feedback and map alike) instead of guessing;
-- **the default engine is still `tfidf`** (`embedEngine` in `DEFAULT_SETTINGS`). The measured models do beat it, so by the plan the default could become `auto`; that is left to Max, because with `auto` a Platypus on a computer where Ollama runs starts sending snippets of the agents' text to that local Ollama and keeps a model loaded.
+- **the default engine is `auto`** (`embedEngine` in `DEFAULT_SETTINGS`), as the plan allows once a neural source beats TF-IDF, and decided by Max on 2026-11-18. On a computer where Ollama runs with an embedding model, Platypus uses it on its own (snippets of the agents' text go to that local Ollama, which keeps the model loaded for 10 minutes); without Ollama nothing changes, it stays lexical. `tfidf` in the options turns it off.

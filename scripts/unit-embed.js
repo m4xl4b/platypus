@@ -354,8 +354,9 @@ async function ollamaTests(ok) {
   ok(hosts.every(h => ollama.loopbackUrl(h) === null) && goodHosts.every(h => ollama.loopbackUrl(h)), 'embedding E3: accetta solo 127.0.0.1, ::1 e localhost');
   const far = ollama.create({ ollamaUrl: 'http://192.168.1.5:11434' });
   ok(!(await far.ready()) && far.state === 'error' && /loopback/.test(far.detail), 'embedding E3: un host che non è di loopback si rifiuta senza chiamarlo');
-  const { OfficeState } = require(path.join(ROOT, 'src', 'core', 'state'));
+  const { OfficeState, DEFAULT_SETTINGS } = require(path.join(ROOT, 'src', 'core', 'state'));
   const st = new OfficeState({ settings: {} });
+  ok(DEFAULT_SETTINGS.embedEngine === 'auto' && st.settings.embedEngine === 'auto' && DEFAULT_SETTINGS.ollamaUrl === 'http://127.0.0.1:11434', 'embedding: di base il significato è automatico (Ollama locale se risponde, altrimenti lessicale)');
   st.setSettings({ ollamaUrl: 'http://localhost:11500' });
   st.setSettings({ ollamaUrl: 'http://example.com:11434', embedEngine: 'boh', embedModel: 'bge-m3 ; rm -rf' });
   // per le opzioni: check() guarda solo /api/tags, senza caricare il modello

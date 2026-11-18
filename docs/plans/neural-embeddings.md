@@ -166,7 +166,7 @@ Today's thresholds are valid for TF-IDF, not for neural vectors, which have much
 Notes for the CHANGELOG entry (the version and the wording are decided at integration):
 
 **Added**
-- Optional neural meaning for the context bubble and the north star: **Options → Meaning engine** chooses lexical only (TF-IDF, the default), automatic, Ollama or ONNX, and shows the state of each source, the model in use, the command to get it, and the cache with a button to clear it.
+- Optional neural meaning for the context bubble and the north star: **Options → Meaning engine** chooses automatic (the default: a local Ollama if it answers, then ONNX, otherwise lexical), lexical only, Ollama or ONNX, and shows the state of each source, the model in use, the command to get it, and the cache with a button to clear it.
 - Ollama provider: a local Ollama only (`127.0.0.1`, `::1`, `localhost`; other hosts are refused), the first embedding model found (multilingual first) or the one chosen; Platypus never pulls models, it shows the command.
 - Optional ONNX provider in `optional/embed-onnx/` (`Xenova/multilingual-e5-small`, quantized, about 118 MB), running in a worker thread; `npm run embed:onnx:install` says how much it downloads and asks first. It is the only new network call, and it is explicit.
 - The bubble says where its vectors come from ("lexical (TF-IDF): compares words, not concepts" or "meaning: Ollama · <model>"), shows "refining…" while neural vectors arrive, and says when the source changes.
@@ -187,7 +187,7 @@ Notes for the CHANGELOG entry (the version and the wording are decided at integr
 - A model that is not loaded yet gets up to 60 s for its first request and is kept loaded for 10 minutes; then the 5 s limit applies.
 
 **Not verified yet**
-- The ONNX model has not been installed or measured (it needs `npm run embed:onnx:install`, about 320 MB). The default engine is still TF-IDF: switching it to `auto` is Max's decision.
+- The ONNX model has not been installed or measured (it needs `npm run embed:onnx:install`, about 320 MB).
 
 ## Journal
 
@@ -341,7 +341,7 @@ This is on paper: E5 measures it only if the real model is installed.
 
 > ## More precise meaning (optional)
 >
-> The context bubble and the north star in the map of reality measure what an agent is talking about. By default they compare words (lexical, TF-IDF): "fix the login" and "repair the authentication" look far apart. A neural model also understands synonyms. Choose it in **Options → Meaning engine**; everything stays on your computer.
+> The context bubble and the north star in the map of reality measure what an agent is talking about. Comparing words (lexical, TF-IDF), "fix the login" and "repair the authentication" look far apart; a neural model also understands synonyms. Platypus uses one on its own if a local Ollama with an embedding model is running, otherwise it stays lexical. **Options → Meaning engine** shows what is in use and lets you choose (lexical only turns it off); everything stays on your computer.
 >
 > - **Ollama** (if you already use it): start Ollama and download an embedding model, for example `ollama pull qwen3-embedding:0.6b` (about 0.6 GB, multilingual, the best one measured on Italian and English). Platypus talks to it only at `http://127.0.0.1:11434` (or another address of this computer: other hosts are refused) and never downloads models itself; the options show the command if a model is missing.
 > - **ONNX model** (without Ollama): `npm run embed:onnx:install` installs the npm packages of `optional/embed-onnx` (about 200 MB) and downloads `Xenova/multilingual-e5-small` (about 118 MB) into `~/.platypus/models/`. It tells you the sizes and asks before downloading. This download, from registry.npmjs.org and huggingface.co, is the only network call of this feature; after that the model runs locally in a background thread.
@@ -352,7 +352,7 @@ This is on paper: E5 measures it only if the real model is installed.
 
 > ## Significato più preciso (facoltativo)
 >
-> La bolla del contesto e la stella polare nella mappa della realtà misurano di che cosa parla un agente. Di base confrontano le parole (lessicale, TF-IDF): "aggiusta il login" e "correggi l'autenticazione" sembrano lontane. Un modello neurale capisce anche i sinonimi. Si sceglie in **Opzioni → Motore del significato**; tutto resta sul tuo computer.
+> La bolla del contesto e la stella polare nella mappa della realtà misurano di che cosa parla un agente. Confrontando le parole (lessicale, TF-IDF), "aggiusta il login" e "correggi l'autenticazione" sembrano lontane; un modello neurale capisce anche i sinonimi. Platypus ne usa uno da solo se c'è un Ollama locale acceso con un modello di embedding, altrimenti resta lessicale. **Opzioni → Motore del significato** mostra che cosa è in uso e permette di scegliere ("solo lessicale" lo spegne); tutto resta sul tuo computer.
 >
 > - **Ollama** (se lo usi già): avvia Ollama e scarica un modello di embedding, per esempio `ollama pull qwen3-embedding:0.6b` (circa 0,6 GB, multilingue, il migliore misurato su italiano e inglese). Platypus gli parla solo su `http://127.0.0.1:11434` (o un altro indirizzo di questo computer: gli altri host vengono rifiutati) e non scarica mai modelli da solo; se manca un modello le opzioni mostrano il comando.
 > - **Modello ONNX** (senza Ollama): `npm run embed:onnx:install` installa i pacchetti npm di `optional/embed-onnx` (circa 200 MB) e scarica `Xenova/multilingual-e5-small` (circa 118 MB) in `~/.platypus/models/`. Dice quanto pesa e chiede conferma prima di scaricare. Questo scaricamento, da registry.npmjs.org e huggingface.co, è l'unica chiamata di rete della funzione; poi il modello gira in locale, in un thread a parte.
@@ -361,11 +361,11 @@ This is on paper: E5 measures it only if the real model is installed.
 
 **Draft for the README privacy line** — `README.md`, append to the "Privacy" paragraph:
 
-> The optional neural meaning (Options → Meaning engine) uses only a model on your computer: a local Ollama, or an ONNX model that `npm run embed:onnx:install` downloads once, after asking.
+> The neural meaning (Options → Meaning engine, automatic by default) uses only a model on your computer: a local Ollama if one is running, or an ONNX model that `npm run embed:onnx:install` downloads once, after asking.
 
 `README.it.md`, in coda al paragrafo "Privacy":
 
-> Il significato neurale facoltativo (Opzioni → Motore del significato) usa solo un modello sul tuo computer: un Ollama locale, oppure un modello ONNX che `npm run embed:onnx:install` scarica una volta, dopo aver chiesto.
+> Il significato neurale (Opzioni → Motore del significato, automatico di base) usa solo un modello sul tuo computer: un Ollama locale se è acceso, oppure un modello ONNX che `npm run embed:onnx:install` scarica una volta, dopo aver chiesto.
 
 **Checks.** The two architecture documents have the same structure (same tables, same new section). `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing.
 
@@ -398,3 +398,11 @@ This is on paper: E5 measures it only if the real model is installed.
 - `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing.
 
 **Decision for Max.** The measured models beat TF-IDF, so by the plan the default engine could become `auto`. I left it on `tfidf`: with `auto`, a Platypus on a computer where Ollama runs would start sending snippets of the agents' text to that local Ollama and keep a model loaded (about 0.6–1.2 GB of memory) without being asked. It is a one-line change in `DEFAULT_SETTINGS` if you want it. The ONNX model is still unmeasured (it needs `npm run embed:onnx:install`).
+
+### 2026-11-18 · Default engine set to automatic (Max's decision)
+
+**Done.** After the six Ollama models beat TF-IDF (E5 2/2), Max chose to make the meaning engine automatic by default: `embedEngine: 'auto'` in `DEFAULT_SETTINGS`, and "Automatic" first in the options list. Unknown values still fall back to `tfidf`, and the smoke test still starts its engine with `tfidf` so that a developer's running Ollama never changes its numbers.
+
+What this means for users: on a computer where a local Ollama with an embedding model is running, Platypus uses it on its own (`qwen3-embedding:0.6b` first if present); snippets of the agents' text go to that local Ollama only, which keeps the model loaded for 10 minutes. Without Ollama nothing changes: the engine stays lexical and looks again at most once a minute, only while a bubble or the drift rule asks for vectors. "Lexical only" in the options turns it off. Updated: the comment in `state.js`, `docs/ARCHITECTURE.md`, `docs/ARCHITETTURA.md`, `docs/plans/embedding-calibration.md`, the drafts for the install guides and the READMEs (E8) and the notes for the CHANGELOG.
+
+**Checks.** New unit check that the default is `auto`. `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing.
