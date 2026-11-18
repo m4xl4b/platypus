@@ -4,6 +4,7 @@
 // I testi sono sempre in inglese (li legge il modello), qualunque sia la lingua dell'ufficio.
 //   ctx.lessons(cwd)      le lezioni del Libro della bottega per quel progetto
 //   ctx.hasSection(cwd)   il CLAUDE.md del progetto ha già la sezione di Platypus
+//   ctx.agent(input)      i passi e le richieste dell'agente che ha mandato l'hook: { steps, goals } (null se non lo conosciamo)
 
 const i18n = require('../i18n');
 const feedback = require('./feedback');
@@ -92,12 +93,62 @@ function elder(input, ctx) {
   return null;
 }
 
-// le regole entrano in RULES una volta sola, nell'ordine in cui devono parlare
-const ALL = [['SessionStart', 'sessionLessons', sessionLessons], ['PostToolUseFailure', 'elder', elder], ['PostToolUse', 'elder', elder]];
+// ---- B3 · fuori dal giro in tondo: lo stesso comando fallisce di nuovo con lo stesso errore, senza modifiche in mezzo
+// (la reazione «insiste» del sismografo, detta all'agente mentre succede). Il fallimento di adesso è quello dell'hook;
+// i tentativi di prima sono i passi dell'agente nello stato dell'ufficio (ctx.agent). Conta solo il turno in corso:
+// dopo una nuova richiesta dell'utente, riprovare è una sua scelta.
+const LOOP_BACK = 12, LOOP_MS = 30 * 60000;   // quanto indietro si guarda: passi e tempo
+// tra un tentativo e l'altro possono stare solo passi che non cambiano niente
+const HARMLESS = new Set(['read', 'search', 'web', 'look', 'verify', 'plan']);
+const excerptOf = (err, cmd) => ((classifyFailure(err, cmd) || {}).excerpt) || errorExcerpt(err);
+function loop(input, ctx) {
+  if (!BASH.has(input.tool_name) || !ctx.agent || input.is_interrupt) return null;
+  const cmd = String((input.tool_input || {}).command || '').trim();
+  const st = cmd && ctx.agent(input);
+  if (!st || !Array.isArray(st.steps)) return null;
+  const steps = st.steps, sig = 'run:' + cmd.slice(0, 200), id = input.tool_use_id || null;
+  // il passo di adesso può essere già nello stato (il transcript è arrivato prima dell'hook) oppure no
+  const at = id ? steps.findIndex(x => x.id === id) : -1;
+  const cur = at >= 0 && steps[at].err && steps[at].fail ? steps[at] : null;
+  const excerpt = cur ? cur.fail.excerpt : excerptOf(String(input.error || ''), cmd);
+  const pat = errorPattern(excerpt);
+  if (!pat) return null; // senza una riga d'errore non si può dire che è «lo stesso»
+  const now = ctx.now ? ctx.now() : Date.now();
+  const turn = Math.max(0, ...(st.goals || []).map(g => g.t || 0)); // l'ultima richiesta dell'utente
+  let before = 0;
+  for (let i = (at >= 0 ? at : steps.length) - 1, seen = 0; i >= 0 && seen < LOOP_BACK; i--, seen++) {
+    const x = steps[i];
+    if (x.t < turn || now - x.t > LOOP_MS) break;
+    if (x.err === null) continue;                       // ancora in corso (strumenti in parallelo, o questo stesso)
+    if (x.sig === sig) {
+      if (x.err && x.fail && errorPattern(x.fail.excerpt) === pat) { before++; continue; }
+      break;                                            // è riuscito, o è fallito in un altro modo: qualcosa è cambiato
+    }
+    if (HARMLESS.has(x.act) || (x.err && x.act === 'edit')) continue; // una modifica rifiutata non ha cambiato niente
+    break;                                              // una modifica, un altro comando, un sottoagente
+  }
+  // senza l'identificativo dello strumento non sappiamo se l'ultimo fallimento nello stato è questo: contiamo per difetto
+  const n = id ? before + 1 : before;
+  if (n < 2) return null;
+  const quote = excerpt.length > 120 ? excerpt.slice(0, 119) + '…' : excerpt;
+  return {
+    text: `this command failed ${n} times in a row with the same error («${quote}») and no edit in between. Change something before running it again, or stop and say what is blocking you.`,
+    once: 'loop|' + sig + '|' + pat,
+  };
+}
+
+// le regole entrano in RULES una volta sola, nell'ordine in cui devono parlare. Dopo un fallimento il Nonno viene prima:
+// quello che il progetto ha già imparato (dove l'errore è stato sistemato, che il comando è instabile) è più preciso
+// dell'avviso generico; se poi l'agente insiste, al fallimento dopo tocca al giro in tondo.
+const ALL = [
+  ['SessionStart', 'sessionLessons', sessionLessons],
+  ['PostToolUseFailure', 'elder', elder], ['PostToolUseFailure', 'loop', loop],
+  ['PostToolUse', 'elder', elder],
+];
 function register(rules = feedback.RULES) {
   for (const [ev, feature, run] of ALL) if (!rules[ev].some(r => r.run === run)) rules[ev].push({ feature, run });
   return rules;
 }
 register();
 
-module.exports = { register, sessionLessons, elder, MAX_START };
+module.exports = { register, sessionLessons, elder, loop, MAX_START };

@@ -232,6 +232,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         lessons: cwd => { try { return bottega.view(cwd).lessons; } catch { return []; } },
         muted: cwd => bottega.muted(cwd),
         hasSection: cwd => claudemd.hasSection(cwd),
+        // i passi già visti dell'agente che ha mandato l'hook (il principale, o il sottoagente con quell'identificativo)
+        agent: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a && a.world ? { steps: a.world.steps, goals: (a.mind && a.mind.goals) || [] } : null; },
         log: s && s.demo ? null : feedbackLog, // la demo non lascia righe nel registro vero
       }, feedbackGate);
       out = r.out; entry = r.entry;

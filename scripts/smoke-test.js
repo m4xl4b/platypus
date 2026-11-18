@@ -261,6 +261,20 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const fbE2 = await fbElderIn('fb-elder-2', { tool_input: { command: 'git status' } });
   ok(fbE2.status === 204, 'il Nonno all\'agente: un comando senza lezione fallisce e basta → ' + fbE2.status);
   core.state.setSettings({ fbElder: 'off' });
+  // B3 · fuori dal giro in tondo: nella sessione aperta «npm test» è già fallito tre volte allo stesso modo; l'hook porta il quarto
+  const fbLoopIn = (extra = {}) => get(port, '/platypus-hook/feedback', 'POST', JSON.stringify({ session_id: 'bottega-smoke-0001', hook_event_name: 'PostToolUseFailure', cwd: fakeCwd, tool_name: 'Bash', tool_input: { command: 'npm test' }, tool_use_id: 't5', error: 'Exit code 1\nFAIL src/a.test.ts\nTests: 1 failed', ...extra }));
+  ok((await fbLoopIn()).status === 204, 'giro in tondo: spento di base, niente');
+  core.state.setSettings({ fbLoop: 'on' });
+  const fbL0 = await fbLoopIn({ tool_input: { command: 'npm run lint' } });
+  const fbL1 = await fbLoopIn({ agent_id: 'sub-che-non-esiste' });
+  ok(fbL0.status === 204 && fbL1.status === 204, `giro in tondo: un altro comando (${fbL0.status}) o un agente che l'ufficio non conosce (${fbL1.status}) → niente`);
+  const fbL = await fbLoopIn();
+  let fbLj = {}; try { fbLj = JSON.parse(fbL.body); } catch {}
+  const fbLt = (fbLj.hookSpecificOutput && fbLj.hookSpecificOutput.additionalContext) || '';
+  ok(fbL.status === 200 && /^Platypus: this command failed 4 times in a row with the same error \(«FAIL src\/a\.test\.ts»\) and no edit in between\./.test(fbLt), 'giro in tondo, acceso: i tentativi di prima vengono dallo stato dell\'ufficio → ' + fbL.status + ' «' + fbLt.slice(0, 80) + '…»');
+  ok(core.feedbackLog.recent(fakeCwd).some(e => e.sid === 'bottega-smoke-0001' && e.feature === 'loop' && e.mode === 'on' && e.event === 'PostToolUseFailure'), 'giro in tondo: il messaggio resta nel registro del progetto');
+  ok((await fbLoopIn({ tool_use_id: 't6' })).status === 204, 'giro in tondo: lo stesso avviso non torna allo stesso agente');
+  core.state.setSettings({ fbLoop: 'off' });
   const fb4 = await get(port, '/platypus-hook/feedback', 'POST', 'non è json {');
   ok(fb4.status === 204, 'feedback con un corpo che non è JSON: 204 → ' + fb4.status);
   // gli hook di feedback dal pannello delle opzioni: prima le righe da vedere, poi si scrive solo con la conferma

@@ -655,6 +655,82 @@ function elderRuleTests(ok, fb, inp, rules, i18n) {
   ok(gate.told('sess-fb-0001', 'main', book[0].id) && !gate.told('sess-fb-0001', 'sub-1', book[0].id) && r3.entry && r3.entry.mode === 'shadow' && !gate.told('sess-fb-0001', 'main', 'altra'), 'Nonno all\'agente: «detto anche a lui» solo se il messaggio è partito davvero, non in ombra');
   gate.untell(inp('PostToolUseFailure'), book[0].id);
   ok(!gate.told('sess-fb-0001', 'main', book[0].id), 'Nonno all\'agente: una risposta arrivata tardi non risulta detta');
+  loopRuleTests(ok, fb, inp, rules, book[0]);
+}
+
+// B3 · fuori dal giro in tondo: lo stesso comando fallisce di nuovo con lo stesso errore, senza modifiche in mezzo
+function loopRuleTests(ok, fb, inp, rules, flaky) {
+  const { AgentWorld } = require(path.join(ROOT, 'src', 'core', 'worldmap'));
+  const now = Date.parse('2026-11-18T10:00:00Z');
+  const ERR = "FAIL src/cart.test.ts\n  ● rate › rounds the cents\n    TypeError: Cannot read properties of undefined (reading 'total')\n      at sum (src/cart.ts:42:18)";
+  const ERR2 = ERR.replace(':42:18', ':57:9');   // lo stesso errore, a un'altra riga
+  const OTHER = 'FAIL src/cart.test.ts\n  ● rate › rounds the cents\n    ReferenceError: discount is not defined\n      at sum (src/cart.ts:42:18)';
+  // i passi di un agente come li vede l'ufficio: una storia è una lista di [strumento, input, esito, errore?]
+  const story = (list, { goals = [], start = now - 60000 } = {}) => {
+    const w = new AgentWorld();
+    let t = start, k = 0;
+    for (const [name, input, out, isErr] of list) {
+      const id = 'tu' + (++k);
+      w.start(id, name, input, t += 1000, '/p', 0);
+      if (out !== null) w.end(id, !!isErr, { content: out }, null, t += 1000, '/p');
+    }
+    return { steps: w.steps, goals, last: 'tu' + k };
+  };
+  const test = (out = ERR, cmd = 'npm test') => ['Bash', { command: cmd }, 'Exit code 1\n' + out, true];
+  const ask = (st, extra = {}) => rules.loop(inp('PostToolUseFailure', { tool_name: 'Bash', tool_input: { command: 'npm test' }, error: 'Exit code 1\n' + ERR, tool_use_id: 'tu-now', ...extra }), { now: () => now, agent: () => st });
+  // due fallimenti uguali di fila: il secondo è quello dell'hook
+  let m = ask(story([test()]));
+  ok(m && /^this command failed 2 times in a row with the same error \(«TypeError: Cannot read properties of undefined \(reading 'total'\)»\) and no edit in between\. Change something/.test(m.text) && m.once && !m.lessonId, 'giro in tondo, secondo fallimento uguale: «' + (m && m.text) + '»');
+  ok(fb.say(m.text).length < fb.MAX_TEXT && /say what is blocking you\.$/.test(fb.say(m.text)), 'giro in tondo: il messaggio sta nel limite, intero');
+  // il transcript è arrivato prima dell'hook: il fallimento di adesso è già tra i passi, e non si conta due volte
+  let st = story([test(), test()]);
+  m = ask(st, { tool_use_id: st.last });
+  ok(m && /failed 2 times/.test(m.text), 'giro in tondo: il fallimento già nello stato non si conta due volte');
+  ok(/failed 3 times/.test(ask(st).text) && ask(story([test()]), { error: 'Exit code 1\n' + ERR2 }), 'giro in tondo: tre di fila, e lo stesso errore a un\'altra riga è lo stesso errore');
+  // in mezzo: letture, ricerche, uno sguardo e una modifica rifiutata non cambiano niente
+  st = story([test(), ['Read', { file_path: '/p/src/cart.ts' }, 'x'], ['Grep', { pattern: 'total', path: '/p/src' }, 'src/cart.ts'], ['Bash', { command: 'git status' }, 'clean'], ['Edit', { file_path: '/p/src/cart.ts', old_string: 'a', new_string: 'b' }, 'String to replace not found in file.', true]]);
+  ok(ask(st), 'giro in tondo: letture, ricerche e una modifica rifiutata in mezzo non contano come cambiamento');
+  // una modifica riuscita, un altro comando, un sottoagente, lo stesso comando riuscito: qualcosa è cambiato
+  ok(ask(story([test(), ['Edit', { file_path: '/p/src/cart.ts', old_string: 'a', new_string: 'b' }, 'ok']])) === null, 'giro in tondo: un fallimento, una modifica, un fallimento → niente');
+  ok(ask(story([test(), ['Write', { file_path: '/p/src/new.ts', content: 'x' }, 'ok']])) === null && ask(story([test(), ['Bash', { command: 'npm install' }, 'added 3 packages']])) === null && ask(story([test(), ['Task', { subagent_type: 'general-purpose', prompt: 'fix it' }, 'done']])) === null, 'giro in tondo: nemmeno dopo un file nuovo, un altro comando o un sottoagente');
+  ok(ask(story([test(), ['Bash', { command: 'npm test' }, 'PASS src/cart.test.ts\nTests: 12 passed']])) === null, 'giro in tondo: se in mezzo è riuscito, non è di fila');
+  // errori diversi
+  ok(ask(story([test(OTHER)])) === null && ask(story([test(OTHER), test()])).text.includes('2 times'), 'giro in tondo: errori diversi → niente, e il conto riparte dall\'errore nuovo');
+  ok(ask(story([test()]), { tool_input: { command: 'npm run lint' } }) === null, 'giro in tondo: un altro comando che fallisce non è un giro');
+  // una nuova richiesta dell'utente in mezzo: riprovare è una sua scelta
+  st = story([test()]);
+  ok(ask({ ...st, goals: [{ t: now - 120000 }, { t: now - 5000 }] }) === null && ask({ ...st, goals: [{ t: now - 120000 }] }), 'giro in tondo: conta solo il turno in corso');
+  ok(ask(story([test()], { start: now - 45 * 60000 })) === null, 'giro in tondo: un fallimento di tre quarti d\'ora fa non conta');
+  // senza l'identificativo dello strumento si conta per difetto
+  ok(ask(story([test()]), { tool_use_id: undefined }) === null && /failed 2 times/.test(ask(story([test(), test()]), { tool_use_id: undefined }).text), 'giro in tondo: senza identificativo, solo quando i fallimenti nello stato sono già due');
+  // un comando ancora in corso (in parallelo) non interrompe il conto
+  ok(ask(story([test(), ['Bash', { command: 'npm run build' }, null]])), 'giro in tondo: uno strumento ancora in corso non conta');
+  // niente da dire
+  ok(ask(story([test()]), { is_interrupt: true }) === null && ask(story([test()]), { tool_name: 'Read' }) === null && ask(null) === null && ask(story([])) === null, 'giro in tondo: interruzione dell\'utente, altro strumento, agente sconosciuto o primo fallimento → niente');
+  ok(rules.loop(inp('PostToolUseFailure', { tool_name: 'Bash', tool_input: { command: 'npm test' }, error: 'Exit code 1', tool_use_id: 'x' }), { now: () => now, agent: () => story([['Bash', { command: 'npm test' }, 'Exit code 1', true]]) }) === null, 'giro in tondo: senza una riga d\'errore non si dice che è lo stesso');
+  ok(ask(story([['PowerShell', { command: 'npm test' }, 'Exit code 1\n' + ERR, true]]), { tool_name: 'PowerShell' }), 'giro in tondo: anche da PowerShell');
+  // nel giro completo: firmato, una volta sola per lo stesso giro, e dopo il Nonno
+  let clock = now;
+  const gate = new fb.Gate({ now: () => clock });
+  st = story([test()]);
+  const real = { PostToolUseFailure: fb.RULES.PostToolUseFailure.filter(r => r.run === rules.elder || r.run === rules.loop) };
+  ok(real.PostToolUseFailure.length === 2 && real.PostToolUseFailure[0].run === rules.elder && real.PostToolUseFailure[1].feature === 'loop', 'giro in tondo: registrato dopo il Nonno');
+  const go = (settings, extra = {}, lessons = []) => fb.respond(inp('PostToolUseFailure', { tool_name: 'Bash', tool_input: { command: 'npm test' }, error: 'Exit code 1\n' + ERR, tool_use_id: 'tu-now', ...extra }), { cwd: '/p', now: () => clock, settings, lessons: () => lessons, agent: () => st }, gate, real);
+  ok(go({ fbLoop: 'off' }).entry === null, 'giro in tondo: spento di base, niente');
+  const s1 = go({ fbLoop: 'shadow' }, { agent_id: 'sub-9' });
+  ok(!s1.out && s1.entry && s1.entry.mode === 'shadow' && s1.entry.feature === 'loop' && /^Platypus: this command failed 2 times/.test(s1.entry.text), 'giro in tondo in ombra: niente all\'agente, la riga nel registro');
+  const r1 = go({ fbLoop: 'on' });
+  ok(r1.out && r1.out.hookSpecificOutput.hookEventName === 'PostToolUseFailure' && /^Platypus: this command failed 2 times/.test(r1.out.hookSpecificOutput.additionalContext) && r1.entry.lessonId === null, 'giro in tondo, acceso: arriva firmato dopo il secondo fallimento');
+  clock += fb.AGENT_GAP_MS + 1000;
+  ok(go({ fbLoop: 'on' }).entry === null, 'giro in tondo: lo stesso avviso non torna allo stesso agente');
+  ok(go({ fbLoop: 'on' }, { error: 'Exit code 1\n' + OTHER }).entry === null, 'giro in tondo: e un errore nuovo riparte da uno');
+  // con il Nonno acceso: prima la lezione del progetto, poi (se insiste) il giro in tondo
+  const g2 = new fb.Gate({ now: () => clock });
+  const both = (extra = {}) => fb.respond(inp('PostToolUseFailure', { session_id: 'sess-fb-0002', tool_name: 'Bash', tool_input: { command: 'npm test' }, error: 'Exit code 1\n' + ERR, tool_use_id: 'tu-now', ...extra }), { cwd: '/p', now: () => clock, settings: { fbLoop: 'on', fbElder: 'on' }, lessons: () => [flaky], agent: () => st }, g2, real);
+  const b1 = both();
+  clock += fb.AGENT_GAP_MS + 1000;
+  const b2 = both();
+  ok(b1.entry && b1.entry.feature === 'elder' && b2.entry && b2.entry.feature === 'loop', `giro in tondo e Nonno insieme: prima la lezione (${b1.entry && b1.entry.feature}), al fallimento dopo l'avviso (${b2.entry && b2.entry.feature})`);
 }
 
 // feedback (2.11, A3): i tre modi di ogni funzione, i limiti di frequenza, il progetto zittito e il registro
