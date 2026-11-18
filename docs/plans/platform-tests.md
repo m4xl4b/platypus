@@ -172,7 +172,7 @@ Like W3 and W4, with the Linux terminals (GNOME Terminal, Konsole, the one in VS
 
 ## K · Cowork
 
-### K1 · Study of the structure  [ ] [win]
+### K1 · Study of the structure  [x] [win]
 
 - **First ask Max** for permission to look at the Claude app folder and to open a local test Cowork session (and do not run `claude` unless he says so then).
 - **List the tree** under `%APPDATA%\Claude` (and the other roots from `coworkRoots()` in `src/core/sources.js`, which on Windows also lists `%LOCALAPPDATA%\Claude`, `AnthropicClaude`, `Claude-3p` and the Microsoft Store package folders), with:
@@ -337,5 +337,17 @@ How it was run: the window was started from the test clone with the temporary ho
   - The results are also copied, as a short table, to a new "Results (Windows)" section in `docs/plans/2.11-real-check.md`. I did **not** edit `docs/plans/2.11-3.0-feedback-storage-server.md`, where that document asks for a "Real-session check" entry: it belongs to the 2.11 plan, not to this loop.
 - **W3 attempt with a real interactive session:** I opened `claude` in a `cmd` window on a new folder; it stopped at the "Do you trust this folder?" question. Sending a keystroke to it from a script is not safe on Max's desktop (it goes to whatever has the focus), and the first attempt did not reach the window, so I closed the window and its process (by PID) and left W3 as partly done.
 - **Cleanup and side effects:** the transcripts of the test sessions in `~\.claude\projects` (`...Platypus-Tests...`) were deleted (they were mine); `~\.claude\settings.json` has the same hash as before; no entry about `Platypus Tests` in `~\.claude.json`; no `history.jsonl`. The test Platypus and the check were stopped (port 47850 free), `C:\Platypus Tests\fb-tmp` deleted. The clones and the two throwaway projects (`w3-project`, `w4-project`) stay in `C:\Platypus Tests\`.
+
+### 2026-11-18 · K1 · Study of the structure (Max gave permission to look at the Claude app folders)
+
+- **Method:** two throw-away scripts walked `%APPDATA%\Claude`, `%LOCALAPPDATA%\Claude` and the Store package folder, printing names, depth, number of files, sizes and dates; for JSON/JSONL files only the names of the top-level fields (of the first line for JSONL), and for status-like fields only short enum values such as the model names. No transcript, title, message, e-mail, credential or `audit.jsonl` content was read or kept; repeated sibling folders were described once (every identifier is `<uuid>` in the output).
+- **Result:** `docs/plans/cowork-structure.md` (anonymized). Short version:
+  - the Claude app is **6.6395.0.0** from the Microsoft Store; the data is in `%APPDATA%\Claude` (the package's virtual store holds only tool caches);
+  - Cowork is `local-agent-mode-sessions\<uuid>\<uuid>\local_<uuid>.json` (metadata: `title`, `model`, `lastActivityAt`, `isArchived`, `isAgentCompleted`, `processName`, ...) next to `local_<uuid>\.claude\projects\-sessions-<processName>\<cliSessionId>.jsonl` (the transcripts, plus `subagents\*.jsonl`) and `audit.jsonl`;
+  - there is no `status` field: "active" has to be read from `lastActivityAt`, which follows the newest transcript write within 4 minutes on all 27 sessions;
+  - the app's Code tab (`claude-code-sessions\...\local_<uuid>.json`, 46 files) keeps only metadata (`title`, `model`, `effort`, `permissionMode`, `cliSessionId`, ...): its transcripts are in the normal `~\.claude`;
+  - the Cowork virtual machine is `vm_bundles\claudevm.bundle` (11 GB), run by `cowork-svc`.
+- **Not done / limits:** no Cowork session is active on this PC (newest transcript 2026-07-28), so "active" is deduced, not seen; I did not start a Cowork session (that is for Max to open, if he wants it checked). Only one app version, one PC, one account. Several expected roots do not exist here (`AnthropicClaude`, `Claude-3p`).
+- **Side effects:** none; nothing was written outside the scratch folder and the new document. Max's real data is not in the repository (no title, path, project name, account or session id is reproduced).
 
 ## Journal (Linux)
