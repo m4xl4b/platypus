@@ -43,7 +43,7 @@ Checked against the code of 2.11 (Electron 44, see `package.json`). Places are g
 
 ---
 
-## T1 · Study and decisions  [ ]
+## T1 · Study and decisions  [x]
 
 - Read the Tauri 2 documentation for:
   - a window on an external URL (`http://127.0.0.1:<port>/`);
@@ -165,3 +165,32 @@ On `[win]` and on `[linux]`, Electron against Tauri, with the demo on:
 - Done: this is the English version of Max's `PIANO-TAURI.md`, adapted to the code after 2.11: the Electron map was checked against `src/main.js`, `src/preload.js`, `src/autostart.js` and the `officeApp` table in `docs/ARCHITECTURE.md`, and the line numbers were replaced by function names.
 - Decisions: Rust is not installed on this computer (`rustc` and `cargo` not found). Installing Rust, WebView2 or system libraries needs Max's permission first. Tasks that do not need Rust (T2, which is pure Node, and T9, which is docs) may go ahead while waiting for that permission. Pushing the branch for T8 also needs his permission at that moment.
 - Questions for Max: may Rust and the system libraries be installed (T1)?
+
+### 2026-11-18 · T1 · Study and decisions
+
+- Done: read the Tauri 2 docs (v2.tauri.app: capabilities, ACL reference, prerequisites, system tray, plugins notification / autostart / single-instance / window-state / shell / process / opener; docs.rs for `tauri` 2.12.7, `WebviewWindowBuilder`, `Window`, `WindowEvent`, `TrayIcon`, `tauri_build::AppManifest`). Nothing installed. `rustc -V` and `cargo -V`: not found.
+- Prerequisites per system (from https://v2.tauri.app/start/prerequisites/):
+  - all: Rust through rustup, 1.90 or newer (the plugins ask for it); `@tauri-apps/cli` 2.x from npm, only in `shells/tauri`.
+  - Windows: Microsoft C++ Build Tools with "Desktop development with C++" (MSVC), `rustup default stable-msvc`; WebView2 runtime, already part of Windows 10 1803+ and Windows 11, so nothing to install for it on this PC.
+  - Debian/Ubuntu: `libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`.
+  - Fedora: `webkit2gtk4.1-devel openssl-devel curl wget file libappindicator-gtk3-devel librsvg2-devel libxdo-devel` and the group "c-development".
+  - Arch: `webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg xdotool`.
+  - macOS: Xcode Command Line Tools (`xcode-select --install`), macOS 10.15 or newer.
+- What the docs settle for the next tasks:
+  - The window is built in Rust (`WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))`) once the port is known, with `decorations(false)`, `min_inner_size(380, 260)`, `always_on_top`. On Windows the builder can deadlock if called from a synchronous command: build it in `setup` or from an async command.
+  - There is no "maximized" window event: on `WindowEvent::Resized` the shell compares `is_maximized()` with the last value and tells the page only when it changes.
+  - `initialization_script` runs before the page's scripts on every top-level navigation, main frame only (on Windows also subframes): the script must check `location.origin` itself.
+  - `on_navigation(|url| bool)` blocks navigations; `on_new_window` handles `window.open`; the opener plugin (`OpenerExt::open_url`) opens external links in the browser, called from Rust only.
+  - Tray: `TrayIconBuilder` with the `tray-icon` cargo feature. On Linux the tray click events are not emitted (only the menu works) and `set_tooltip` is not supported: the counters must also be in the first, disabled menu item, as in Electron.
+  - Notifications: on Windows the plugin shows proper toasts only for an installed app (from source they look like PowerShell's); the docs give no click event on desktop. T4 must assume that a click on a notification cannot be intercepted, and T6 must check the Start menu shortcut.
+  - The engine is started with `std::process::Command` from Rust: no shell plugin, so no process spawning is reachable from the page.
+  - `single-instance` must be registered first; on Linux it uses DBus. `autostart` lets us choose the entry name (`app_name`); the exact registry / `.desktop` names must be checked in T5.
+- Decision (`officeApp` security): how the page served by the engine gets `window.officeApp`.
+  - An initialisation script, built in Rust with the real port, defines `window.officeApp` on top of `window.__TAURI_INTERNALS__.invoke`, only if `location.origin === "http://127.0.0.1:<port>"`. `app.withGlobalTauri` stays false: the page never gets the full `window.__TAURI__` API.
+  - Only our own commands are reachable: `build.rs` declares them with `tauri_build::AppManifest::new().commands(&[...])` (`minimize`, `close`, `toggle_maximize`, `is_maximized`, `toggle_pin`, `get_pin`, `set_counts`, `set_widget`), which turns each into an `allow-<command>` permission. The one capability, for the window `main` only, lists just those permissions: no `core:default`, no plugin permission (notification, opener, autostart, window-state are used from Rust only).
+  - The capability's `remote.urls` is the engine's origin. Preferred: built at runtime with the exact port (`CapabilityBuilder::new("office").remote("http://127.0.0.1:<port>/*")`, cargo feature `dynamic-acl`). Fallback if that does not work: a static file with `http://127.0.0.1:*/*` (URLPattern syntax; not stated in the docs whether the port wildcard needs the path part: test it in T3), which is still safe because `on_navigation` keeps the window on the engine's own port, so no other local server can ever be loaded in it.
+  - Rust → page messages (`onMaximized`, `onGoto`) go through `webview.eval()` of a fixed call with JSON-encoded data, so the page does not need `core:event:allow-listen`.
+  - No command takes a path, a URL or a command line; `set_counts` takes four numbers, `set_widget` a boolean. The page cannot install hooks, start processes or open URLs through the shell: those stay in the tray menu (Rust) and in the engine's own API with its Host and Origin checks.
+  - Known limit from the docs: on Linux Tauri cannot tell an iframe on an allowed origin from the window. The office pages only allow frames from themselves (CSP `default-src 'self'`, `frame-ancestors 'none'`), so no foreign iframe can get the commands.
+- Checked: the plan's links and the commands above against the docs pages listed; `npm test` (temporary home, port 47830, `PLATYPUS_DATA_DIR`) ends with "Tutto a posto.".
+- Questions for Max: may I install Rust (rustup, stable MSVC toolchain, 1.90+) and the Microsoft C++ Build Tools ("Desktop development with C++") on this PC? WebView2 is already part of Windows 11. On the Linux computer the packages above would be needed for the `[linux]` tasks. Until then I go on with T2 and T9.
