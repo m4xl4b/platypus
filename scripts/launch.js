@@ -172,7 +172,10 @@ function runTauri() {
     return runDesktop();
   }
   const background = has('--background');
-  const child = spawn(exe, passThrough, { cwd: ROOT, detached: background, stdio: background ? 'ignore' : 'inherit', windowsHide: false });
+  // in background i messaggi del guscio e del motore vanno in launch.log, ruotato come per Electron (scripts/launch-log.js)
+  let out = 'inherit';
+  if (background) { const log = openLaunchLog(LOG_DIR); LOG_START = log.start; out = ['ignore', log.fd, log.fd]; }
+  const child = spawn(exe, passThrough, { cwd: ROOT, detached: background, stdio: out, windowsHide: false });
   child.on('error', e => { say('Il guscio Tauri non si avvia (' + e.message + '): apro Electron.'); runDesktop(); });
   child.on('spawn', () => {
     if (background) { child.unref(); say('Platypus (Tauri) è partito. Puoi chiudere questo terminale.'); process.exit(0); }

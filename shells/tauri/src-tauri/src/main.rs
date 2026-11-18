@@ -24,14 +24,21 @@ fn main() {
     // exit with 1 on any error or after 120 s. No dialogs.
     let smoke = std::env::args().any(|a| a == "--smoke");
     office::SMOKE.store(smoke, std::sync::atomic::Ordering::SeqCst);
-    let app = tauri::Builder::default()
+    // With PLATYPUS_DATA_DIR (tests, development loops) this copy is kept apart from the Platypus already open, as
+    // Electron does (src/main.js): it does not take part in the single-instance lock, so it starts instead of
+    // bringing the other window to the front.
+    let separate = std::env::var("PLATYPUS_DATA_DIR").map(|v| !v.trim().is_empty()).unwrap_or(false);
+    let mut builder = tauri::Builder::default();
+    if !separate {
         // a second start brings the first window to the front (this plugin must come first)
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if tray::snapshot_mode() {
                 println!("[second-instance]");
             }
             office::show_window(app);
-        }))
+        }));
+    }
+    let app = builder
         .plugin(startup::plugin())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
