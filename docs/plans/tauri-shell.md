@@ -133,9 +133,9 @@ On `[win]` and on `[linux]`, Electron against Tauri, with the demo on:
 - **Time of the first build** of Tauri: it is the cost for whoever starts from source.
 - **Output:** a table in `docs/plans/tauri-measurements.md`, with the measuring method written so that it can be repeated.
 
-## T8 · GitHub Actions  [!]
+## T8 · GitHub Actions  [x]
 
-Blocked: the workflow is written and checked by reading, and `--smoke` works locally, but the Actions only run on GitHub, and pushing the branch needs Max's permission at that moment.
+Done on Linux and Windows: the workflow ran on GitHub for the first time on 2026-11-18, after the integration into `main` (see the Journal). macOS is still waiting for a runner.
 
 - A `tauri` job in `.github/workflows/ci.yml`, which runs only with `workflow_dispatch` or when `shells/tauri/**` changes. The normal CI must stay fast.
 - The job:
@@ -382,3 +382,13 @@ The commands `npm run tauri:build` and `--shell tauri` come with T3 and T6: chec
 - Not checked: the Actions themselves. On macOS they are the only proof possible; the logs must be read carefully. Possible issues to look for on Linux: WebKitGTK under Xvfb (if the window does not load, try `WEBKIT_DISABLE_COMPOSITING_MODE=1`), and the tray without a StatusNotifier host (warnings expected, not a failure).
 - **Question for Max:** may I push the branch (`claude/sviluppo-tauri-66442e`) to GitHub so the "Tauri shell" workflow runs? Nothing else would be done there: no pull request, no merge.
 
+### 2026-11-18 · T8 · The workflow ran on GitHub (after the integration)
+
+Written by the embedding session, which integrated this plan into `main` at Max's request.
+
+- The branch was not pushed on its own: Max had the work merged into `main` (merge `a6398bb`, guides and CHANGELOG in `ca6d6f7`) and pushed `main` (`6f61e47..ca6d6f7`). The push changed `shells/tauri`, so the "Tauri shell" workflow ran: https://github.com/m4xl4b/platypus/actions/runs/44347959871
+- **Linux** (`ubuntu-latest`): build, start once with the demo (`--smoke`) and size, all green in 4 min 18 s; program 7,181,752 bytes (6.8 MB).
+- **Windows** (`windows-latest`): all green in 8 min 58 s; program 5,069,824 bytes (4.8 MB), consistent with the local measurement of T7.
+- **macOS** (`macos-15-intel`): still queued when this was written. On this repository's earlier pushes the macOS jobs of the normal CI were never picked up ("The job was not acquired by Runner of type hosted even after multiple attempts") and ended as failures after 15 minutes: a GitHub runner problem, not the code. The macOS build of the Tauri shell is therefore still unproven.
+- The answer to the question above ("may I push the branch") is no longer needed.
+- T8 is marked `[x]` for what it was meant to prove on GitHub (the build and a real start); macOS stays open, together with the Linux parts of T5 and T7 on the Linux computer.
