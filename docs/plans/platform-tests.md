@@ -205,14 +205,16 @@ Like W3 and W4, with the Linux terminals (GNOME Terminal, Konsole, the one in VS
 
 ## X · Wrap-up
 
-### X1 · Bugs found  [ ]
+### X1 · Bugs found  [x]
 
 | # | System | Problem | Commit | Automatic test |
 |---|---|---|---|---|
 | 1 | Windows | With Node 24 the launcher printed the `DEP0190` deprecation warning ("Passing args to a child process with shell option true") every time it ran `npm ci` | `7b8ac9f` | `scripts/smoke-test.js`: "avvio: nessun argomento separato con shell" |
 | 2 | Windows | Turning "Start when I log in" on or off never removed the start-up value that Agent Office wrote before the rename (`com.agentoffice.desktop` in `HKCU\...\Run`); only the macOS and Linux old entries were cleaned | `39f1831` | `scripts/smoke-test.js`: "Windows: la vecchia voce di avvio «com.agentoffice.desktop» viene tolta" |
 
-### X2 · Documents  [ ]
+### X2 · Documents  [x]
+
+Done for what the Windows loop and the Actions tested. The Linux loop must update the Linux row of the "Tested on" table (and add problems it finds) when it has run L1-L3.
 
 - **Install guides:** a "Tested on" table, with system, version, date, what works and the limits.
 - **Frequent problems:** update the table with what came up.
@@ -222,7 +224,14 @@ Like W3 and W4, with the Linux terminals (GNOME Terminal, Konsole, the one in VS
 
 ## For the CHANGELOG
 
-(to fill in at the end)
+From the Windows loop (the Linux loop adds its own lines below):
+
+- **Fixed:** the launcher no longer prints Node 24's `DEP0190` warning when it installs dependencies on Windows; turning *Start when I log in* on or off on Windows now also removes the start-up value that Agent Office wrote before the rename (`com.agentoffice.desktop`).
+- **Cowork on Windows:** sessions of the Claude desktop app are found by their known path (`local-agent-mode-sessions\<account>\<org>\local_<uuid>`) instead of walking the whole app folder (412 folders visited became 2 on a real tree, same 27 sessions); the card shows the title chosen in the app, and sessions archived in the app are no longer followed. The wide search stays as a fallback. The structure of the app's folders is described, anonymized, in `docs/plans/cowork-structure.md`.
+- **New checks:** `scripts/platform-test.js` (shortcuts, start at login, `osint`, Cowork folders, in a temporary home) runs on Windows, macOS and Linux in the GitHub Actions; on macOS the CI also checks the mini mode and saves a screenshot of the map of reality. `npm test` gained checks for the launcher, the old start-up value, the mini-mode log and Cowork on a fake Windows tree.
+- **Documents:** the install guides have a "Tested on" table and two new rows in the frequent problems (`.\start.cmd` in PowerShell, the shared start-up entry).
+- **Facts from the real-session check (Windows, Claude Code 2.1.11), for the 2.11 notes:** `http` hooks reach Platypus; `PreToolUse` context reaches the model; the failing test and a missing file fire `PostToolUseFailure`; the `Stop` block works; permissions from the balloon (YES, ALWAYS, NO, two at once, timeout, Platypus closed) behave as designed. `SessionStart` did not arrive in `claude -p` runs. See `docs/plans/2.11-real-check.md`.
+- **Not tested:** a real interactive session on Windows (VS Code, Resume, Open folder, agents with model and effort), Windows 10/arm64, WSL, a running Cowork session, any hands-on macOS or Linux run.
 
 ## Journal (Windows)
 
@@ -367,5 +376,11 @@ How it was run: the window was started from the test clone with the temporary ho
 - **Linux:** an **official Claude desktop app for Linux exists now** (beta, announced at the end of June 2026; Ubuntu 22.04+ / Debian 12+, x86_64 and arm64, apt repository or `.deb`, with Chat, Cowork and Claude Code; Cowork runs in a QEMU/KVM virtual machine). Sources are in the document (Anthropic's docs and support article, read today). So the options do **not** need a "no Cowork on Linux" message, and I changed nothing in the interface. The docs do not say where the app keeps its data: `coworkRoots()` keeps looking in `$XDG_CONFIG_HOME/Claude` / `~/.config/Claude` (Electron's default), **to verify** on a Linux computer with the app.
 - **Test added** (`scripts/platform-test.js`, so the Actions run it on macOS and Linux too): a fake Cowork tree in the known layout under a hand-given root; the search must find it with the title from the metadata, without keeping the e-mail field, and without the wide walk. 24 checks ok on Windows.
 - **For the Linux loop / Max:** on a Linux computer with `claude-desktop` installed, look at `~/.config/Claude` with the K1 method (names, sizes, dates, field names) and confirm or correct the "to verify" lines.
+
+### 2026-11-18 · X1 and X2 · Wrap-up (Windows side)
+
+- **X1:** the table has the two Windows bugs found, each with its own commit and an automatic test; nothing else broke. (The Linux loop adds its own rows.)
+- **X2:** `docs/INSTALL.md` and `docs/INSTALLAZIONE.md`: new "Tested on" / "Testato su" section (Windows 11 by hand; macOS and Linux only by the Actions, said plainly), two rows in the frequent problems, and the Cowork line updated. "For the CHANGELOG" is filled for the Windows side. README, CHANGELOG and the version were not touched.
+- **Open:** W3 is partial (see its entry); the Linux tasks (L1-L3) belong to the Linux loop; the hands-on checks of macOS depend on Max.
 
 ## Journal (Linux)

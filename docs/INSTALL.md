@@ -139,15 +139,27 @@ The book learns from the open sessions once a minute and, when a project has an 
 
 - **WSL**: on Windows the office also follows Claude Code inside *running* WSL distributions. Hooks inside WSL can't reach Windows' `127.0.0.1` unless WSL mirrored networking is on; without it, the office works from the transcripts. You can also run Platypus inside WSL (`./start.sh`, with WSLg).
 - **More `.claude` folders**: OPT → *Other Claude Code folders*, or the `PLATYPUS_CLAUDE_DIRS` variable (separated by `;`).
-- **Cowork**: desktop-app Cowork sessions are found in the Claude app folder. Cloud Cowork sessions (from phone or web) leave no files on your computer and can't be shown.
+- **Cowork**: desktop-app Cowork sessions are found in the Claude app folder (on Windows `%APPDATA%\Claude\local-agent-mode-sessions`; the card shows the title chosen in the app, and sessions archived in the app are not followed). Cloud Cowork sessions (from phone or web) leave no files on your computer and can't be shown.
 - **Corporate proxy**: `npm config set proxy …` / `https-proxy …`, or `ELECTRON_MIRROR=<internal mirror> npm ci`. Browser mode downloads nothing.
 - **Private repository**: `gh auth login`, then `gh repo clone <owner>/platypus`, or use SSH keys.
+
+## Tested on
+
+What was tried on real systems, and what was not. Dates are when the test was run; the structure of other apps (Claude Code, the Claude desktop app) can change after that.
+
+| System | Version | Date | What works | Limits |
+|---|---|---|---|---|
+| Windows 11 Pro (x64) | build 26200, Node.js 24, Windows Terminal | 2026-11-18 | clean clone in a folder with a space, `start.cmd`, update after a `git pull`, browser mode without Electron, Start menu entry, notifications (a click opens the right floor), tray menu, *Start when I log in*, `npm run shortcut`, mini mode on three screens, permissions from the speech bubble (YES / ALWAYS / NO, two at once, timeout, Platypus closed) with Claude Code 2.1.11, feedback hooks, finding the Cowork sessions of the Claude app (Microsoft Store version 6.6395; checked on its folders and on a fake copy, not on a session running at that moment) | not tried: Windows 10, arm64, VS Code, JetBrains, WSL, a Cowork session running right now. *GO TO WINDOW* picks the terminal window by name and title, so with several Windows Terminal windows it may pick the wrong one |
+| macOS (Intel) | macOS 15 runner on GitHub Actions, Node.js 22 | 2026-11-18 | all engine tests, the window with the demo, mini mode, the map of reality, the shortcut app (`Platypus.app`, valid `Info.plist`, icon), the start-at-login file | tried only by the automatic checks, not by a person: no notifications, tray, permissions or Cowork. Apple Silicon not tried |
+| Linux (Ubuntu) | Ubuntu runner on GitHub Actions, Node.js 22 and 24, X virtual display | 2026-11-18 | engine tests, the window with the demo, the menu entry and the start-at-login file | tried only by the automatic checks: no tray, notifications, *GO TO WINDOW*, Wayland or Cowork (the official Claude desktop app for Linux is in beta, its folder layout is not confirmed) |
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---|---|
 | `node` not found | Install Node.js and reopen the terminal (`start.sh` loads nvm by itself). |
+| Windows: `start.cmd` "is not recognized" in PowerShell | PowerShell does not run files from the current folder by name: type `.\start.cmd`, or double-click it. |
+| Windows: *Start when I log in* switches itself off or on | Windows keeps one start-up entry named `com.platypus.desktop` for every copy of Platypus on the computer (a clone, a packaged build). Turn it on from the copy you want to keep. |
 | `npm ci` hangs on first launch | Network or proxy (see above). Meanwhile, use `npm run web`. |
 | Linux: "SUID sandbox helper binary … not configured correctly" | Some distributions (e.g. Ubuntu 24.04) block Electron's sandbox. The launcher retries with `--no-sandbox` automatically. To always use it: `PLATYPUS_NO_SANDBOX=1 ./start.sh`. |
 | Linux: no tray icon | GNOME needs the *AppIndicator and KStatusNotifierItem Support* extension. |
