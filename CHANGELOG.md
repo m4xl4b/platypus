@@ -25,6 +25,15 @@ The context bubble and the north star in the map of reality used to compare word
 - **For shells**: `GET /api/shell/events`, an SSE stream with only counters, tray texts (in the language of the options) and notifications; and `--parent-stdin` for the engine, which saves and exits when the shell that started it closes, even if it crashes.
 - **New workflow** `.github/workflows/tauri.yml` (by hand, or when `shells/tauri` changes): builds the Tauri shell on Windows, macOS and Linux, starts it once with `--smoke` and keeps only the program's size for 3 days. It has not run on GitHub yet, and the Linux checks of the shell are still to be done. `ci.yml` is unchanged.
 
+**Tested on Windows, and Cowork on Windows.**
+
+- **Cowork on Windows**: sessions of the Claude desktop app are found by their known path (`local-agent-mode-sessions\<account>\<org>\local_<uuid>`) instead of walking the whole app folder (on a real tree, 412 folders visited became 2, with the same 27 sessions); the card shows the title chosen in the app, and sessions archived in the app are no longer followed. The wide search stays as a fallback. The structure of the app's folders is described, anonymized, in `docs/plans/cowork-structure.md`.
+- **Fixed**: the launcher no longer prints Node 24's `DEP0190` warning when it installs dependencies on Windows; turning *Start when I log in* on or off on Windows now also removes the start-up value that Agent Office wrote before the rename (`com.agentoffice.desktop`).
+- **New checks**: `scripts/platform-test.js` (shortcuts, start at login, system integration, Cowork folders, in a temporary home) runs on Windows, macOS and Linux in the GitHub Actions; on macOS the CI also checks the mini mode and saves a screenshot of the map of reality. `npm test` gained checks for the launcher, the old start-up value, the mini-mode log and Cowork on a fake Windows tree.
+- **Install guides**: a "Tested on" table and two new frequent problems (`.\start.cmd` in PowerShell, the shared start-up entry).
+- **Feedback to the agents, checked on a real Windows session** (Claude Code 2.1.11): the hooks reach Platypus, the context reaches the model, failures fire, the `Stop` block works, and permissions from the balloon (YES, ALWAYS, NO, two at once, timeout, Platypus closed) behave as designed. `SessionStart` did not arrive in `claude -p` runs. Details in `docs/plans/2.11-real-check.md`.
+- **Not tested yet**: a real interactive session on Windows (VS Code, Resume, Open folder), Windows 10 on arm64, WSL, a running Cowork session, and any hands-on run on macOS or Linux.
+
 ## 2.11: feedback to the agents
 
 Until now Platypus only watched. From 2.11 it can also tell an agent what it sees, at the moment it matters: a lesson from the project's Workshop book, a loop on a command that keeps failing. It is all off until you turn it on, one feature at a time, and the less tested features only record what they would have said.

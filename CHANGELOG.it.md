@@ -25,6 +25,15 @@ La bolla del contesto e la stella polare nella mappa della realtà confrontavano
 - **Per i gusci**: `GET /api/shell/events`, uno stream SSE con solo contatori, testi dell'area di notifica (nella lingua delle opzioni) e notifiche; e `--parent-stdin` per il motore, che salva ed esce quando il guscio che l'ha avviato si chiude, anche se si blocca.
 - **Nuovo workflow** `.github/workflows/tauri.yml` (a mano, o quando cambia `shells/tauri`): compila il guscio Tauri su Windows, macOS e Linux, lo avvia una volta con `--smoke` e tiene per 3 giorni solo la dimensione del programma. Non è ancora girato su GitHub, e le prove del guscio su Linux sono ancora da fare. `ci.yml` non cambia.
 
+**Provato su Windows, e Cowork su Windows.**
+
+- **Cowork su Windows**: le sessioni dell'app desktop di Claude si trovano dal loro percorso noto (`local-agent-mode-sessions\<account>\<org>\local_<uuid>`) invece di percorrere tutta la cartella dell'app (su un albero vero, da 412 cartelle visitate a 2, con le stesse 27 sessioni); la scheda mostra il titolo scelto nell'app, e le sessioni archiviate nell'app non si seguono più. La ricerca larga resta come ripiego. La struttura delle cartelle dell'app è descritta, resa anonima, in `docs/plans/cowork-structure.md`.
+- **Corretto**: il lanciatore non stampa più l'avviso `DEP0190` di Node 24 quando installa le dipendenze su Windows; accendere o spegnere *Avvia all'accesso* su Windows toglie anche la voce di avvio scritta da Agent Office prima del cambio di nome (`com.agentoffice.desktop`).
+- **Nuovi controlli**: `scripts/platform-test.js` (collegamenti, avvio all'accesso, integrazione con il sistema, cartelle di Cowork, in una home temporanea) gira su Windows, macOS e Linux nelle GitHub Actions; su macOS la CI controlla anche la modalità mini e salva un'immagine della mappa della realtà. `npm test` ha nuovi controlli per il lanciatore, la vecchia voce di avvio, il registro della modalità mini e Cowork su un albero di Windows finto.
+- **Guide d'installazione**: una tabella "Provato su" e due problemi frequenti nuovi (`.\start.cmd` in PowerShell, la voce di avvio condivisa).
+- **Feedback agli agenti, provato su una sessione vera su Windows** (Claude Code 2.1.11): gli hook arrivano a Platypus, il contesto arriva al modello, i fallimenti scattano, il blocco di `Stop` funziona, e i permessi dai fumetti (SÌ, SEMPRE, NO, due insieme, tempo scaduto, Platypus chiuso) si comportano come previsto. `SessionStart` non è arrivato nelle esecuzioni con `claude -p`. I dettagli sono in `docs/plans/2.11-real-check.md`.
+- **Non ancora provato**: una sessione interattiva vera su Windows (VS Code, Riprendi, Apri cartella), Windows 10 su arm64, WSL, una sessione Cowork in corso, e qualsiasi prova a mano su macOS o Linux.
+
 ## 2.11: feedback agli agenti
 
 Finora Platypus guardava e basta. Dalla 2.11 può anche dire a un agente quello che vede, nel momento in cui serve: una lezione del Libro della bottega del progetto, un giro in tondo su un comando che continua a fallire. È tutto spento finché non lo accendi, una funzione alla volta, e le funzioni meno provate registrano soltanto che cosa avrebbero detto.
