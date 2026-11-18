@@ -120,6 +120,19 @@ npm run web      # or: node scripts/launch.js --web
 
 Browser mode needs only Node.js: no Electron, no `npm install`. Open `http://127.0.0.1:47800/`. You only lose the tray icon and OS notifications.
 
+## Tauri shell (optional, experimental)
+
+Electron stays the default and needs nothing of this. The Tauri shell in `shells/tauri/` is there to compare size, memory and start-up time; to build it from source you need, on top of Node.js:
+
+- **Rust** 1.90 or newer, through [rustup](https://rustup.rs).
+- **Windows:** the Microsoft C++ Build Tools with "Desktop development with C++", and `rustup default stable-msvc`. WebView2 is already part of Windows 10 (1803 and later) and Windows 11.
+- **macOS:** the Xcode Command Line Tools (`xcode-select --install`), macOS 10.15 or newer.
+- **Debian / Ubuntu:** `sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`
+- **Fedora:** `sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file libappindicator-gtk3-devel librsvg2-devel libxdo-devel` and `sudo dnf group install "c-development"`
+- **Arch:** `sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg xdotool`
+
+Then `npm run tauri:build` once (the first build takes several minutes) and `node scripts/launch.js --shell tauri`. Without a build, the launcher explains how to make one and opens Electron.
+
 ## Updating and uninstalling
 
 To update, run `git pull` and launch again. Dependencies re-sync automatically.

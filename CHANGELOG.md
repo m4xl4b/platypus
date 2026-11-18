@@ -4,7 +4,7 @@ Platypus releases (up to 2.7 it was called Agent Office), newest first.
 
 *Versione italiana: [CHANGELOG.it.md](CHANGELOG.it.md).*
 
-## Next version: meaning with neural embeddings
+## Next version: meaning with neural embeddings, an experimental Tauri shell
 
 The context bubble and the north star in the map of reality used to compare words: "fix the login" and "repair the authentication" looked like two different tasks. Now, if a local Ollama with an embedding model is running, they compare meanings, and the drift judgement no longer mistakes synonyms for a detour.
 
@@ -17,6 +17,13 @@ The context bubble and the north star in the map of reality used to compare word
 - **Optional ONNX model**: `npm run embed:onnx:install` installs a small multilingual model that runs without Ollama (about 320 MB, it asks first; the only download of this feature). It is weaker than the Ollama models at spotting drift, so automatic mode does not use it: choose ONNX in the options.
 - **Demo**: a new "synonyms" scene, where an agent asked to fix the login works on authentication with other words: drifting for the lexical engine, on course for a meaning engine.
 - **One drift rule**: the engine, the "back to the task" feedback and the map now use the same rule and the same thresholds, so they never disagree.
+
+**A second desktop shell, experimental: Tauri.** Electron stays the default and gets no new dependency.
+
+- **Tauri 2 shell** in `shells/tauri/`: the same window, title bar, full screen, mini mode, PIN, tray menu, notifications, start at login (the same entry as Electron, never two) and single instance. On Windows it is about 5 MB instead of about 370 MB, with the same memory and start-up time (`docs/plans/tauri-measurements.md`). Build it once with `npm run tauri:build` (it needs Rust and the system libraries, see the install guide) and start it with `node scripts/launch.js --shell tauri`; without a build the launcher explains what is needed and opens Electron.
+- **Notifications decided by the engine**: an agent waiting, a new alert and the daily report are now decided in one place (`src/core/notify.js`) and only shown by the shell, so every shell notifies the same things. Electron behaves as before. The day of the last report notification now lives in `~/.platypus/notify.json`.
+- **For shells**: `GET /api/shell/events`, an SSE stream with only counters, tray texts (in the language of the options) and notifications; and `--parent-stdin` for the engine, which saves and exits when the shell that started it closes, even if it crashes.
+- **New workflow** `.github/workflows/tauri.yml` (by hand, or when `shells/tauri` changes): builds the Tauri shell on Windows, macOS and Linux, starts it once with `--smoke` and keeps only the program's size for 3 days. It has not run on GitHub yet, and the Linux checks of the shell are still to be done. `ci.yml` is unchanged.
 
 ## 2.11: feedback to the agents
 

@@ -4,7 +4,7 @@ Le versioni di Platypus (fino alla 2.7 si chiamava Agent Office), dalla più rec
 
 *English version: [CHANGELOG.md](CHANGELOG.md).*
 
-## Prossima versione: significato con gli embedding neurali
+## Prossima versione: significato con gli embedding neurali, un guscio Tauri sperimentale
 
 La bolla del contesto e la stella polare nella mappa della realtà confrontavano le parole: "aggiusta il login" e "correggi l'autenticazione" sembravano due compiti diversi. Ora, se c'è un Ollama locale acceso con un modello di embedding, confrontano i significati, e il giudizio sulla deriva non scambia più i sinonimi per una deviazione.
 
@@ -17,6 +17,13 @@ La bolla del contesto e la stella polare nella mappa della realtà confrontavano
 - **Modello ONNX facoltativo**: `npm run embed:onnx:install` installa un piccolo modello multilingue che gira senza Ollama (circa 320 MB, chiede prima conferma; è l'unico scaricamento di questa funzione). Riconosce la deriva peggio dei modelli di Ollama, per questo in automatico non si usa: va scelto ONNX nelle opzioni.
 - **Demo**: una nuova scena "sinonimi", con un agente che deve sistemare il login e lavora sull'autenticazione con altre parole: alla deriva per il motore lessicale, sulla rotta per un motore del significato.
 - **Una regola della deriva sola**: il motore, il feedback "ritorno al compito" e la mappa usano la stessa regola e le stesse soglie, così non sono mai in disaccordo.
+
+**Un secondo guscio desktop, sperimentale: Tauri.** Electron resta quello predefinito e non riceve nessuna dipendenza nuova.
+
+- **Guscio Tauri 2** in `shells/tauri/`: la stessa finestra, barra del titolo, schermo intero, modalità mini, PIN, menu nell'area di notifica, notifiche, avvio all'accesso (la stessa voce di Electron, mai due) e istanza unica. Su Windows pesa circa 5 MB invece di circa 370, con la stessa memoria e lo stesso tempo di avvio (`docs/plans/tauri-measurements.md`). Si compila una volta con `npm run tauri:build` (servono Rust e le librerie di sistema, vedi la guida d'installazione) e si avvia con `node scripts/launch.js --shell tauri`; senza compilazione il lanciatore spiega che cosa serve e apre Electron.
+- **Notifiche decise dal motore**: un agente che aspetta, un avviso nuovo e il report giornaliero si decidono in un posto solo (`src/core/notify.js`) e il guscio si limita a mostrarli, così ogni guscio notifica le stesse cose. Electron si comporta come prima. Il giorno dell'ultima notifica del report ora sta in `~/.platypus/notify.json`.
+- **Per i gusci**: `GET /api/shell/events`, uno stream SSE con solo contatori, testi dell'area di notifica (nella lingua delle opzioni) e notifiche; e `--parent-stdin` per il motore, che salva ed esce quando il guscio che l'ha avviato si chiude, anche se si blocca.
+- **Nuovo workflow** `.github/workflows/tauri.yml` (a mano, o quando cambia `shells/tauri`): compila il guscio Tauri su Windows, macOS e Linux, lo avvia una volta con `--smoke` e tiene per 3 giorni solo la dimensione del programma. Non è ancora girato su GitHub, e le prove del guscio su Linux sono ancora da fare. `ci.yml` non cambia.
 
 ## 2.11: feedback agli agenti
 

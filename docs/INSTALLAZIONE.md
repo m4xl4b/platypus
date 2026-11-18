@@ -167,6 +167,19 @@ npm run web:demo
 
 Usa solo Node.js, senza Electron e senza `npm install`: è il modo più leggero, utile anche su un secondo monitor o su un computer dove non vuoi installare nulla. Si apre `http://127.0.0.1:47800/`. Mancano solo l'icona nella barra di sistema e le notifiche del sistema operativo.
 
+## Guscio Tauri (facoltativo, sperimentale)
+
+Il guscio predefinito resta Electron, che non ha bisogno di niente di tutto questo. Il guscio Tauri in `shells/tauri/` serve a confrontare dimensioni, memoria e tempo di avvio; per compilarlo dai sorgenti servono, oltre a Node.js:
+
+- **Rust** 1.90 o più recente, con [rustup](https://rustup.rs).
+- **Windows:** i Microsoft C++ Build Tools con "Sviluppo di applicazioni desktop con C++", e `rustup default stable-msvc`. WebView2 c'è già in Windows 10 (dalla 1803) e in Windows 11.
+- **macOS:** gli Xcode Command Line Tools (`xcode-select --install`), macOS 10.15 o più recente.
+- **Debian / Ubuntu:** `sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`
+- **Fedora:** `sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file libappindicator-gtk3-devel librsvg2-devel libxdo-devel` e `sudo dnf group install "c-development"`
+- **Arch:** `sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg xdotool`
+
+Poi una volta `npm run tauri:build` (la prima compilazione richiede alcuni minuti) e `node scripts/launch.js --shell tauri`. Senza una compilazione, il lanciatore spiega come farla e apre Electron.
+
 ## Aggiornare e disinstallare
 
 **Aggiornare**: `git pull` nella cartella del repository, poi rilancia. Le dipendenze si riallineano da sole.
