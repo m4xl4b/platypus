@@ -248,6 +248,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(fbI18n.getLang() === 'it', 'e la lingua dell\'ufficio resta quella di prima');
   fbI18n.setLang(fbLangWas);
   core.state.setSettings({ fbSessionLessons: 'off' });
+  // B2 · il Nonno parla all'agente: un comando che il libro conosce come instabile fallisce di nuovo, scritto in un altro modo
+  const fbFlaky = core.bottega.view(fakeCwd).lessons.find(l => l.kind === 'flaky-command' && l.level === 'lesson');
+  const fbElderIn = (sid, extra = {}) => get(port, '/platypus-hook/feedback', 'POST', JSON.stringify({ session_id: sid, hook_event_name: 'PostToolUseFailure', cwd: fakeCwd, tool_name: 'Bash', tool_input: { command: 'cd ' + fakeCwd.replace(/\\/g, '/') + ' && CI=1 ' + (fbFlaky ? fbFlaky.key : 'x') + ' 2>&1 | tail -5' }, error: 'Exit code 1\nFAIL', ...extra }));
+  ok(fbFlaky && (await fbElderIn('fb-elder-off')).status === 204, 'il Nonno all\'agente: spento di base, niente');
+  core.state.setSettings({ fbElder: 'on' });
+  const fbE = await fbElderIn('fb-elder-1');
+  let fbEj = {}; try { fbEj = JSON.parse(fbE.body); } catch {}
+  const fbEt = (fbEj.hookSpecificOutput && fbEj.hookSpecificOutput.additionalContext) || '';
+  ok(fbE.status === 200 && fbEj.hookSpecificOutput.hookEventName === 'PostToolUseFailure' && /^Platypus: /.test(fbEt) && fbEt.includes(fbFlaky.key), 'il Nonno all\'agente, acceso: la lezione arriva dopo il comando fallito → ' + fbE.status + ' «' + fbEt.slice(0, 90) + '…»');
+  ok(core.feedbackGate.told('fb-elder-1', 'main', fbFlaky.id) && core.feedbackLog.recent(fakeCwd).some(e => e.sid === 'fb-elder-1' && e.feature === 'elder' && e.lessonId === fbFlaky.id), 'il Nonno all\'agente: l\'ufficio sa che gliel\'ha detto, e resta nel registro');
+  const fbE2 = await fbElderIn('fb-elder-2', { tool_input: { command: 'git status' } });
+  ok(fbE2.status === 204, 'il Nonno all\'agente: un comando senza lezione fallisce e basta → ' + fbE2.status);
+  core.state.setSettings({ fbElder: 'off' });
   const fb4 = await get(port, '/platypus-hook/feedback', 'POST', 'non è json {');
   ok(fb4.status === 204, 'feedback con un corpo che non è JSON: 204 → ' + fb4.status);
   // gli hook di feedback dal pannello delle opzioni: prima le righe da vedere, poi si scrive solo con la conferma

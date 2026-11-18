@@ -113,10 +113,11 @@ class Gate {
     if ((this.sessions.get(input.session_id) || []).filter(x => t - x < HOUR).length >= SESSION_MAX) return 'session';
     return '';
   }
-  record(input, message) {
+  record(input, message, mode) {
     const t = this.now(), k = this.key(input);
-    const a = this.agents.get(k) || { t: 0, said: new Set() };
+    const a = this.agents.get(k) || { t: 0, said: new Set(), told: new Set() };
     if (message.lessonId) a.said.add(message.lessonId);
+    if (message.lessonId && mode === 'on') a.told.add(message.lessonId); // arrivata davvero all'agente, non solo in ombra
     if (!STOP_EVENTS.has(input.hook_event_name)) {
       a.t = t;
       this.sessions.set(input.session_id, [...(this.sessions.get(input.session_id) || []).filter(x => t - x < HOUR), t]);
@@ -124,6 +125,10 @@ class Gate {
     this.agents.set(k, a);
     if (this.agents.size > 2000) this.prune(t);
   }
+  // quella lezione è stata detta davvero a quell'agente (l'ufficio lo mostra nel fumetto del Nonno)
+  told(sid, agentId, lessonId) { const a = this.agents.get(sid + '|' + (agentId || 'main')); return !!(a && a.told && a.told.has(lessonId)); }
+  // la risposta è partita troppo tardi e non è stata mandata: non risulta detta
+  untell(input, lessonId) { const a = this.agents.get(this.key(input)); if (a && a.told) a.told.delete(lessonId); }
   // le sessioni ferme da un pezzo non servono più
   prune(t = this.now()) {
     for (const [k, a] of this.agents) if (t - a.t > 12 * HOUR) this.agents.delete(k);
@@ -146,7 +151,7 @@ function respond(input, ctx = {}, gate, rules = RULES) {
     }, rules);
     if (!r) return { out: null, entry: null };
     const mode = modeOf(ctx.settings, r.message.feature);
-    if (gate) gate.record(input, r.message);
+    if (gate) gate.record(input, r.message, mode);
     const now = ctx.now || Date.now;
     let entry = { t: now(), sid: input.session_id, agent: input.agent_id || 'main', feature: r.message.feature, mode, event: input.hook_event_name, lessonId: r.message.lessonId, text: r.message.text };
     try { if (ctx.log) entry = ctx.log.append(cwd, entry) || entry; } catch {}

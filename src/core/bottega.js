@@ -373,4 +373,4 @@ function describe(l) {
   }
 }
 
-module.exports = { Bottega, digest, hints, elderLine, renderSection, lessonLines, projectKey, normDir, errorPattern, weightOf, KINDS, HALF_LIFE };
+module.exports = { Bottega, digest, hints, elderLine, renderSection, lessonLines, sameCmd, cmdCore, projectKey, normDir, errorPattern, weightOf, KINDS, HALF_LIFE };

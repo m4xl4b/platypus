@@ -592,6 +592,69 @@ function feedbackRuleTests(ok, fb, inp) {
     fs.writeFileSync(f, '# Progetto\n\n' + claudemd.MARKERS.start + '\n## Lezioni\n' + claudemd.MARKERS.end + '\nAltre regole, più lunghe di prima.\n');
     ok(claudemd.hasSection(tmp) === true && claudemd.hasSection(path.join(tmp, 'non-esiste')) === false, 'CLAUDE.md con la sezione: riconosciuta appena il file cambia');
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  elderRuleTests(ok, fb, inp, rules, i18n);
+}
+
+// B2 · il Nonno parla all'agente dopo una trappola nota
+function elderRuleTests(ok, fb, inp, rules, i18n) {
+  const bt = require(path.join(ROOT, 'src', 'core', 'bottega'));
+  const now = Date.parse('2026-11-18T10:00:00Z');
+  const ev = i => ({ sid: 's' + i, t: Date.parse('2026-10-1' + (1 + i) + 'T09:00:00Z'), agent: 'EXPLORE', excerpt: '' });
+  const L = (kind, key, extra = {}) => ({ id: 'id-' + kind + '-' + key.length, kind, key, count: 3, sessions: ['s1', 's2'], first: now - 30 * 86400000, last: now - 86400000, evidence: [ev(1), ev(2)], pinned: false, ignored: false, weight: 3, level: 'lesson', ...extra });
+  const errText = "Exit code 1\nFAIL src/auth/refresh.test.ts\n    TypeError: Cannot read properties of undefined (reading 'exp')\n      at renew (src/auth/refresh.ts:42:18)";
+  const surprise = require(path.join(ROOT, 'src', 'core', 'surprise'));
+  const pat = bt.errorPattern((surprise.classifyFailure(errText, 'npm test') || {}).excerpt || surprise.errorExcerpt(errText));
+  const book = [
+    L('flaky-command', 'npm test'), L('loop-trap', 'npm run lint', { weight: 2 }), L('known-fix', pat + ' → src/auth/refresh.ts', { weight: 4 }),
+    L('ghost-path', 'src/auth/oldToken.ts'), L('fragile-file', 'src/db/pool.ts'), L('slow-step', 'npm run build'),
+    L('flaky-command', 'npm run test:e2e', { level: 'observation' }), L('fragile-file', 'src/ui/Menu.tsx', { ignored: true }),
+  ];
+  const ctx = { cwd: '/p', lessons: () => book };
+  const fail = (tool, tool_input, error = 'Exit code 1\nFAIL') => rules.elder(inp('PostToolUseFailure', { tool_name: tool, tool_input, error }), ctx);
+  const done = (tool, tool_input, tool_response) => rules.elder(inp('PostToolUse', { tool_name: tool, tool_input, tool_response }), ctx);
+  const lang = i18n.getLang();
+  i18n.setLang('it');
+  // un comando instabile appena fallito, scritto in un altro modo
+  let m = fail('Bash', { command: 'cd /p && CI=1 npm test 2>&1 | tail -5' });
+  ok(m && /^Last time npm test got stuck 3 times \(12 October and 13 October\)/.test(m.text) && m.lessonId === book[0].id, 'Nonno all\'agente, comando instabile fallito: «' + (m && m.text) + '»');
+  ok(i18n.getLang() === 'it', 'Nonno all\'agente: in inglese, e la lingua dell\'ufficio non cambia');
+  i18n.setLang(lang);
+  ok(done('Bash', { command: 'npm test' }, { stdout: 'ok' }) === null, 'Nonno all\'agente: lo stesso comando riuscito non dice niente');
+  m = fail('PowerShell', { command: 'npm run lint' });
+  ok(m && /go round in circles/.test(m.text), 'Nonno all\'agente, giro in tondo: anche da PowerShell');
+  // un errore già sistemato viene prima del comando instabile
+  m = fail('Bash', { command: 'npm test' }, errText);
+  ok(m && /EXPLORE already fixed that error in src\/auth\/refresh\.ts/.test(m.text) && m.lessonId === book[2].id, 'Nonno all\'agente, errore già visto: dice dove è stato sistemato, prima di tutto il resto');
+  // un file che non c'è: Read fallito, Glob e Grep che non trovano niente
+  m = fail('Read', { file_path: '/p/src/auth/oldToken.ts' }, 'File does not exist.');
+  ok(m && /oldToken\.ts isn't there/.test(m.text), 'Nonno all\'agente, percorso inventato dopo un Read fallito');
+  ok(rules.elder(inp('PostToolUseFailure', { tool_name: 'Read', tool_input: { file_path: 'C:\\p\\src\\auth\\oldToken.ts' }, error: 'File does not exist.' }), { cwd: 'C:\\p', lessons: () => book }), 'Nonno all\'agente: anche con i percorsi di Windows');
+  ok(done('Glob', { pattern: '**/oldToken.ts' }, { filenames: [], numFiles: 0 }) && done('Grep', { pattern: 'renew', path: '/p/src/auth/oldToken.ts' }, { numFiles: 0 }), 'Nonno all\'agente: Glob e Grep che non trovano niente su quel percorso');
+  ok(done('Glob', { pattern: '**/oldToken.ts' }, { filenames: ['src/x/oldToken.ts'], numFiles: 1 }) === null && done('Glob', { pattern: 'src/**/*.ts' }, { filenames: [], numFiles: 0 }) === null && done('Glob', { pattern: '**/oldToken.ts' }, 'boh') === null, 'Nonno all\'agente: Glob che trova qualcosa, con i jolly o con un risultato che non conosciamo → niente');
+  ok(fail('Read', { file_path: '/p/src/altro.ts' }, 'File does not exist.') === null, 'Nonno all\'agente: un altro file che non c\'è non è una lezione');
+  // un file fragile appena modificato
+  m = done('Edit', { file_path: '/p/src/db/pool.ts', old_string: 'a', new_string: 'b' }, {});
+  ok(m && /Careful with src\/db\/pool\.ts/.test(m.text) && / Run the tests now\.$/.test(m.text), 'Nonno all\'agente, file fragile modificato: «' + (m && m.text) + '»');
+  ok(done('Write', { file_path: '/p/src/db/pool.ts', content: 'x' }, {}) && done('Read', { file_path: '/p/src/db/pool.ts' }, {}) === null, 'Nonno all\'agente: vale per Write, non per una lettura');
+  // un comando lento
+  m = done('Bash', { command: 'npm run build' }, { stdout: 'done' });
+  ok(m && /takes forever/.test(m.text), 'Nonno all\'agente, comando lento: la prossima volta in background');
+  // osservazioni e lezioni ignorate non partono, e nemmeno un comando diverso
+  ok(fail('Bash', { command: 'npm run test:e2e' }) === null && done('Edit', { file_path: '/p/src/ui/Menu.tsx' }, {}) === null && fail('Bash', { command: 'git status' }) === null, 'Nonno all\'agente: niente per osservazioni, lezioni ignorate e comandi senza lezione');
+  ok(rules.elder(inp('PostToolUseFailure', { tool_name: 'Bash', tool_input: { command: 'npm test' }, error: 'x' }), { cwd: '/p', lessons: () => [] }) === null && rules.elder(inp('PostToolUseFailure', {}), ctx) === null, 'Nonno all\'agente: libro vuoto o hook senza strumento → niente');
+  // nel giro completo: una volta per agente, i sottoagenti a parte, e l'ufficio sa a chi è arrivata davvero
+  let clock = now;
+  const gate = new fb.Gate({ now: () => clock });
+  const real = { PostToolUseFailure: [{ feature: 'elder', run: rules.elder }] };
+  const go = (settings, extra = {}) => fb.respond(inp('PostToolUseFailure', { tool_name: 'Bash', tool_input: { command: 'npm test' }, error: 'Exit code 1', ...extra }), { ...ctx, now: () => clock, settings }, gate, real);
+  const r1 = go({ fbElder: 'on' });
+  clock += fb.AGENT_GAP_MS + 1000;
+  const r2 = go({ fbElder: 'on' });
+  const r3 = go({ fbElder: 'shadow' }, { agent_id: 'sub-1' });
+  ok(r1.out && /^Platypus: Last time npm test/.test(r1.out.hookSpecificOutput.additionalContext) && r1.out.hookSpecificOutput.hookEventName === 'PostToolUseFailure' && !r2.out && !r2.entry, 'Nonno all\'agente, acceso: firmato «Platypus», e la stessa lezione non torna allo stesso agente');
+  ok(gate.told('sess-fb-0001', 'main', book[0].id) && !gate.told('sess-fb-0001', 'sub-1', book[0].id) && r3.entry && r3.entry.mode === 'shadow' && !gate.told('sess-fb-0001', 'main', 'altra'), 'Nonno all\'agente: «detto anche a lui» solo se il messaggio è partito davvero, non in ombra');
+  gate.untell(inp('PostToolUseFailure'), book[0].id);
+  ok(!gate.told('sess-fb-0001', 'main', book[0].id), 'Nonno all\'agente: una risposta arrivata tardi non risulta detta');
 }
 
 // feedback (2.11, A3): i tre modi di ogni funzione, i limiti di frequenza, il progetto zittito e il registro

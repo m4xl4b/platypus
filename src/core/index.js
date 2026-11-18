@@ -225,7 +225,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       // a fine turno le ultime righe del transcript possono non essere ancora lette: servono per giudicare il turno
       if (ev === 'Stop' || ev === 'SubagentStop') { try { watcher.pollTracked(); } catch {} }
       const s = (j && state.sessions.get(j.session_id)) || null;
-      cwd = (j && j.cwd) || (s && s.cwd) || '';
+      // la cartella del progetto è quella della sessione, se la conosciamo: quella dell'hook cambia quando l'agente fa cd
+      cwd = (s && s.cwd) || (j && j.cwd) || '';
       const r = feedback.respond(j, {
         now: Date.now, deadline: t0 + FEEDBACK_MS, session: s, cwd, settings: state.settings,
         lessons: cwd => { try { return bottega.view(cwd).lessons; } catch { return []; } },
@@ -240,6 +241,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     if (out && Date.now() - t0 > FEEDBACK_MS) {
       feedbackStats.late++; out = null;
       try { if (entry && entry.id) feedbackLog.setOutcome(cwd, entry.id, 'late'); } catch {} // nel registro risultava mandata: non lo è stata
+      try { if (entry && entry.lessonId) feedbackGate.untell(j, entry.lessonId); } catch {}
     }
     try {
       if (out) { feedbackStats.said++; json(res, 200, out); }
@@ -541,7 +543,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     if (url.pathname === '/api/bottega/hints') {
       const s = state.sessions.get(url.searchParams.get('sid') || '');
       if (!s || !s.cwd) return json(res, 404, { ok: false });
-      try { return json(res, 200, { ok: true, hints: hints(s, agentsOf(s), bottega.view(s.cwd).lessons, state.now()) }); } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+      // told: quella lezione è arrivata anche all'agente (feedback acceso), non solo al fumetto
+      try { return json(res, 200, { ok: true, hints: hints(s, agentsOf(s), bottega.view(s.cwd).lessons, state.now()).map(h => ({ ...h, told: feedbackGate.told(s.id, h.agent, h.lessonId) })) }); } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
     }
     if (url.pathname === '/api/bottega') {
       const cwd = projectCwd(Object.fromEntries(url.searchParams));

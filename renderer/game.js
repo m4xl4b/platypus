@@ -1872,11 +1872,17 @@ function updateNpcs(dt, t) {
   if (gp && !gp.path.length) {
     const v = chars.get(gp.victim);
     const there = v && v.phase === 'seated' && deskFor(v.id);
+    // con il feedback acceso la stessa lezione arriva anche all'agente (dopo lo strumento, quindi spesso mentre il Nonno
+    // sta già parlando): quando succede il fumetto lo dice
+    const toldToo = () => { const h = elder.hints.find(x => x.agent === gp.victim && x.lessonId === gp.hint.lessonId); return !!((h && h.told) || gp.hint.told); };
+    const elderText = told => gp.hint.text + (told ? ' ' + tr('✓ Detto anche a {name}.', { name: v && v.data ? agentName(v.data) : tr('lui') }) : '');
     if (gp.state === 'go') {
       if (!there) { gp.state = 'exit'; npcGo(gp, { kind: 'elevator' }); }
-      else { gp.state = 'tell'; gp.until = t + 9000; gp.dir = 'right'; gp.speech = gp.hint.text; gp.last = ''; }
+      else { gp.state = 'tell'; gp.until = t + 9000; gp.dir = 'right'; gp.told = toldToo(); gp.speech = elderText(gp.told); gp.last = ''; }
     } else if (gp.state === 'tell' && (!there || t > gp.until)) {
       gp.speech = ''; gp.last = ''; gp.state = 'exit'; npcGo(gp, { kind: 'elevator' });
+    } else if (gp.state === 'tell' && !gp.told && toldToo()) {
+      gp.told = true; gp.speech = elderText(true); gp.last = ''; gp.until = Math.max(gp.until, t + 5000); // il tempo di leggerlo
     } else if (gp.state === 'exit') gp.fading = true;
   }
   if (gp && gp.fading) { gp.alpha -= dt * 2.5; if (gp.alpha <= 0) dropNpc(gp); }
