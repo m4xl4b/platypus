@@ -17,12 +17,13 @@ const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
-require(path.join(ROOT, 'src', 'paths')).dataDir(); // copia una volta i dati del vecchio Agent Office
+// copia una volta i dati del vecchio Agent Office; con PLATYPUS_DATA_DIR è quella cartella (anche per launch.log)
+const DATA_DIR = require(path.join(ROOT, 'src', 'paths')).dataDir();
 const args = process.argv.slice(2);
 const has = f => args.includes(f);
 const passThrough = args.filter(a => !['--web', '--background', '--setup', '--shortcut', '--electron'].includes(a));
 const IS_WIN = process.platform === 'win32';
-const LOG_DIR = path.join(os.homedir(), '.platypus');
+const LOG_DIR = DATA_DIR;
 const LOG = path.join(LOG_DIR, 'launch.log');
 
 function say(msg) { console.log('[platypus] ' + msg); }

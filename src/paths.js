@@ -12,7 +12,21 @@ for (const [k, v] of Object.entries(process.env)) {
 }
 
 let migrated = false;
+// PLATYPUS_DATA_DIR: un'altra cartella al posto di ~/.platypus (prove, loop che lavorano in parallelo). La si crea se
+// manca, e non si copia niente dal vecchio Agent Office: è una cartella a parte, che parte vuota.
+function overrideDir() {
+  const v = process.env.PLATYPUS_DATA_DIR;
+  if (!v || !String(v).trim()) return null;
+  const dir = path.resolve(String(v).trim());
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    if (process.platform !== 'win32') fs.chmodSync(dir, 0o700);
+  } catch {}
+  return dir;
+}
 function dataDir() {
+  const over = overrideDir();
+  if (over) return over;
   const dir = path.join(os.homedir(), '.platypus');
   if (!migrated) {
     migrated = true;

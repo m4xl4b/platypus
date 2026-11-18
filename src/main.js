@@ -10,6 +10,9 @@ const { fitBounds } = require('./bounds');
 const { isOwnUrl, isExternalUrl } = require('./urls');
 const { tr, trn, money } = require('./i18n');
 
+// PLATYPUS_DATA_DIR (prove, loop in parallelo): anche i dati di Electron stanno lì, in electron/. Va fatto prima del
+// blocco "una sola istanza", che dipende da questa cartella: così non si scontra con il Platypus già aperto.
+if (process.env.PLATYPUS_DATA_DIR) { try { app.setPath('userData', path.join(require('./paths').dataDir(), 'electron')); } catch {} }
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 app.setAppUserModelId('com.platypus.desktop');
 // Windows: un CLSID fisso per le notifiche, scritto anche nel collegamento del menu Start (ensureStartMenuShortcut).

@@ -133,4 +133,5 @@ The benefit would be much smaller binaries (about 10 MB instead of 150) and less
 | `~/.platypus/bottega/<key>.json` | the Workshop book of each project (one file per project folder) |
 | `~/.platypus/feedback/<key>.jsonl` | the messages to the agents of each project, sent and in shadow, with their outcomes (rotated at 5 MB into `<key>.1.jsonl`) |
 | `~/.platypus/launch.log` | messages from the last window launch |
+| `$PLATYPUS_DATA_DIR` | if set, used instead of `~/.platypus` (created empty, nothing copied from the old Agent Office folder), and the Electron data go in its `electron/` subfolder: for tests and for development loops running next to your own Platypus |
 | Electron data folder (`Platypus`) | window position and shell preferences |

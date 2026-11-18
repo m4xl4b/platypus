@@ -325,6 +325,22 @@ function urlTests(ok) {
   ok(bad.every(u => !isExternalUrl(u)), 'file:, smb:, protocolli di altre app, javascript: e credenziali nell\'indirizzo: mai a openExternal');
 }
 
+// PLATYPUS_DATA_DIR: un'altra cartella al posto di ~/.platypus (prove e loop in parallelo), creata se manca,
+// senza copiare il vecchio Agent Office e senza toccare ~/.platypus
+function dataDirOverrideTests(ok) {
+  const { execFileSync } = require('child_process');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-dd-'));
+  try {
+    fs.mkdirSync(path.join(tmp, '.agent-office'));
+    fs.writeFileSync(path.join(tmp, '.agent-office', 'settings.json'), '{}');
+    const want = path.join(tmp, 'loop', '.platypus-dev');
+    const run = env => execFileSync(process.execPath, ['-e', `process.stdout.write(require(${JSON.stringify(path.join(ROOT, 'src', 'paths'))}).dataDir())`], { env: { ...process.env, HOME: tmp, USERPROFILE: tmp, PLATYPUS_DATA_DIR: '', ...env } }).toString();
+    const got = run({ PLATYPUS_DATA_DIR: want });
+    ok(got === path.resolve(want) && fs.existsSync(want) && fs.readdirSync(want).length === 0 && !fs.existsSync(path.join(tmp, '.platypus')), `cartella dati con PLATYPUS_DATA_DIR: ${path.relative(tmp, got)}, creata vuota, ~/.platypus non toccata`);
+    const rel = run({ PLATYPUS_DATA_DIR: '  ' });
+    ok(rel === path.join(tmp, '.platypus') && fs.existsSync(path.join(tmp, '.platypus', 'settings.json')), 'PLATYPUS_DATA_DIR vuota: si usa ~/.platypus, come sempre (con la copia dal vecchio Agent Office)');  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
 // ~/.platypus contiene progetti, comandi ed estratti degli errori: su Linux e macOS solo il proprietario la legge
 function dataDirTests(ok) {
   if (process.platform === 'win32') { console.log('  --   permessi di ~/.platypus: solo Linux e macOS, controllo saltato'); return; }
@@ -478,6 +494,7 @@ function run(ok) {
   planBoardTests(ok);
   nodeVersionTests(ok);
   dataDirTests(ok);
+  dataDirOverrideTests(ok);
   urlTests(ok);
   boundsTests(ok);
   forgetTests(ok);

@@ -133,4 +133,5 @@ Il vantaggio sarebbero programmi compilati molto più piccoli (circa 10 MB invec
 | `~/.platypus/bottega/<chiave>.json` | il Libro della bottega di ogni progetto (un file per cartella di progetto) |
 | `~/.platypus/feedback/<chiave>.jsonl` | i messaggi agli agenti di ogni progetto, mandati e in ombra, con i loro esiti (oltre 5 MB passa a `<chiave>.1.jsonl`) |
 | `~/.platypus/launch.log` | messaggi dell'ultimo avvio della finestra |
+| `$PLATYPUS_DATA_DIR` | se è impostata, si usa al posto di `~/.platypus` (creata vuota, senza copiare la vecchia cartella di Agent Office), e i dati di Electron vanno nella sua sottocartella `electron/`: per le prove e per i loop di sviluppo che girano accanto al tuo Platypus |
 | cartella dati di Electron (`Platypus`) | posizione della finestra e preferenze del guscio |
