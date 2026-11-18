@@ -256,7 +256,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         // i progetti della demo sono finti: anche se una cartella con quel nome esiste sul computer, non la guardiamo
         hasSection: cwd => (s && s.demo ? false : claudemd.hasSection(cwd)),
         // i passi già visti dell'agente che ha mandato l'hook (il principale, o il sottoagente con quell'identificativo)
-        agent: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a && a.world ? { id: a.id, steps: a.world.steps, nodes: a.world.nodes, goals: (a.mind && a.mind.goals) || [], mind: a.mind || null, corpus: s.corpus || null, space: a.mind && s.corpus ? semantic.pickSpace([a.mind], s.corpus, [embedder.space(1)]) : null } : null; },
+        agent: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a && a.world ? { id: a.id, steps: a.world.steps, nodes: a.world.nodes, goals: (a.mind && a.mind.goals) || [], mind: a.mind || null, corpus: s.corpus || null, space: a.mind && s.corpus ? semantic.pickSpace([a.mind], s.corpus, [embedder.space(1, { demo: !!s.demo })]) : null } : null; },
         waiting: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return !!(a && state.userPending(s, a, i.agent_id || null)); },
         agentName: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a ? displayName(a) : ''; },
         // tutti gli agenti della sessione, con il nome che hanno in ufficio (serve a dire chi ha cambiato un file)
@@ -374,10 +374,10 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     const minds = list.filter(a => a.mind && a.mind.pieces.length).slice(0, 40).map(a => ({ id: a.id, name: displayName(a), mind: a.mind, ctx: a.ctx || 0 }));
     if (!minds.length) return { ok: true, empty: true, sid: s.id, aid };
     try {
-      const space = semantic.pickSpace(minds.map(m => m.mind), s.corpus, [embedder.space(0)]);
+      const space = semantic.pickSpace(minds.map(m => m.mind), s.corpus, [embedder.space(0, { demo: !!s.demo })]);
       const v = semantic.snapshotMinds(minds, s.corpus, (q.get('replay') ? 'r:' : '') + s.id + ':' + aid, 0, space);
       const active = embedder.activeId(); // la fonte scelta: finché non ha tutti i vettori si mostra il TF-IDF e si "affina"
-      return { ok: true, sid: s.id, aid, now: st.now(), active, refining: active !== 'tfidf' && (v.src !== active || v.pending > 0), fallback: embedder.fallback, names: Object.fromEntries(minds.map(m => [m.id, m.name])), ctxNow: Object.fromEntries(minds.map(m => [m.id, m.ctx])), ...v };
+      return { ok: true, sid: s.id, aid, now: st.now(), active, refining: active !== 'tfidf' && !(active.startsWith('fake:') && !s.demo) && (v.src !== active || v.pending > 0), fallback: embedder.fallback, names: Object.fromEntries(minds.map(m => [m.id, m.name])), ctxNow: Object.fromEntries(minds.map(m => [m.id, m.ctx])), ...v };
     } catch (e) { return { ok: false, error: e.message }; }
   }
 

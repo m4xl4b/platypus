@@ -6,6 +6,7 @@
 //   node scripts/embed-eval.js                         TF-IDF
 //   node scripts/embed-eval.js --source ollama [--url http://127.0.0.1:11434] [--model bge-m3]
 //   node scripts/embed-eval.js --source onnx           (dopo npm run embed:onnx:install)
+//   node scripts/embed-eval.js --source fake           il provider finto della demo (un dizionario di sinonimi, non un modello)
 //   node scripts/embed-eval.js --json                  i numeri in JSON
 //
 // Con Ollama o ONNX i testi dell'insieme (non dati veri) vanno al modello locale; niente esce dal computer.
@@ -64,7 +65,8 @@ const quant = (a, q) => { const b = a.slice().sort((x, y) => x - y); return b.le
 const r3 = x => (Number.isFinite(x) ? +x.toFixed(3) : null);
 
 // space(session) → lo spazio di significato di quella sessione (TF-IDF: quello del suo corpus)
-function evaluate(src, spaceOf, { base = rule.thresholdsFor(src) } = {}) {
+// calibrate: misura anche il fondo (zero) e la soglia per allargare il compito (widen) e li usa; senza, usa quelli di base
+function evaluate(src, spaceOf, { base = rule.thresholdsFor(src), calibrate = false } = {}) {
   const S = sessions();
   // 1 · AUC e zero, con il coseno grezzo compito-azione
   const perTask = [], synT = [], offRaw = [];
@@ -77,10 +79,17 @@ function evaluate(src, spaceOf, { base = rule.thresholdsFor(src) } = {}) {
     const a = auc(on, off);
     perTask.push(a); if (x.syn) synT.push(a);
   }
-  const zero = base.zero ? base.zero : 0;
   const measuredZero = mean(offRaw);
-  // 2 · la regola della deriva sulle sessioni simulate, con le soglie della fonte (zero e floor) e rel da scegliere
-  const th = { ...base, calibrated: true, zero };
+  const zero = calibrate ? measuredZero : (base.zero || 0);
+  const sc = c => (zero ? Math.max(0, (c - zero) / (1 - zero)) : Math.max(0, c));
+  // widen: la migliore delle prime azioni, per i compiti veri e per quelli non misurabili (che non devono allargarsi)
+  const topEarly = x => { const sp = spaceOf(x), g = sp.goal(x.mind.goals[0]); return Math.max(0, ...x.mind.pieces.filter(p => p.kind === 'action').slice(0, 10).map(p => sc(sem.cosine(g, sp.piece(p))))); };
+  const realTop = S.filter(s => s.kind === 'control').map(topEarly), unTop = S.filter(s => s.kind === 'unmeasurable').map(topEarly);
+  const wLo = quant(realTop, 0.05), wHi = Math.max(...unTop);
+  const measuredWiden = wHi < wLo ? (wHi + wLo) / 2 : wHi;
+  const widen = calibrate ? measuredWiden : (base.widen || 0);
+  // 2 · la regola della deriva sulle sessioni simulate, con le soglie della fonte (zero, widen, floor) e rel da scegliere
+  const th = { ...base, calibrated: true, zero, widen };
   const rows = S.map(x => ({ x, al: sem.alignment(x.mind, x.corpus, { ...spaceOf(x), th }) }));
   const real = rows.filter(r => r.x.kind !== 'unmeasurable');
   const rels = real.map(r => { const l = r.al[r.al.length - 1]; return { drift: r.x.kind === 'drift', rel: l[2] / l[3], base: l[3] }; });
@@ -96,7 +105,11 @@ function evaluate(src, spaceOf, { base = rule.thresholdsFor(src) } = {}) {
   for (let t = 0.05; t <= 0.951; t += 0.01) grid.push(at(t));
   const top = Math.max(...grid.map(g => g.j));
   const ties = grid.filter(g => g.j >= top - 1e-9);
-  best = ties[Math.floor(ties.length / 2)]; // a metà dell'intervallo migliore: più margine dai due lati
+  best = ties[Math.floor(ties.length / 2)]; // a metà dell'intervallo migliore (Youden)
+  // la soglia proposta: a metà di quelle che prendono almeno il 90% delle derive senza nessun falso allarme, così c'è
+  // margine da tutti e due i lati; se non ce n'è nessuna, quella di Youden
+  const good = grid.filter(g => g.fpr === 0 && g.tpr >= 0.9);
+  const chosen = good.length ? good[Math.floor(good.length / 2)] : best;
   // 3 · weak: la base dei compiti veri e di quelli non misurabili
   const realBase = rows.filter(r => r.x.kind === 'control').map(r => r.al[r.al.length - 1][3]);
   const unBase = rows.filter(r => r.x.kind === 'unmeasurable').map(r => r.al[r.al.length - 1][3]);
@@ -104,8 +117,8 @@ function evaluate(src, spaceOf, { base = rule.thresholdsFor(src) } = {}) {
   return {
     src, tasks: SET.length, sessions: real.length,
     auc: r3(mean(perTask)), aucSyn: r3(mean(synT)), aucMin: r3(Math.min(...perTask)),
-    zero: r3(measuredZero), relAuc: r3(relAuc),
-    best: { rel: best.rel, tpr: best.tpr, fpr: best.fpr }, current: (({ rel, tpr, fpr, unjudged }) => ({ rel, tpr, fpr, unjudged }))(at(base.rel)),
+    zero: r3(measuredZero), widen: { realP05: r3(wLo), unmeasurableMax: r3(wHi), suggested: r3(measuredWiden) }, used: { zero: r3(zero), widen: r3(widen) }, relAuc: r3(relAuc),
+    best: { rel: best.rel, tpr: best.tpr, fpr: best.fpr }, chosen: { rel: chosen.rel, tpr: chosen.tpr, fpr: chosen.fpr }, current: (({ rel, tpr, fpr, unjudged }) => ({ rel, tpr, fpr, unjudged }))(at(base.rel)),
     weak: { realP05: r3(lo), unmeasurableMax: r3(hi), suggested: r3(hi < lo ? (hi + lo) / 2 : hi), current: base.weak },
   };
 }
@@ -130,7 +143,8 @@ function table(r) {
   return [
     `fonte ${r.src} · ${r.tasks} compiti, ${r.sessions} sessioni simulate`,
     `  AUC sul compito/fuori: ${r.auc} (sinonimi ${r.aucSyn}, il compito peggiore ${r.aucMin}) · fondo (zero) ${r.zero}`,
-    `  deriva: AUC di rel ${r.relAuc} · soglia migliore rel ${r.best.rel} (veri ${r.best.tpr}, falsi ${r.best.fpr}) · in uso rel ${r.current.rel} (veri ${r.current.tpr}, falsi ${r.current.fpr}; non giudicabili ${r.current.unjudged})`,
+    `  allargare il compito: la migliore delle prime azioni, compiti veri (5° percentile) ${r.widen.realP05}, non misurabili al massimo ${r.widen.unmeasurableMax} → widen ${r.widen.suggested} · usati: zero ${r.used.zero}, widen ${r.used.widen}`,
+    `  deriva: AUC di rel ${r.relAuc} · Youden rel ${r.best.rel} (veri ${r.best.tpr}, falsi ${r.best.fpr}) · proposta rel ${r.chosen.rel} (veri ${r.chosen.tpr}, falsi ${r.chosen.fpr}) · in uso rel ${r.current.rel} (veri ${r.current.tpr}, falsi ${r.current.fpr}; non giudicabili ${r.current.unjudged})`,
     `  non misurabile: base dei compiti veri (5° percentile) ${r.weak.realP05}, dei non misurabili al massimo ${r.weak.unmeasurableMax} → weak ${r.weak.suggested} (in uso ${r.weak.current})`,
   ].join('\n');
 }
@@ -145,16 +159,15 @@ if (require.main === module) {
     if (source === 'tfidf') r = evaluate('tfidf', x => sem.tfidfSpace(x.corpus));
     else {
       const settings = { ollamaUrl: arg('--url') || undefined, embedModel: arg('--model') || '' };
-      const p = source === 'onnx' ? require(path.join(ROOT, 'src', 'core', 'embed', 'onnx')).create(settings, { modelsDir: path.join(require(path.join(ROOT, 'src', 'paths')).dataDir(), 'models'), timeoutMs: 60000 })
+      const p = source === 'fake' ? require(path.join(ROOT, 'src', 'core', 'embed', 'fake')).create() : source === 'onnx' ? require(path.join(ROOT, 'src', 'core', 'embed', 'onnx')).create(settings, { modelsDir: path.join(require(path.join(ROOT, 'src', 'paths')).dataDir(), 'models'), timeoutMs: 60000 })
         : require(path.join(ROOT, 'src', 'core', 'embed', source)).create(settings, { timeoutMs: 60000 });
       if (!(await p.ready())) { console.error(`${source}: ${p.state} ${p.detail || ''} ${p.hint ? '→ ' + p.hint : ''}`); process.exit(1); }
       const spaceOf = await neuralSpaces(p);
-      // la prima passata misura il fondo; la seconda riscala da lì, come farà il motore
-      const r0 = evaluate(p.id, spaceOf, { base: { ...rule.TFIDF } });
-      r = evaluate(p.id, spaceOf, { base: { ...rule.TFIDF, zero: r0.zero } });
-      r.zeroUsed = r0.zero;
+      // misura il fondo e la soglia per allargare il compito, e calibra la regola con quelli, come farà il motore
+      r = evaluate(p.id, spaceOf, { base: { ...rule.TFIDF }, calibrate: true });
+      r.row = { rel: r.chosen.rel, run: rule.TFIDF.run, weak: r.weak.suggested, warn: +Math.min(0.95, r.chosen.rel + 0.25).toFixed(2), floor: rule.TFIDF.floor, zero: r.used.zero, widen: r.used.widen, calibrated: true };
       if (p.stop) p.stop();
     }
-    console.log(args.includes('--json') ? JSON.stringify(r, null, 1) : table(r));
+    console.log(args.includes('--json') ? JSON.stringify(r, null, 1) : table(r) + (r.row ? '\n  riga per drift-rule.js: ' + JSON.stringify(r.row) : ''));
   })().catch(e => { console.error(e.message); process.exit(1); });
 }

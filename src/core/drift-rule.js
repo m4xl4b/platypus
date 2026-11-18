@@ -10,16 +10,19 @@
 //   warn   sotto questo allineamento "si allontana" (la fascia gialla della mappa)
 //   floor  il minimo della base (in alignment)
 //   zero   la somiglianza tipica di due testi che non c'entrano: i punteggi si riscalano da lì ((s - zero) / (1 - zero))
+//   widen  il punteggio minimo perché una delle prime azioni allarghi il compito (in alignment); con il TF-IDF basta > 0
 // Una fonte neurale senza misure non giudica: risulta "non misurabile" (non calibrata), mai una deriva inventata.
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.PlatypusDrift = factory();
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
-  const TFIDF = Object.freeze({ rel: 0.35, run: 6, weak: 0.031, warn: 0.6, floor: 0.03, zero: 0, calibrated: true });
+  const TFIDF = Object.freeze({ rel: 0.35, run: 6, weak: 0.031, warn: 0.6, floor: 0.03, zero: 0, widen: 0, calibrated: true });
   // una riga per fonte misurata (chiave: la fonte senza ":latest")
   const TABLE = Object.freeze({
     tfidf: TFIDF,
+    // il provider finto della demo (embed/fake.js): un dizionario di sinonimi, non un modello; misurato il 2026-11-18
+    'fake:synonyms': Object.freeze({ rel: 0.53, run: 6, weak: 0.309, warn: 0.78, floor: 0.03, zero: 0.621, widen: 0.381, calibrated: true }),
   });
   const UNCALIBRATED = Object.freeze({ ...TFIDF, calibrated: false });
 

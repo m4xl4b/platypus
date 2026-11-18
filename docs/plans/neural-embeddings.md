@@ -137,7 +137,7 @@ Today's thresholds are valid for TF-IDF, not for neural vectors, which have much
   - If the source changes, the view says so and starts again, without mixing.
 - **While the vectors arrive:** a small "refining…" indicator. Never an empty screen.
 
-## E7 · Demo and tests  [ ]
+## E7 · Demo and tests  [x]
 
 - **The demo:** it works without Ollama. With the option `embedEngine=fake`, hidden and for the demo only, it shows the "synonyms" scenario: an agent that talks about "autenticazione" while the task says "login".
   - With TF-IDF the scenario comes out as drifting.
@@ -291,3 +291,18 @@ This is on paper: E5 measures it only if the real model is installed.
 - `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing.
 
 **Note.** Opening the options checks `127.0.0.1:11434` (or the configured address) once: a loopback request that only lists the models. On this computer Ollama is not running, so it answers "not found"; nothing is started.
+
+### 2026-11-18 · E7 · Demo and tests
+
+**Done.**
+- **Demo provider** `src/core/embed/fake.js` (`fake:synonyms`, 96 dimensions): a small dictionary of concepts that maps Italian and English synonyms to the same concept (login, accesso, autenticazione, credentials, password, … → one concept), plus a constant component that imitates the background similarity of neural models. It is selected with `embedEngine = 'fake'`, which is accepted by the settings but not listed in the options (shown only if it is already set). It applies **only to demo sessions**: `Embedder.space(prio, {demo})` returns nothing for other sessions, so real sessions stay lexical, and `/api/agentmind` does not show them as "refining".
+- **The "synonyms" scene** (`Demo.synonymsScenario`, floor 1, portale-clienti): a general-purpose subagent with the task "Sistema il login: gli utenti non riescono più a entrare" (English: "Fix the login: users can no longer get in"), which first works on `src/login/…` and then, with other words, on authentication, credentials, password hash, access guard and sign-in. It plays only its script (20 actions, already done when the demo starts). With TF-IDF it comes out **drifting** (10 actions in a row, alignment 12%); with the demo provider **on course** (95%). It is the visible proof of why embeddings are needed.
+- **Calibration of the demo provider**, and two changes to the calibration they showed were needed:
+  - `widen` (new column of the table, 0 for TF-IDF, so its numbers do not change): with a neural-like source every text is a little similar to every other, so the north star widened even the tasks that cannot be measured (base 0.49 for "Zzyzx quux frobnicate"). Now an early action widens the task only if its rescaled score is above `widen`, measured halfway between the unmeasurable tasks (at most 0.095) and the real ones (5th percentile 0.666).
+  - the proposed `rel`: Youden's choice (0.87) sat next to the first false alarm (0.88); in the demo scene the line touched it. The script now proposes the middle of the thresholds that catch at least 90% of the drifts with no false alarm (0.18–0.88 → 0.53), and still reports Youden's.
+  - Row `fake:synonyms` in `drift-rule.js`: `rel` 0.53, `run` 6, `weak` 0.309, `warn` 0.78, `floor` 0.03, `zero` 0.621, `widen` 0.381. On the set it beats TF-IDF (AUC 0.941 vs 0.785, on synonyms 0.917 vs 0.547; drift 93% caught with no false alarms and no session unjudged, vs 80% and 11.7%). Its dictionary was written knowing the areas of the set: these numbers prove the chain, not neural models. Written in `docs/plans/embedding-calibration.md`.
+- `scripts/embed-eval.js --source fake`; the script prints the row for `drift-rule.js`.
+
+**What `npm test` covers now** (as E7 asks): the provider chain (E2, E3, E4), the cache with small caps (E2), mixed sources (E1, E2), the fallbacks (E2, E3, smoke), the unchanged TF-IDF numbers including `drift()` and the 2.11 drift tests (E1 fixture and `unit-engine.js`, untouched), plus for E7: the `fake:synonyms` row equals what the measure proposes (a test recomputes it), the demo provider beats TF-IDF on the set, and in the smoke test the scene is drifting with TF-IDF and on course with `fake`, while a non-demo session stays lexical with `fake` set.
+
+**Checks.** `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing (one new string). Interface, in the built-in browser with the engine in web mode (temporary home, port 47840, demo): the scene's map says "DRIFTING for 10 actions · alignment 0%" with lexical; after setting `fake` the label went "lexical … refining… → meaning: demo test (synonyms) refining… source changed: starting again" and the star said "ON COURSE · alignment 95%". The only console errors were `ERR_CONNECTION_REFUSED` from the page retrying while the engine was stopped between two runs, not from this code. Settings back to `tfidf`, engine stopped by its PID, temporary home deleted.

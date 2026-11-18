@@ -440,6 +440,12 @@ function calibrationTests(ok) {
   // una fonte di prova (parole sparse in 64 dimensioni): la stessa misura funziona con vettori di altra lunghezza e con il fondo
   const word = ev.evaluate('test:word64', x => fakeSpace('test:word64', 64), { base: { ...rule.TFIDF, zero: 0.05 } });
   ok(Number.isFinite(word.auc) && Number.isFinite(word.relAuc) && word.best.rel > 0 && word.zero >= 0, `embedding E5: la misura funziona con qualsiasi fonte (prova a 64 dimensioni: AUC ${word.auc}, soglia migliore ${word.best.rel})`);
+  // E7 · il provider finto della demo: la riga della tabella è quella che la misura propone, e batte il TF-IDF
+  const fake = require(path.join(ROOT, 'src', 'core', 'embed', 'fake'));
+  const fr = ev.evaluate(fake.ID, () => ({ src: fake.ID, goal: g => fake.vector(g.text), piece: p => fake.vector(p.text) }), { base: { ...rule.TFIDF }, calibrate: true });
+  const row = rule.TABLE[fake.ID];
+  ok(row && row.rel === fr.chosen.rel && row.weak === fr.weak.suggested && row.zero === fr.used.zero && row.widen === fr.used.widen && row.warn === +Math.min(0.95, fr.chosen.rel + 0.25).toFixed(2), `embedding E7: la riga «${fake.ID}» di drift-rule.js è quella misurata (rel ${fr.chosen.rel}, weak ${fr.weak.suggested}, zero ${fr.used.zero}, widen ${fr.used.widen})`);
+  ok(fr.auc > r.auc && fr.aucSyn > r.aucSyn + 0.2 && fr.chosen.tpr >= r.current.tpr && fr.chosen.fpr === 0 && fr.weak.unmeasurableMax < fr.weak.suggested, `embedding E7: sull'insieme il provider finto batte il TF-IDF (AUC ${fr.auc} contro ${r.auc}, sinonimi ${fr.aucSyn} contro ${r.aucSyn})`);
   // la tabella: il TF-IDF con i numeri di sempre; una fonte neurale senza misure non giudica
   const un = rule.thresholdsFor('ollama:bge-m3:latest');
   ok(rule.thresholdsFor('tfidf') === rule.TFIDF && rule.TFIDF.rel === 0.35 && rule.TFIDF.run === 6 && rule.TFIDF.weak === 0.031 && rule.TFIDF.floor === 0.03 && un.calibrated === false, 'embedding E5: soglie per fonte: TF-IDF 0,35 · 6 · 0,031 · 0,03; una fonte neurale non misurata è «non calibrata»');

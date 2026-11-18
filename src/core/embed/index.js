@@ -21,7 +21,7 @@ const crypto = require('crypto');
 const { DIM } = require('../semantic');
 const { loopbackUrl, DEFAULT_URL } = require('./ollama');
 
-const ENGINES = ['auto', 'ollama', 'onnx', 'tfidf'];
+const ENGINES = ['auto', 'ollama', 'onnx', 'tfidf', 'fake']; // 'fake': nascosto, solo per la demo (fake.js)
 const CHAIN = ['ollama', 'onnx'];
 const MEM_CAP = 5000;
 const DISK_CAP = 50 * 1024 * 1024;
@@ -131,6 +131,8 @@ function defaultFactory(kind) {
 }
 const FACTORIES = { ollama: defaultFactory('ollama'), onnx: defaultFactory('onnx') };
 
+let fakeOne = null;
+function fakeProvider() { return fakeOne || (fakeOne = require('./fake').create()); }
 function cleanEngine(v) { return ENGINES.includes(v) ? v : 'tfidf'; } // un valore sconosciuto resta lessicale
 // le opzioni del significato, ripulite (state.setSettings): un indirizzo di Ollama che non è di loopback si rifiuta
 const SETTINGS = ['embedEngine', 'embedModel', 'ollamaUrl'];
@@ -146,6 +148,7 @@ function cleanSetting(k, v, prev) {
 async function resolveChain(engine, sources, { skip = () => false, timeoutMs = TIMEOUT_MS } = {}) {
   const wanted = cleanEngine(engine);
   if (wanted === 'tfidf') return { provider: tfidf, wanted, fallback: null };
+  if (wanted === 'fake') return { provider: fakeProvider(), wanted, fallback: null };
   const order = wanted === 'auto' ? CHAIN : [wanted];
   let reason = null;
   for (const k of order) {
@@ -243,10 +246,12 @@ class Embedder {
 
   // Lo spazio di significato per semantic.js, con la fonte attiva; null se la fonte è il TF-IDF.
   // prio: 0 per gli agenti che si stanno guardando, 1 per il resto (es. la regola della deriva negli hook).
-  space(prio = 1) {
+  // demo: la sessione è della demo; il provider finto vale solo per quelle.
+  space(prio = 1, { demo = false } = {}) {
     this.maybeResolve();
     const p = this.provider;
     if (p === tfidf || this.isSuspended(this.kindOf(p))) return null;
+    if (p.id === fakeProvider().id && !demo) return null;
     const src = p.id, zero = new Float32Array(p.dim);
     const look = (x, kind) => {
       const text = x && x.text;

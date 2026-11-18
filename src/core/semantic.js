@@ -255,7 +255,7 @@ function alignment(mind, corpus, space = tfidfSpace(corpus)) {
     if (!v0) return { t: g.t, v: null };
     const end = gi + 1 < mind.goals.length ? mind.goals[gi + 1].t : Infinity;
     const early = acts.filter(x => x.p.t >= g.t && x.p.t < end).slice(0, 10).map(x => x.v);
-    const top = early.map(v => [cosine(v, v0), v]).sort((a, b) => b[0] - a[0]).slice(0, 3).filter(x => x[0] > 0);
+    const top = early.map(v => [score(cosine(v, v0)), v]).sort((a, b) => b[0] - a[0]).slice(0, 3).filter(x => x[0] > (th.widen || 0)); // pertinenti davvero, per quella fonte
     if (!top.length) return { t: g.t, v: v0 };
     const v = new Float32Array(v0.length);
     for (let i = 0; i < v.length; i++) { v[i] = v0[i]; for (const [, x] of top) v[i] += 0.6 * x[i] / top.length; }

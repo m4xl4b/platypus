@@ -413,6 +413,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const engineDr = require(path.join(ROOT, 'src', 'core', 'semantic')).drift(fbDrS.main.mind, fbDrS.corpus);
   const pageDr = pageRule && pageRule.judge(fbDrMind.align, fbDrMind.th);
   ok(ruleJs.status === 200 && ruleJs.body === fs.readFileSync(path.join(ROOT, 'src', 'core', 'drift-rule.js'), 'utf8') && pageDr && engineDr && pageDr.drifting === engineDr.drifting && pageDr.run === engineDr.run && pageDr.rel === engineDr.rel, `significato: /drift-rule.js è la regola del motore, e sulla stessa serie la mappa dice lo stesso (deriva da ${pageDr && pageDr.run} azioni)`);
+  // E7 · la scena «sinonimi» della demo: il compito dice login, l'agente lavora sull'autenticazione con altre parole.
+  // Con il TF-IDF sembra alla deriva; con il provider finto della demo (embedEngine = fake, nascosto) resta sulla rotta.
+  {
+    const synA = [...core.state.sessions.get(p1.id).subs.values()].find(a => a._demoHold === Infinity);
+    const synQ = `/api/agentmind?sid=${p1.id}&aid=${synA && synA.id}`;
+    const lex = JSON.parse((await get(port, synQ)).body), lexJ = pageRule.judge(lex.align, lex.th);
+    await get(port, '/api/settings', 'POST', JSON.stringify({ embedEngine: 'fake' }));
+    let neu = null;
+    for (let i = 0; i < 60 && !(neu && neu.src === 'fake:synonyms' && !neu.refining); i++) { neu = JSON.parse((await get(port, synQ)).body); await sleep(30); }
+    const neuJ = neu && pageRule.judge(neu.align, neu.th);
+    ok(synA && lex.src === 'tfidf' && lexJ.drifting && neu.src === 'fake:synonyms' && neu.th.calibrated && !neuJ.drifting && neuJ.state === 'on', `demo, sinonimi: col TF-IDF «alla deriva» da ${lexJ.run} azioni, col significato finto «sulla rotta» (allineamento ${Math.round(neuJ.rel * 100)}%)`);
+    const real = JSON.parse((await get(port, `/api/agentmind?sid=${fbDrSid}&aid=main`)).body);
+    ok(real.src === 'tfidf' && real.refining === false && JSON.parse((await get(port, '/api/settings')).body).embedEngine === 'fake', 'demo, sinonimi: il provider finto vale solo per le sessioni della demo, le altre restano lessicali');
+    await get(port, '/api/settings', 'POST', JSON.stringify({ embedEngine: 'tfidf' }));
+  }
   core.state.setSettings({ fbDrift: 'off' });
   // C1 · quello che l'ufficio e il Libro mostrano: gli ultimi messaggi nello stato, il registro del progetto, i conteggi
   const fbSaid = core.feedbackSaid();
