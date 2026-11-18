@@ -325,6 +325,42 @@ function urlTests(ok) {
   ok(bad.every(u => !isExternalUrl(u)), 'file:, smb:, protocolli di altre app, javascript: e credenziali nell\'indirizzo: mai a openExternal');
 }
 
+// 2.12.1 · il registro del lanciatore si ruota (launch.log.1), non si svuota; le prove partono solo con una cartella
+// dei dati temporanea
+function launchLogTests(ok) {
+  const { openLaunchLog, readSince } = require(path.join(ROOT, 'scripts', 'launch-log'));
+  const guard = require(path.join(ROOT, 'scripts', 'test-guard'));
+  const { spawnSync } = require('child_process');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-launchlog-'));
+  try {
+    const log = path.join(tmp, 'launch.log');
+    fs.writeFileSync(log, 'avvio di prima: errore importante\n');
+    let l = openLaunchLog(tmp);
+    fs.writeSync(l.fd, 'secondo avvio\n'); fs.closeSync(l.fd);
+    ok(fs.readFileSync(log + '.1', 'utf8') === 'avvio di prima: errore importante\n' && fs.readFileSync(log, 'utf8') === 'secondo avvio\n' && l.start === 0, 'launch.log: il registro di prima diventa launch.log.1, non si svuota');
+    l = openLaunchLog(tmp); fs.closeSync(l.fd);
+    ok(fs.readFileSync(log + '.1', 'utf8') === 'secondo avvio\n' && fs.readFileSync(log, 'utf8') === '', 'launch.log: a ogni avvio si ruota di uno (se ne tengono due)');
+    l = openLaunchLog(tmp); fs.closeSync(l.fd);
+    ok(fs.readFileSync(log + '.1', 'utf8') === 'secondo avvio\n', 'launch.log: un registro vuoto non prende il posto di launch.log.1');
+    // se il file non si può rinominare (qui: launch.log.1 è una cartella), si scrive in coda e il vecchio resta
+    fs.writeFileSync(log, 'ancora aperto da un altro Platypus\n'); fs.rmSync(log + '.1'); fs.mkdirSync(log + '.1');
+    l = openLaunchLog(tmp);
+    fs.writeSync(l.fd, 'terzo avvio\n'); fs.closeSync(l.fd);
+    const all = fs.readFileSync(log, 'utf8');
+    ok(all.startsWith('ancora aperto da un altro Platypus\n') && /\n--- \d{4}-.*---\nterzo avvio\n$/.test(all) && readSince(log, l.start) === 'terzo avvio\n', 'launch.log: se non si può ruotare si scrive in coda, e del nuovo avvio si legge solo la sua parte');
+    // le prove: mai senza PLATYPUS_DATA_DIR, mai in una cartella che non sia temporanea
+    const inTmp = path.join(os.tmpdir(), 'platypus-guard', 'data');
+    // (le prove girano con una home temporanea: per una cartella "vera" si usa un percorso fisso fuori da quella temporanea)
+    const real = path.join(path.parse(os.tmpdir()).root, 'Users', 'max', '.platypus');
+    ok(guard.whyNot({}) !== '' && guard.whyNot({ PLATYPUS_DATA_DIR: '  ' }) !== '' && guard.whyNot({ PLATYPUS_DATA_DIR: real }) !== '' && guard.whyNot({ PLATYPUS_DATA_DIR: path.dirname(real) }) !== '' && guard.whyNot({ PLATYPUS_DATA_DIR: os.tmpdir() }) !== '' && guard.whyNot({ PLATYPUS_DATA_DIR: path.join(os.tmpdir(), '..', 'Documents') }) !== '', 'prove: si rifiutano senza PLATYPUS_DATA_DIR, con una cartella vera (~/.platypus, la home), con la cartella temporanea intera o con una che ne esce con ..');
+    ok(guard.whyNot({ PLATYPUS_DATA_DIR: inTmp }) === '' && guard.whyNot({ PLATYPUS_DATA_DIR: path.join(tmp, 'ci', 'data'), RUNNER_TEMP: path.join(tmp, 'ci') }) === '', 'prove: partono con una cartella dentro quella temporanea del sistema, o dentro RUNNER_TEMP nelle GitHub Actions');
+    const env = { ...process.env }; delete env.PLATYPUS_DATA_DIR;
+    const run = f => spawnSync(process.execPath, [path.join(ROOT, 'scripts', f)], { env, encoding: 'utf8', timeout: 30000 });
+    const r1 = run('smoke-test.js'), r2 = run('unit-notify.js');
+    ok(r1.status === 2 && /Mi rifiuto di partire/.test(r1.stderr) && !/sintassi/.test(r1.stdout) && r2.status === 2, `prove: npm test e una prova lanciata da sola, senza PLATYPUS_DATA_DIR, escono subito con il codice ${r1.status} senza fare niente`);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
 // 2.12.1 · i metadati di una sessione Cowork: solo i campi della lista ammessa, mai messaggi, prompt, nome o e-mail
 function coworkMetaTests(ok) {
   const { readCoworkMeta, COWORK_META_FIELDS } = require(path.join(ROOT, 'src', 'core', 'sources'));
@@ -548,6 +584,7 @@ function run(ok) {
   dataDirOverrideTests(ok);
   modelTests(ok);
   coworkMetaTests(ok);
+  launchLogTests(ok);
   urlTests(ok);
   boundsTests(ok);
   forgetTests(ok);
@@ -1219,6 +1256,7 @@ function bashLabelTests(ok) {
 module.exports = { run };
 
 if (require.main === module) {
+  require('./test-guard').requireTempDataDir('unit-engine'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea
   let failed = 0;
   run((cond, msg) => { console.log((cond ? '  ok   ' : '  FAIL ') + msg); if (!cond) failed++; });
   console.log(failed ? `\n${failed} controlli falliti` : '\nTutto a posto.');

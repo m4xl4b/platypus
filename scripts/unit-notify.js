@@ -95,6 +95,7 @@ function run(ok) {
 
 module.exports = { run };
 if (require.main === module) {
+  require('./test-guard').requireTempDataDir('unit-notify'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea
   let failed = 0;
   run((c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) failed++; });
   process.exit(failed ? 1 : 0);

@@ -537,6 +537,7 @@ async function run(ok) {
 module.exports = { run, demoScenario, fakeOllama, wordVec };
 
 if (require.main === module) {
+  require('./test-guard').requireTempDataDir('unit-embed'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea
   let failed = 0;
   run((cond, msg) => { console.log((cond ? '  ok   ' : '  FAIL ') + msg); if (!cond) failed++; }).then(() => process.exit(failed ? 1 : 0));
 }

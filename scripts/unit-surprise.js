@@ -396,6 +396,7 @@ function run(ok) {
 module.exports = { run };
 
 if (require.main === module) {
+  require('./test-guard').requireTempDataDir('unit-surprise'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea
   let failed = 0;
   run((cond, msg) => { console.log((cond ? '  ok   ' : '  FAIL ') + msg); if (!cond) failed++; });
   console.log(failed ? `\n${failed} controlli falliti` : '\nTutto a posto.');

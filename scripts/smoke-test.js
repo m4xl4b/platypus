@@ -74,6 +74,9 @@ function shellEvents(port, headers = {}) {
   return { events, ready, wait, status: () => status, close: () => { try { req.destroy(); } catch {} } };
 }
 
+// mai nei dati veri: le prove partono solo con PLATYPUS_DATA_DIR in una cartella temporanea
+require('./test-guard').requireTempDataDir('npm test');
+
 (async () => {
   console.log(`Platypus smoke test · ${process.platform} ${process.arch} · Node ${process.versions.node}`);
 

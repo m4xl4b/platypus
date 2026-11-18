@@ -34,7 +34,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
+      # the tests refuse to start unless the data folder is a temporary one (scripts/test-guard.js)
       - run: node scripts/smoke-test.js
+        env:
+          PLATYPUS_DATA_DIR: ${{ runner.temp }}/platypus-data
 
   window:
     name: Window · ${{ matrix.os }}
