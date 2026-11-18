@@ -392,3 +392,12 @@ Written by the embedding session, which integrated this plan into `main` at Max'
 - **macOS** (`macos-15-intel`): still queued when this was written. On this repository's earlier pushes the macOS jobs of the normal CI were never picked up ("The job was not acquired by Runner of type hosted even after multiple attempts") and ended as failures after 15 minutes: a GitHub runner problem, not the code. The macOS build of the Tauri shell is therefore still unproven.
 - The answer to the question above ("may I push the branch") is no longer needed.
 - T8 is marked `[x]` for what it was meant to prove on GitHub (the build and a real start); macOS stays open, together with the Linux parts of T5 and T7 on the Linux computer.
+
+### 2026-11-18 · T8 · The branch's own run, and macOS
+
+- With Max's permission ("Sì, fai il push", in the Tauri session) the branch `claude/sviluppo-tauri-66442e` was pushed at `d7ad2a6`, before the integration. Its "Tauri shell" run: https://github.com/m4xl4b/platypus/actions/runs/44345901907
+  - **Linux**: green in 4 min 22 s. Build 3 min 38 s; `--smoke --demo` under `dbus-run-session` and `xvfb-run`: `[smoke] ok: started the engine on port 47812, the window loaded the office` about 1.5 s after the start; program 7,181,752 bytes (6.8 MB). The only noise is warnings from the desktop portals and AT-SPI, which have no real desktop under Xvfb: expected, not errors. `WEBKIT_DISABLE_COMPOSITING_MODE` was not needed.
+  - **Windows**: green in 5 min 44 s.
+  - **macOS**: "The job was not acquired by Runner of type hosted even after multiple attempts", failed after 29 min 51 s without running a single step (no log exists). The same GitHub runner problem the integration entry above describes; nothing in the code to change.
+- The branch was then fast-forwarded to `main` (`0fab7ac`), as the integration asked, before this entry. `npm test` on the merged state: "Tutto a posto."; `npm run i18n:check`: 0 missing.
+- Still open: a macOS run that actually gets a runner (re-run the workflow by hand when GitHub has macOS capacity, `workflow_dispatch`), and the `[linux]` parts of T5 and T7 on the Linux computer.
