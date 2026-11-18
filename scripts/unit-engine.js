@@ -437,7 +437,8 @@ function dataDirTests(ok) {
     // in un processo a parte: la home è quella temporanea, la cartella esiste già con i permessi di prima
     fs.mkdirSync(path.join(tmp, '.platypus'), { mode: 0o755 });
     fs.chmodSync(path.join(tmp, '.platypus'), 0o755);
-    execFileSync(process.execPath, ['-e', `require(${JSON.stringify(path.join(ROOT, 'src', 'paths'))}).dataDir()`], { env: { ...process.env, HOME: tmp } });
+    // senza PLATYPUS_DATA_DIR (le prove la impostano): qui si controlla proprio ~/.platypus, nella home temporanea
+    execFileSync(process.execPath, ['-e', `require(${JSON.stringify(path.join(ROOT, 'src', 'paths'))}).dataDir()`], { env: { ...process.env, HOME: tmp, PLATYPUS_DATA_DIR: '' } });
     const mode = fs.statSync(path.join(tmp, '.platypus')).mode & 0o777;
     ok(mode === 0o700, `~/.platypus solo per il proprietario (permessi ${mode.toString(8)})`);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
