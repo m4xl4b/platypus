@@ -48,6 +48,7 @@ const { Stats } = require('./stats');
 const hooks = require('./hooks');
 const feedback = require('./feedback');
 const { FeedbackLog } = require('./feedbacklog');
+require('./feedback-rules'); // aggiunge le regole a feedback.RULES
 
 const DEFAULT_PORT = Number(process.env.PLATYPUS_PORT) || 47800;
 const RENDERER = path.join(__dirname, '..', '..', 'renderer');
@@ -229,6 +230,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         now: Date.now, deadline: t0 + FEEDBACK_MS, session: s, cwd, settings: state.settings,
         lessons: cwd => { try { return bottega.view(cwd).lessons; } catch { return []; } },
         muted: cwd => bottega.muted(cwd),
+        hasSection: cwd => claudemd.hasSection(cwd),
         log: s && s.demo ? null : feedbackLog, // la demo non lascia righe nel registro vero
       }, feedbackGate);
       out = r.out; entry = r.entry;

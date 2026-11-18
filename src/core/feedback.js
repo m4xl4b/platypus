@@ -3,7 +3,8 @@
 // Qui stanno solo le decisioni, come funzioni pure: (evento dell'hook, contesto) -> messaggio o niente.
 // Chi chiama (index.js) risponde sempre, anche quando qualcosa va storto: Claude Code non deve mai accorgersi di noi.
 //
-// Una regola è { feature, run } (o una funzione sola): run(input, ctx) -> null | { feature, text, lessonId?, block? }
+// Una regola è { feature, run } (o una funzione sola): run(input, ctx) -> null | { feature, text, lessonId?, block?, lines?, max? }
+// Le regole vere stanno in feedback-rules.js, che le aggiunge a RULES quando il motore parte.
 //   input   l'oggetto che Claude Code manda all'hook (hook_event_name, session_id, agent_id, cwd, tool_name, tool_input…)
 //   ctx     { now(), deadline, session, cwd, lessons(cwd), settings } : solo stato già in memoria, niente letture lente
 //   block   solo per Stop/SubagentStop: chiede all'agente di continuare (l'unica risposta che cambia quello che fa)
@@ -36,12 +37,16 @@ function modeOf(settings, feature) {
   return k ? cleanMode(k, settings && settings[k]) : 'off';
 }
 
-const clip = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s; };
-// il testo come arriva all'agente: una riga, firmata, entro il limite
-function say(text) {
-  const t = clip(text, MAX_TEXT);
+const MAX_LONG = 1500;         // il tetto per i pochi messaggi lunghi (l'elenco delle lezioni a inizio sessione)
+const cut = (s, n) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s);
+// il testo come arriva all'agente: firmato, entro il limite, su una riga sola (o su più righe pulite, se la regola
+// lo chiede con lines: true; con max può chiedere più spazio, fino a MAX_LONG)
+function say(text, { max = MAX_TEXT, lines = false } = {}) {
+  const lim = Math.max(1, Math.min(Number(max) || MAX_TEXT, MAX_LONG));
+  const one = s => String(s || '').replace(/\s+/g, ' ').trim();
+  const t = lines ? String(text || '').split('\n').map(one).filter(Boolean).join('\n') : one(text);
   if (!t) return '';
-  return /^Platypus\b/.test(t) ? t : clip(PREFIX + t, MAX_TEXT);
+  return cut(/^Platypus\b/.test(t) ? t : PREFIX + t, lim);
 }
 
 // input dell'hook + contesto -> { message, rule } oppure null. Non lancia mai.
@@ -65,7 +70,7 @@ function decide(input, ctx = {}, rules = RULES) {
         m = run(input, ctx);
       } catch { m = null; } // una regola rotta non ferma le altre
       if (!m || typeof m !== 'object') continue;
-      const text = say(m.text);
+      const text = say(m.text, { max: m.max, lines: m.lines });
       if (!text) continue;
       const block = !!m.block && STOP_EVENTS.has(ev);
       if (STOP_EVENTS.has(ev) && !block) continue; // a fine turno si può solo chiedere di continuare
@@ -161,5 +166,5 @@ function checkAnswer(input) {
 
 module.exports = {
   decide, answer, say, respond, checkAnswer, Gate, modeOf, cleanMode,
-  RULES, EVENTS, MAX_TEXT, CHECK_MARK, FEATURES, MODES, SHADOW_ONLY, AGENT_GAP_MS, SESSION_MAX,
+  RULES, EVENTS, MAX_TEXT, MAX_LONG, CHECK_MARK, FEATURES, MODES, SHADOW_ONLY, AGENT_GAP_MS, SESSION_MAX,
 };

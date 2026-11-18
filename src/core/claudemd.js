@@ -127,4 +127,21 @@ function upsertSection(filePath, section) {
   return { ok: true, mode: plan.mode, backup, error: null };
 }
 
-module.exports = { MARKERS, BACKUP_EXT, canWrite, planUpsert, upsertSection };
+// il CLAUDE.md di quella cartella ha già la sezione di Platypus? Una lettura sola, tenuta finché il file non cambia
+// (serve al feedback: le lezioni già scritte lì non si ripetono all'agente a inizio sessione)
+const sectionCache = new Map(); // cartella -> { sig, has }
+function hasSection(dir) {
+  try {
+    const p = path.join(String(dir || ''), 'CLAUDE.md');
+    const st = fs.statSync(p);
+    if (!st.isFile() || st.size > 2 * 1024 * 1024) return false;
+    const sig = st.mtimeMs + ':' + st.size, c = sectionCache.get(p);
+    if (c && c.sig === sig) return c.has;
+    const has = fs.readFileSync(p, 'utf8').includes(MARKERS.start);
+    if (sectionCache.size > 200) sectionCache.clear();
+    sectionCache.set(p, { sig, has });
+    return has;
+  } catch { return false; }
+}
+
+module.exports = { MARKERS, BACKUP_EXT, canWrite, planUpsert, upsertSection, hasSection };

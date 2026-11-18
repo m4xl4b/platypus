@@ -320,10 +320,11 @@ function elderLine(l) {
 
 // ---- la sezione per il CLAUDE.md del progetto: le lezioni fissate e le più forti, brevi e operative
 const MAX_CLAUDEMD = 8;
-function renderSection(lessons, name) {
+// le lezioni da passare a un agente (fissate e forti, le più pesanti prima), una riga breve e operativa ciascuna:
+// le stesse nel CLAUDE.md e nel messaggio di inizio sessione
+function lessonLines(lessons, max = MAX_CLAUDEMD) {
   const pick = lessons.filter(l => !l.ignored && (l.pinned || l.level === 'lesson'))
-    .sort((x, y) => (y.pinned - x.pinned) || (y.weight - x.weight)).slice(0, MAX_CLAUDEMD);
-  if (!pick.length) return '';
+    .sort((x, y) => (y.pinned - x.pinned) || (y.weight - x.weight)).slice(0, max);
   const line = l => {
     const [pat, file] = l.key.split(' → ');
     switch (l.kind) {
@@ -337,12 +338,17 @@ function renderSection(lessons, name) {
       default: return l.title || l.key;
     }
   };
+  return pick.map(line);
+}
+function renderSection(lessons, name) {
+  const lines = lessonLines(lessons);
+  if (!lines.length) return '';
   return [
     '## ' + tr('Lezioni della bottega ({name})', { name }),
     '',
     tr('Dedotte da Platypus dalle sessioni di questo progetto: indizi, non regole certe.'),
     '',
-    ...pick.map(l => '- ' + line(l)),
+    ...lines.map(l => '- ' + l),
   ].join('\n');
 }
 
@@ -367,4 +373,4 @@ function describe(l) {
   }
 }
 
-module.exports = { Bottega, digest, hints, elderLine, renderSection, projectKey, normDir, errorPattern, weightOf, KINDS, HALF_LIFE };
+module.exports = { Bottega, digest, hints, elderLine, renderSection, lessonLines, projectKey, normDir, errorPattern, weightOf, KINDS, HALF_LIFE };

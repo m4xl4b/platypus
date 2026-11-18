@@ -535,12 +535,63 @@ function feedbackTests(ok) {
   ok(fb.say('Platypus: già firmato') === 'Platypus: già firmato' && fb.say('  due\n righe ') === 'Platypus: due righe' && fb.say('') === '', 'feedback: firma e spazi');
   const long = fb.say('x'.repeat(2000));
   ok(long.length === fb.MAX_TEXT && long.endsWith('…'), `feedback: testo lungo tagliato a ${fb.MAX_TEXT} caratteri (${long.length})`);
-  ok(Object.values(fb.RULES).every(l => Array.isArray(l) && l.length === 0), 'feedback: in A1 nessuna regola è ancora accesa');
+  ok(['SessionStart', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SubagentStop'].every(ev => Array.isArray(fb.RULES[ev])) && !fb.RULES.PreToolUse, 'feedback: regole solo per gli eventi a cui sappiamo rispondere');
   feedbackModeTests(ok, fb, inp);
   // la prova su una sessione vera: un marcatore per evento, e un solo blocco a fine turno
   const ck = ev => fb.checkAnswer(inp(ev));
   ok(/PLATY-PRE/.test(ck('PreToolUse').hookSpecificOutput.additionalContext) && /PLATY-FAIL/.test(ck('PostToolUseFailure').hookSpecificOutput.additionalContext) && ck('Notification') === null && fb.checkAnswer(null) === null, 'feedback, prova reale: un marcatore per evento');
   ok(ck('Stop').decision === 'block' && fb.checkAnswer(inp('Stop', { stop_hook_active: true })) === null, 'feedback, prova reale: a fine turno un solo blocco');
+  feedbackRuleTests(ok, fb, inp);
+}
+
+// feedback (2.11, parte B): le regole vere, una per funzione
+function feedbackRuleTests(ok, fb, inp) {
+  const rules = require(path.join(ROOT, 'src', 'core', 'feedback-rules'));
+  const i18n = require(path.join(ROOT, 'src', 'i18n'));
+  const claudemd = require(path.join(ROOT, 'src', 'core', 'claudemd'));
+  ok(Object.values(fb.RULES).flat().every(r => typeof r.run === 'function' && fb.FEATURES[r.feature]) && fb.RULES.SessionStart.some(r => r.run === rules.sessionLessons), 'regole: ognuna dichiara la sua funzione, e sono registrate una volta sola');
+  rules.register();
+  ok(fb.RULES.SessionStart.filter(r => r.run === rules.sessionLessons).length === 1, 'regole: registrarle di nuovo non le raddoppia');
+  // B1 · le lezioni del progetto a inizio sessione
+  const L = (kind, key, extra = {}) => ({ id: kind + key, kind, key, count: 3, sessions: ['a', 'b'], pinned: false, ignored: false, weight: 3, level: 'lesson', title: 'titolo', ...extra });
+  const book = [
+    L('flaky-command', 'npm run test:e2e'), L('ghost-path', 'src/auth/oldToken.ts', { weight: 5 }), L('fragile-file', 'src/db/pool.ts', { pinned: true, weight: 1 }),
+    L('slow-step', 'npm run build', { level: 'observation' }), L('loop-trap', 'npm test', { ignored: true }),
+  ];
+  const lang = i18n.getLang();
+  i18n.setLang('it'); // l'ufficio in italiano: il messaggio all'agente resta in inglese
+  const start = (lessons, extra = {}) => rules.sessionLessons(inp('SessionStart', { source: 'startup' }), { cwd: '/p', lessons: () => lessons, ...extra });
+  let m = start(book);
+  const lines = m ? m.text.split('\n') : [];
+  ok(m && /^Platypus \(project memory\)/.test(lines[0]) && /clues/.test(lines[0]) && lines.length === 4, `inizio sessione: intestazione che dice da dove vengono, e ${lines.length - 1} lezioni (attese 3)`);
+  ok(/src\/db\/pool\.ts.*fragile/.test(lines[1]) && /oldToken\.ts.*doesn't exist/.test(lines[2]) && /test:e2e.*flaky/.test(lines[3]), 'inizio sessione: in inglese, la fissata per prima, poi per peso');
+  ok(!/npm run build|npm test`/.test(m.text), 'inizio sessione: niente osservazioni né lezioni ignorate');
+  ok(i18n.getLang() === 'it', 'inizio sessione: la lingua dell\'ufficio torna quella di prima');
+  i18n.setLang(lang);
+  ok(start([L('slow-step', 'x', { level: 'observation' })]) === null && start([]) === null, 'inizio sessione: un progetto senza lezioni non dice niente');
+  ok(start(book, { hasSection: () => true }) === null, 'inizio sessione: se il CLAUDE.md ha già la sezione di Platypus non si ripetono');
+  ok(rules.sessionLessons(inp('SessionStart', { cwd: '' }), { cwd: '', lessons: () => book }) === null, 'inizio sessione: senza cartella del progetto, niente');
+  const many = Array.from({ length: 12 }, (_, i) => L('ghost-path', 'src/file' + i + '.ts', { weight: 12 - i }));
+  m = start(many);
+  ok(m.text.split('\n').length === 1 + rules.MAX_START && /file0\.ts/.test(m.text) && !/file6\.ts/.test(m.text), `inizio sessione: al massimo ${rules.MAX_START} lezioni, le più forti`);
+  // attraverso tutto il giro: più righe conservate, entro il limite dei messaggi lunghi, nella forma di SessionStart
+  const r = fb.respond(inp('SessionStart', { source: 'compact' }), { cwd: '/p', lessons: () => many, settings: { fbSessionLessons: 'on' } }, new fb.Gate(), { SessionStart: [{ feature: 'sessionLessons', run: rules.sessionLessons }] });
+  const ctxText = r.out && r.out.hookSpecificOutput.additionalContext;
+  ok(r.out && r.out.hookSpecificOutput.hookEventName === 'SessionStart' && ctxText.split('\n- ').length === 1 + rules.MAX_START && ctxText.length <= fb.MAX_LONG && r.entry.feature === 'sessionLessons', `inizio sessione, acceso: l'elenco arriva su più righe (${ctxText ? ctxText.length : 0} caratteri)`);
+  ok(fb.say('a\n\n  b  \n', { lines: true }) === 'Platypus: a\nb' && fb.say('x'.repeat(5000), { max: 99999 }).length === fb.MAX_LONG && fb.say('a\nb') === 'Platypus: a b', 'testo: più righe solo se la regola lo chiede, e mai oltre il tetto');
+  let threw = false;
+  try { i18n.withLang('en', () => { throw new Error('x'); }); } catch { threw = true; }
+  ok(threw && i18n.getLang() === lang && i18n.withLang('en', () => i18n.getLang()) === 'en', 'i18n: una lingua solo per un pezzo di codice, anche se quel pezzo lancia');
+  // il CLAUDE.md ha già la sezione? Una lettura, tenuta finché il file non cambia
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-md-'));
+  try {
+    const f = path.join(tmp, 'CLAUDE.md');
+    ok(claudemd.hasSection(tmp) === false, 'CLAUDE.md che non c\'è: nessuna sezione');
+    fs.writeFileSync(f, '# Progetto\n\nRegole mie.\n');
+    ok(claudemd.hasSection(tmp) === false, 'CLAUDE.md senza la sezione di Platypus');
+    fs.writeFileSync(f, '# Progetto\n\n' + claudemd.MARKERS.start + '\n## Lezioni\n' + claudemd.MARKERS.end + '\nAltre regole, più lunghe di prima.\n');
+    ok(claudemd.hasSection(tmp) === true && claudemd.hasSection(path.join(tmp, 'non-esiste')) === false, 'CLAUDE.md con la sezione: riconosciuta appena il file cambia');
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 
 // feedback (2.11, A3): i tre modi di ogni funzione, i limiti di frequenza, il progetto zittito e il registro

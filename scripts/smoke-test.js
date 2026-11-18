@@ -190,7 +190,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(!JSON.parse((await get(port, '/api/state')).body).sessions.some(s => s.id === 'fb-none'),'feedback: l\'hook non crea sessioni né tocca lo stato');
   const fbSay = () => ({ text: 'npm test is flaky here: rerun it once before investigating.', lessonId: 'L-smoke' });
   const fbRule = { feature: 'elder', run: fbSay };
-  fbMod.RULES.PostToolUseFailure.push(fbRule);
+  // le prove usano regole loro: quelle vere si mettono da parte e tornano alla fine
+  const fbKeep = Object.fromEntries(Object.entries(fbMod.RULES).map(([ev, l]) => [ev, l.slice()]));
+  const fbOnly = (ev, ...rs) => fbMod.RULES[ev].splice(0, Infinity, ...rs);
+  for (const ev of Object.keys(fbMod.RULES)) fbOnly(ev);
+  fbOnly('PostToolUseFailure', fbRule);
   const fbFail = extra => get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUseFailure', { error: 'Exit code 1', ...extra }));
   const fbOffR = await fbFail();
   ok(fbOffR.status === 204 && core.feedbackLog.recent(tmp).length === 0, 'feedback, funzione spenta (come di base): niente all\'agente e niente nel registro → ' + fbOffR.status);
@@ -210,17 +214,40 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const fbView = JSON.parse((await get(port, '/api/bottega?cwd=' + encodeURIComponent(tmp))).body);
   await get(port, '/api/bottega', 'POST', JSON.stringify({ cwd: tmp, action: 'unmute' }));
   ok(fbMute.ok && fbMute.mute === true && fbView.mute === true && fbMuted.status === 204 && !core.feedbackLog.recent(tmp).some(e => e.sid === 'fb-muted'), 'feedback: un progetto zittito dal Libro non riceve né registra messaggi → ' + fbMuted.status);
-  fbMod.RULES.PostToolUseFailure.length = 0;
-  fbMod.RULES.PostToolUse.push({ feature: 'elder', run: () => { throw new Error('regola rotta'); } });
+  fbOnly('PostToolUseFailure');
+  fbOnly('PostToolUse', { feature: 'elder', run: () => { throw new Error('regola rotta'); } });
   const fb2 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUse', { session_id: 'fb-broken' }));
-  fbMod.RULES.PostToolUse.length = 0;
+  fbOnly('PostToolUse');
   ok(fb2.status === 204, 'feedback, una regola che lancia: 204, mai un errore → ' + fb2.status);
-  fbMod.RULES.PostToolUse.push({ feature: 'elder', run: () => { const t = Date.now(); while (Date.now() - t < 350); return fbSay(); } }); // più lenta del tempo massimo
+  fbOnly('PostToolUse', { feature: 'elder', run: () => { const t = Date.now(); while (Date.now() - t < 350); return fbSay(); } }); // più lenta del tempo massimo
   const fb3 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUse', { session_id: 'fb-slow' }));
-  fbMod.RULES.PostToolUse.length = 0;
+  fbOnly('PostToolUse');
   fbLog = core.feedbackLog.recent(tmp);
   ok(fb3.status === 204 && core.feedbackStats.late === 1 && fbLog.some(e => e.sid === 'fb-slow' && e.outcome === 'late'), `feedback oltre i 300 ms: la risposta in ritardo non si manda, e il registro lo dice → ${fb3.status} (in ritardo: ${core.feedbackStats.late})`);
   core.state.setSettings({ fbElder: 'off' });
+  for (const [ev, l] of Object.entries(fbKeep)) fbOnly(ev, ...l);
+  // B1 · le lezioni del progetto a inizio sessione, con la regola vera e il libro imparato poco sopra
+  const fbStart = sid => get(port, '/platypus-hook/feedback', 'POST', JSON.stringify({ session_id: sid, hook_event_name: 'SessionStart', source: 'startup', cwd: fakeCwd }));
+  ok((await fbStart('fb-start-off')).status === 204, 'lezioni a inizio sessione: spente di base, niente');
+  core.state.setSettings({ fbSessionLessons: 'on' });
+  const fbI18n = require(path.join(__dirname, '..', 'src', 'i18n')), fbLangWas = fbI18n.getLang();
+  fbI18n.setLang('it'); // l'ufficio in italiano: il messaggio all'agente resta in inglese
+  // più sopra la prova del CLAUDE.md ha scritto davvero la sezione in questo progetto: la mettiamo da parte e poi torna
+  const fbMd = path.join(fakeCwd, 'CLAUDE.md'), fbMdWas = fs.existsSync(fbMd) ? fs.readFileSync(fbMd) : null;
+  fs.rmSync(fbMd, { force: true });
+  const fbS = await fbStart('fb-start-1');
+  let fbSj = {}; try { fbSj = JSON.parse(fbS.body); } catch {}
+  const fbCtx = (fbSj.hookSpecificOutput && fbSj.hookSpecificOutput.additionalContext) || '';
+  ok(fbS.status === 200 && fbSj.hookSpecificOutput.hookEventName === 'SessionStart' && /^Platypus \(project memory\)/.test(fbCtx) && /\n- .*vecchio\.ts.*doesn't exist/.test(fbCtx), 'lezioni a inizio sessione: arrivano in inglese anche con l\'ufficio in italiano → ' + fbS.status + ' «' + fbCtx.split('\n').slice(1, 2).join('') + '»');
+  ok(core.feedbackLog.recent(fakeCwd).some(e => e.sid === 'fb-start-1' && e.feature === 'sessionLessons' && e.mode === 'on' && e.event === 'SessionStart'), 'lezioni a inizio sessione: il messaggio resta nel registro del progetto');
+  fs.mkdirSync(fakeCwd, { recursive: true });
+  fs.writeFileSync(fbMd, '# Progetto\n\n<!-- platypus:bottega:start -->\n## Lezioni\n<!-- platypus:bottega:end -->\n');
+  const fbS2 = await fbStart('fb-start-2');
+  ok(fbS2.status === 204, 'lezioni a inizio sessione: se il CLAUDE.md ha già la sezione non si ripetono → ' + fbS2.status);
+  if (fbMdWas) fs.writeFileSync(fbMd, fbMdWas); else fs.rmSync(fbMd, { force: true });
+  ok(fbI18n.getLang() === 'it', 'e la lingua dell\'ufficio resta quella di prima');
+  fbI18n.setLang(fbLangWas);
+  core.state.setSettings({ fbSessionLessons: 'off' });
   const fb4 = await get(port, '/platypus-hook/feedback', 'POST', 'non è json {');
   ok(fb4.status === 204, 'feedback con un corpo che non è JSON: 204 → ' + fb4.status);
   // gli hook di feedback dal pannello delle opzioni: prima le righe da vedere, poi si scrive solo con la conferma

@@ -46,6 +46,12 @@ function setLang(lang) {
   return current;
 }
 function getLang() { return current; }
+// esegue fn con i testi in una lingua precisa, poi rimette quella di prima (es. i messaggi agli agenti, sempre in inglese)
+function withLang(lang, fn) {
+  const prev = current;
+  setLang(lang);
+  try { return fn(); } finally { setLang(prev); }
+}
 function localeTag(lang = current) { return LOCALE_TAG[lang] || 'en-GB'; }
 
 function fill(s, p) {
@@ -65,4 +71,4 @@ function money(v, digits = 2) {
   return current === 'it' ? s.replace('.', ',') + ' $' : '$' + s;
 }
 
-module.exports = { LANGS, t, tn, tr: t, trn: tn, setLang, getLang, resolveLang, dict, localeTag, money, fill };
+module.exports = { LANGS, t, tn, tr: t, trn: tn, setLang, getLang, withLang, resolveLang, dict, localeTag, money, fill };
