@@ -28,7 +28,7 @@ Measured on 2026-11-18.
 | `ollama:nomic-embed-text:v1.5` (0.27 GB) | 0.761 | 0.579 | 0 | 0.509 | 0 | 0.86 (0.8 / 0) | 0.86, none reaches 90% | | 0.03 — **does not beat TF-IDF, no row** |
 | `onnx:Xenova/multilingual-e5-small` (q8, 130 MB) | 0.845 | 0.689 | 0 | 0.806 | 0.11 (not separated: 0 / 0.11) | 0.91 (0.8 / 0) | 0.91, none reaches 90% | | 0.031 — **does not beat TF-IDF on drift, no row** |
 
-The table of `drift-rule.js` has two rows: `tfidf` (`rel` 0.35, `run` 6, `weak` 0.031, `warn` 0.6, `floor` 0.03, `zero` 0, `widen` 0) and `fake:synonyms` (`rel` 0.53, `run` 6, `weak` 0.309, `warn` 0.78, `floor` 0.03, `zero` 0.621, `widen` 0.381). `warn` (the yellow band) is `rel` + 0.25. A test recomputes the `fake:synonyms` row from the measure and fails if the table and the measure disagree.
+The table of `drift-rule.js` has two rows: `tfidf` (`rel` 0.35, `run` 6, `weak` 0.031, `warn` 0.6, `floor` 0.03, `zero` 0, `widen` 0) and `fake:synonyms` (`rel` 0.53, `run` 6, `weak` 0.309, `warn` 0.78, `floor` 0.03, `zero` 0.621, `widen` 0.381). `warn` (the yellow band) is `rel` + 0.25, at most 0.95 (so 0.95 for `nomic-embed-text-v2-moe`, whose `rel` is 0.78). A test recomputes the `fake:synonyms` row from the measure and fails if the table and the measure disagree.
 
 What the TF-IDF numbers say:
 

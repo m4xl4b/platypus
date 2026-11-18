@@ -484,6 +484,19 @@ function calibrationTests(ok) {
   ok(measured.length === 6 && measured.every(k => sane(rule.TABLE[k])) && rule.thresholdsFor('ollama:bge-m3:latest') === rule.TABLE['ollama:bge-m3'] && rule.thresholdsFor('ollama:qwen3-embedding:0.6b') === rule.TABLE['ollama:qwen3-embedding:0.6b'], `embedding E5: ${measured.length} modelli di Ollama misurati nella tabella (${measured.map(k => k.slice(7)).join(', ')})`);
   const ollamaMod = require(path.join(ROOT, 'src', 'core', 'embed', 'ollama'));
   ok(ollamaMod.SUGGESTED === 'qwen3-embedding:0.6b' && rule.thresholdsFor('ollama:' + ollamaMod.SUGGESTED).calibrated, 'embedding E5: il modello proposto è quello misurato meglio, e ha la sua riga');
+  // 2.12.1: le soglie del codice sono quelle del documento di taratura, modello per modello (rel proposto, weak
+  // suggerito, zero, widen; warn = rel + 0,25, al massimo 0,95), e ogni riga del documento con un rel proposto in
+  // grassetto ha la sua riga nel codice
+  const doc = fs.readFileSync(path.join(ROOT, 'docs', 'plans', 'embedding-calibration.md'), 'utf8');
+  const docRows = doc.split('\n').filter(l => /^\| `ollama:/.test(l)).map(l => {
+    const c = l.split('|').map(x => x.trim());
+    const name = c[1].replace(/^`|`.*$/g, ''), num = s => { const m = /(\d+(?:\.\d+)?)/.exec(String(s).replace(/\*\*/g, '')); return m ? +m[1] : null; };
+    return { key: name.replace(/:latest$/, ''), proposed: /\*\*\d/.test(c[8]) ? num(c[8]) : null, zero: num(c[5]), widen: num(c[6]), weak: /\*\*\d/.test(c[10]) ? num(c[10]) : null };
+  });
+  const calibrated = docRows.filter(r => r.proposed !== null);
+  const wrong = calibrated.filter(r => { const t = rule.TABLE[r.key]; return !t || t.rel !== r.proposed || t.weak !== r.weak || t.zero !== r.zero || t.widen !== r.widen || t.warn !== +Math.min(0.95, r.proposed + 0.25).toFixed(2); });
+  const extra = measured.filter(k => !calibrated.some(r => r.key === k));
+  ok(docRows.length === 7 && calibrated.length === 6 && !wrong.length && !extra.length && docRows.filter(r => r.proposed === null).every(r => !rule.TABLE[r.key]), `embedding 2.12.1: le soglie in drift-rule.js sono quelle di embedding-calibration.md per ognuno dei ${calibrated.length} modelli di Ollama misurati${wrong.length ? ' — diverse: ' + wrong.map(r => r.key).join(', ') : ''}${extra.length ? ' — in più: ' + extra.join(', ') : ''}`);
   // una regola in tre posti: motore, feedback e mappa danno la stessa risposta sulle stesse righe
   const { st, s } = require(path.join(ROOT, 'src', 'i18n')).withLang('it', demoScenario);
   const plan = s.subs.get('plan1').mind, page = ruleAsInPage();
