@@ -198,7 +198,7 @@ Like W3 and W4, with the Linux terminals (GNOME Terminal, Konsole, the one in VS
 - **Tests:** a fake tree in `scripts/fixtures/cowork-win/`, the same as the anonymized structure, in the automatic tests (`npm test`, `scripts/smoke-test.js`).
 - **Check by hand:** the test Cowork session shows up in the office's Cowork wing.
 
-### K3 · Cowork on macOS and Linux  [ ] [ci]
+### K3 · Cowork on macOS and Linux  [x] [ci]
 
 - **macOS:** carry the K1 structure over to `~/Library/Application Support/Claude`, marking as **to verify** whatever is not confirmed.
 - **Linux:** check whether an official Claude desktop app exists (today `coworkRoots()` looks in `~/.config/Claude`, or `$XDG_CONFIG_HOME/Claude`). If there is none, the Cowork section says so in the options instead of searching in vain.
@@ -360,5 +360,12 @@ How it was run: the window was started from the test clone with the temporary ho
 - **By hand:** a real window (temporary home, port 47850) with `coworkDirs` pointing at a copy of the fixture: the Cowork wing shows floor 1 "Prova Cowork dal metadato" (screenshot looked at), source COWORK, "New task: Ciao". A real Cowork session could not be tested (none is active on this PC, and starting one is for Max).
 - **On the real tree (counts only):** the same 27 session folders as before are found, with metadata for all 27, and the number of folders visited drops from 412 to 2 (65 ms to 42 ms). Nothing from the real data was printed or kept.
 - **State of "active":** nothing new is derived from `lastActivityAt` yet: a Cowork session is still "active" when its transcript is written, as before. K1 shows the two agree within a few minutes, so a later change can use the metadata if wanted.
+
+### 2026-11-18 · K3 · Cowork on macOS and Linux (taken by the Windows loop; documentation and a test, no code)
+
+- **macOS:** the K1 structure is carried over in `docs/plans/cowork-structure.md` for `~/Library/Application Support/Claude`, everything marked **to verify** (no Mac here). The K2 search does not depend on the operating system, so it applies as it is; the wide search stays as a fallback.
+- **Linux:** an **official Claude desktop app for Linux exists now** (beta, announced at the end of June 2026; Ubuntu 22.04+ / Debian 12+, x86_64 and arm64, apt repository or `.deb`, with Chat, Cowork and Claude Code; Cowork runs in a QEMU/KVM virtual machine). Sources are in the document (Anthropic's docs and support article, read today). So the options do **not** need a "no Cowork on Linux" message, and I changed nothing in the interface. The docs do not say where the app keeps its data: `coworkRoots()` keeps looking in `$XDG_CONFIG_HOME/Claude` / `~/.config/Claude` (Electron's default), **to verify** on a Linux computer with the app.
+- **Test added** (`scripts/platform-test.js`, so the Actions run it on macOS and Linux too): a fake Cowork tree in the known layout under a hand-given root; the search must find it with the title from the metadata, without keeping the e-mail field, and without the wide walk. 24 checks ok on Windows.
+- **For the Linux loop / Max:** on a Linux computer with `claude-desktop` installed, look at `~/.config/Claude` with the K1 method (names, sizes, dates, field names) and confirm or correct the "to verify" lines.
 
 ## Journal (Linux)

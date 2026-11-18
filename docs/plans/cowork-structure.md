@@ -116,3 +116,21 @@ Proposal: active = not archived, not completed, `lastActivityAt` less than a few
 - the structure with an **active** Cowork session (none on this PC; I did not start one: that needs Max to open it);
 - other Claude app versions, a non-Store installation (`%LOCALAPPDATA%\AnthropicClaude`), another account type;
 - whether `isAgentCompleted` is written at the end of a task (only 2 of 27 files have it, both false).
+
+## macOS and Linux (K3) — everything here is TO VERIFY
+
+Nothing below was seen on a real Mac or Linux computer. It is what the code already assumes plus what Anthropic's documentation says.
+
+### macOS
+
+- Root assumed by `coworkRoots()`: `~/Library/Application Support/Claude` (Electron's default data folder for an app called "Claude").
+- **To verify:** that the same layout as on Windows holds under it: `local-agent-mode-sessions/<uuid>/<uuid>/local_<uuid>.json` (metadata) next to `local_<uuid>/.claude/projects/-sessions-<processName>/<cliSessionId>.jsonl` (transcripts), and `claude-code-sessions/...` (metadata of the Code tab only). The targeted search of K2 does not depend on the operating system, so if the layout is the same it works unchanged; if it is not, the wide search is still the fallback.
+- **To verify:** the virtual machine. On Windows it is `vm_bundles/claudevm.bundle` (Hyper-V disk images) run by `cowork-svc`; on macOS it is probably another bundle format run through Apple's virtualization framework. Platypus does not need it.
+- Plan for a Mac user: run `node scripts/platform-test.js` (it already builds this tree under a temporary home and checks the search on it) and, with the Claude app installed, look at `~/Library/Application Support/Claude` with the same method as K1 (names, sizes, dates and field names only).
+
+### Linux
+
+- **There is now an official app.** Anthropic's documentation describes "Claude Desktop on Linux (beta)": Ubuntu 22.04 or later or Debian 12 or later (other Debian-based distributions "may work"; Fedora and Arch are not supported and are pointed to the CLI), x86_64 or arm64, installed from Anthropic's apt repository (package `claude-desktop`) or a `.deb` file, with "the same Chat, Cowork, and Claude Code experience" as the other systems. Cowork runs in a virtual machine hosted by the app with QEMU and KVM (it needs hardware virtualization and access to `/dev/kvm`). Sources: <https://code.claude.com/docs/en/desktop-linux> and <https://support.claude.com/en/articles/10065433-install-claude-desktop> (read on 2026-11-18; the beta was announced at the end of June 2026).
+- **Where it keeps its data is not stated** in those pages. `coworkRoots()` looks in `$XDG_CONFIG_HOME/Claude` or `~/.config/Claude`, which is Electron's default. **To verify** on a Debian or Ubuntu computer with the app installed: that folder exists, and that it has the same layout as on Windows.
+- Because the official app exists, the options page does **not** need a "there is no Cowork on Linux" message. Nothing was changed in the interface for K3.
+- The Linux tests loop (`docs/plans/platform-tests.md`, L1-L3) can check the layout at the same time as the other Linux tests, with the same rules (names, sizes, dates and field names only).

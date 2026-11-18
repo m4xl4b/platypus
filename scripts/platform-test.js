@@ -162,8 +162,16 @@ console.log('osint');
   write(path.join(extra, 'projects', 'p', 'dddd.jsonl'), '{}\n');
   r = findCoworkBases(`"~/altro posto"; ${path.join(tmp, 'non-esiste')}`);
   ok(r.bases.some(b => same(b.path, extra)) && r.roots.some(x => !x.exists), 'findCoworkBases: radice extra con «~» e virgolette, e una radice che non esiste');
+  // il percorso noto di Cowork (docs/plans/cowork-structure.md), su una radice indicata a mano: titolo e stato dai metadati
+  const known = path.join(tmp, 'known-root');
+  const kSess = path.join(known, 'local-agent-mode-sessions', 'acct', 'org');
+  write(path.join(kSess, 'local_abc', '.claude', 'projects', '-sessions-calm-test-curie', 'cli1.jsonl'), '{}\n');
+  write(path.join(kSess, 'local_abc.json'), JSON.stringify({ title: 'Prova', cliSessionId: 'cli1', isArchived: false, emailAddress: 'nobody@example.invalid' }));
+  r = findCoworkBases(known);
+  const kb = r.bases.find(b => same(b.path, path.join(kSess, 'local_abc', '.claude')));
+  ok(kb && kb.meta && kb.meta.title === 'Prova' && kb.meta.cliSessionId === 'cli1' && !('emailAddress' in kb.meta) && r.visited < 50, `findCoworkBases: percorso noto di Cowork con titolo dai metadati, senza ricerca larga (${r.visited} cartelle viste)`);
   if (IS_WIN) {
-    const pkg = path.join(dirs.local, 'Packages', 'Claude_pzs8sxrjxfjjc', 'LocalCache', 'Roaming', 'Claude');
+    const pkg =path.join(dirs.local, 'Packages', 'Claude_pzs8sxrjxfjjc', 'LocalCache', 'Roaming', 'Claude');
     write(path.join(pkg, 'sess', '.claude', 'projects', 'p', 'eeee.jsonl'), '{}\n');
     ok(coworkRoots().some(x => same(x, pkg)), 'Windows: cartella del pacchetto Microsoft Store trovata tra le radici');
     ok(findCoworkBases().bases.some(b => same(b.path, path.join(pkg, 'sess', '.claude'))), 'Windows: e i suoi transcript vengono trovati');
