@@ -49,7 +49,7 @@ The state of the work isn't in your memory, which can be compacted. It is in thr
 - Mark the task's title with `[~]`.
 - Read the task's description, the "Hook formats" section and the code listed in the "map of the existing code".
 - Also read the Journal entries of the tasks it depends on.
-- **(2.11)** B2–B4 depend on the result of the A1 spike (whether `PreToolUse` context reaches the model): read its Journal entry before choosing the event.
+- **(2.11)** B2–B4 use `PostToolUse` only. Their `PreToolUse` variants wait for Max's real-session check (see A1): do not build them before its result is in the Journal.
 - If the task is too big for one iteration, split it:
   - write the sub-steps in the Journal;
   - make one commit per sub-step, with a message starting with the identifier, for example "A3 (1/2): …";
@@ -128,7 +128,7 @@ Stop, end the loop and write me a short message, in Italian, when:
    - the command to try it: `npm run start:demo`.
 2. **A decision or permission of mine is needed,** for example:
    - a product choice the plan doesn't settle and that would change the work a lot, starting with the plan's "Open questions" when a task depends on one;
-   - **(2.11)** running a real Claude Code session for the A1 spike or for D2: it uses my account, so ask first and tell me exactly what you would run;
+   - **(2.11)** anything that needs a real Claude Code session: Max runs the real-session check himself (A1, D2), since it uses his account. Never run `claude` yourself; write the steps and stop;
    - reading my real Claude Code sessions in `~/.claude`;
    - any write outside the repository and `~/.platypus`.
 3. **`npm test` was green and you can't get it green again** after the attempts in point 4.
