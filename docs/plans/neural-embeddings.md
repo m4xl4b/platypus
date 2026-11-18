@@ -150,7 +150,7 @@ Today's thresholds are valid for TF-IDF, not for neural vectors, which have much
   - the fallbacks;
   - the unchanged numbers with TF-IDF (E1), including `drift()` and the 2.11 feedback drift tests.
 
-## E8 · Documents  [ ]
+## E8 · Documents  [x]
 
 - **`docs/ARCHITECTURE.md`:** the `embed/` module and the provider chain. Update the Italian `docs/ARCHITETTURA.md` to match.
 - **Install guides** (`docs/INSTALL.md` and `docs/INSTALLAZIONE.md`):
@@ -163,7 +163,27 @@ Today's thresholds are valid for TF-IDF, not for neural vectors, which have much
 
 ## For the CHANGELOG
 
-(to fill in at the end)
+Notes for the CHANGELOG entry (the version and the wording are decided at integration):
+
+**Added**
+- Optional neural meaning for the context bubble and the north star: **Options → Meaning engine** chooses lexical only (TF-IDF, the default), automatic, Ollama or ONNX, and shows the state of each source, the model in use, the command to get it, and the cache with a button to clear it.
+- Ollama provider: a local Ollama only (`127.0.0.1`, `::1`, `localhost`; other hosts are refused), the first embedding model found (multilingual first) or the one chosen; Platypus never pulls models, it shows the command.
+- Optional ONNX provider in `optional/embed-onnx/` (`Xenova/multilingual-e5-small`, quantized, about 118 MB), running in a worker thread; `npm run embed:onnx:install` says how much it downloads and asks first. It is the only new network call, and it is explicit.
+- The bubble says where its vectors come from ("lexical (TF-IDF): compares words, not concepts" or "meaning: Ollama · <model>"), shows "refining…" while neural vectors arrive, and says when the source changes.
+- The drift rule has thresholds per vector source, written once in `src/core/drift-rule.js` and shared by the engine, the "back to the task" feedback and the map. A neural source that has not been calibrated says "not measurable" instead of guessing.
+- `scripts/embed-eval.js`: calibrates a source on a labelled set of 30 tasks in Italian and English (AUC, background similarity, drift thresholds); results in `docs/plans/embedding-calibration.md`.
+- Demo: a "synonyms" scene (a subagent asked to fix the login works on authentication with other words): drifting for TF-IDF, on course with the hidden demo-only provider `embedEngine = fake`.
+- `GET`/`POST /api/embed` and `GET /drift-rule.js`.
+
+**Changed**
+- `/api/agentmind` also returns `src`, `th`, `pending`, `active`, `refining` and `fallback`; with TF-IDF the numbers are unchanged.
+- The map's drift count now stops at a change of task, as the engine's always did.
+
+**Privacy**
+- Snippets of the agents' text (at most 320–480 characters per piece) are kept in memory only and go only to a local model; the cache in `~/.platypus/embed-cache/` holds only vectors and sha1 hashes (5000 in memory, at most 50 MB per source on disk).
+
+**Not verified yet**
+- No real neural model has been measured: starting Ollama (several embedding models are already on this computer) or installing the ONNX model needs Max's permission. Until a model beats TF-IDF on the set, TF-IDF stays the default.
 
 ## Journal
 
@@ -306,3 +326,41 @@ This is on paper: E5 measures it only if the real model is installed.
 **What `npm test` covers now** (as E7 asks): the provider chain (E2, E3, E4), the cache with small caps (E2), mixed sources (E1, E2), the fallbacks (E2, E3, smoke), the unchanged TF-IDF numbers including `drift()` and the 2.11 drift tests (E1 fixture and `unit-engine.js`, untouched), plus for E7: the `fake:synonyms` row equals what the measure proposes (a test recomputes it), the demo provider beats TF-IDF on the set, and in the smoke test the scene is drifting with TF-IDF and on course with `fake`, while a non-demo session stays lexical with `fake` set.
 
 **Checks.** `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing (one new string). Interface, in the built-in browser with the engine in web mode (temporary home, port 47840, demo): the scene's map says "DRIFTING for 10 actions · alignment 0%" with lexical; after setting `fake` the label went "lexical … refining… → meaning: demo test (synonyms) refining… source changed: starting again" and the star said "ON COURSE · alignment 95%". The only console errors were `ERR_CONNECTION_REFUSED` from the page retrying while the engine was stopped between two runs, not from this code. Settings back to `tfidf`, engine stopped by its PID, temporary home deleted.
+
+### 2026-11-18 · E8 · Documents
+
+**Done.**
+- `docs/ARCHITECTURE.md` and the Italian `docs/ARCHITETTURA.md`, kept in step: in the engine table `semantic.js` (meaning spaces), the new `drift-rule.js` and `embed/`; in the API table `/api/agentmind`'s new fields, `GET`/`POST /api/embed` and `GET /drift-rule.js`; a new section "Meaning (embeddings)" / "Significato (embedding)" with the provider chain, the privacy limits, the queue that never blocks, what is kept of the text and in the cache, and the thresholds per source; `embed-ui.js` and `/drift-rule.js` in the interface; `embed-cache/` and `models/` in the data on disk.
+- **Not changed, on purpose:** `docs/INSTALL.md`, `docs/INSTALLAZIONE.md`, `README.md` and `README.it.md`. The plan's E8 asks for them, but `docs/plans/parallel.md` reserves README, CHANGELOG and the install guides for integration (only the platform-tests plan may touch the guides), and the more cautious rule wins. The texts to paste at integration are below.
+
+**Draft for `docs/INSTALL.md`** (a new section after "Browser mode"):
+
+> ## More precise meaning (optional)
+>
+> The context bubble and the north star in the map of reality measure what an agent is talking about. By default they compare words (lexical, TF-IDF): "fix the login" and "repair the authentication" look far apart. A neural model also understands synonyms. Choose it in **Options → Meaning engine**; everything stays on your computer.
+>
+> - **Ollama** (if you already use it): start Ollama and download an embedding model, for example `ollama pull bge-m3` (about 1.2 GB, multilingual). Platypus talks to it only at `http://127.0.0.1:11434` (or another address of this computer: other hosts are refused) and never downloads models itself; the options show the command if a model is missing.
+> - **ONNX model** (without Ollama): `npm run embed:onnx:install` installs the npm packages of `optional/embed-onnx` (about 200 MB) and downloads `Xenova/multilingual-e5-small` (about 118 MB) into `~/.platypus/models/`. It tells you the sizes and asks before downloading. This download, from registry.npmjs.org and huggingface.co, is the only network call of this feature; after that the model runs locally in a background thread.
+> - **What stays local:** snippets of the agents' text go only to the local model and are never written to disk; the cache (`~/.platypus/embed-cache/`, at most 50 MB per model, can be cleared from the options) holds only vectors and hashes.
+> - A neural model is used for the drift judgement only once it has been calibrated (`node scripts/embed-eval.js --source ollama --model <name>`); until then the north star says "not measurable" rather than guessing.
+
+**Draft for `docs/INSTALLAZIONE.md`** (nuova sezione dopo "Modalità browser"):
+
+> ## Significato più preciso (facoltativo)
+>
+> La bolla del contesto e la stella polare nella mappa della realtà misurano di che cosa parla un agente. Di base confrontano le parole (lessicale, TF-IDF): "aggiusta il login" e "correggi l'autenticazione" sembrano lontane. Un modello neurale capisce anche i sinonimi. Si sceglie in **Opzioni → Motore del significato**; tutto resta sul tuo computer.
+>
+> - **Ollama** (se lo usi già): avvia Ollama e scarica un modello di embedding, per esempio `ollama pull bge-m3` (circa 1,2 GB, multilingue). Platypus gli parla solo su `http://127.0.0.1:11434` (o un altro indirizzo di questo computer: gli altri host vengono rifiutati) e non scarica mai modelli da solo; se manca un modello le opzioni mostrano il comando.
+> - **Modello ONNX** (senza Ollama): `npm run embed:onnx:install` installa i pacchetti npm di `optional/embed-onnx` (circa 200 MB) e scarica `Xenova/multilingual-e5-small` (circa 118 MB) in `~/.platypus/models/`. Dice quanto pesa e chiede conferma prima di scaricare. Questo scaricamento, da registry.npmjs.org e huggingface.co, è l'unica chiamata di rete della funzione; poi il modello gira in locale, in un thread a parte.
+> - **Cosa resta in locale:** gli estratti del testo degli agenti vanno solo al modello locale e non finiscono mai su disco; la cache (`~/.platypus/embed-cache/`, al massimo 50 MB per modello, si svuota dalle opzioni) tiene solo vettori e hash.
+> - Un modello neurale giudica la deriva solo dopo essere stato calibrato (`node scripts/embed-eval.js --source ollama --model <nome>`); fino ad allora la stella polare dice "non misurabile" invece di tirare a indovinare.
+
+**Draft for the README privacy line** — `README.md`, append to the "Privacy" paragraph:
+
+> The optional neural meaning (Options → Meaning engine) uses only a model on your computer: a local Ollama, or an ONNX model that `npm run embed:onnx:install` downloads once, after asking.
+
+`README.it.md`, in coda al paragrafo "Privacy":
+
+> Il significato neurale facoltativo (Opzioni → Motore del significato) usa solo un modello sul tuo computer: un Ollama locale, oppure un modello ONNX che `npm run embed:onnx:install` scarica una volta, dopo aver chiesto.
+
+**Checks.** The two architecture documents have the same structure (same tables, same new section). `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing.

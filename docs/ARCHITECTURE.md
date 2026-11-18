@@ -33,7 +33,9 @@ Node.js modules only, no npm packages: that's why browser mode starts without `n
 | `osint.js` | system integration: bring window to front, resume session, open folder (Windows / macOS / Linux) |
 | `stats.js` | daily and weekly statistics, report |
 | `worldmap.js` | map of reality: territory, frontier, 7-dimensional trajectory |
-| `semantic.js` | context bubble and north star (TF-IDF, PCA, clusters, alignment) |
+| `semantic.js` | context bubble and north star (TF-IDF, PCA, clusters, alignment), with vectors of any length from any source ("meaning spaces") |
+| `drift-rule.js` | the drift rule of the north star and its thresholds per source, written once: used by the engine, by the "back to the task" feedback and, as `/drift-rule.js`, by the map |
+| `embed/` | neural meaning (optional): `index.js` (provider chain, cache, queue), `ollama.js` (local Ollama, loopback only), `onnx.js` (loads the optional ONNX module), `fake.js` (synonyms provider for the demo only) |
 | `grounding.js` | map versus territory: stale memories (disk mtimes with a 10 s cache, and other agents' edits), blind edits, invented paths, claims in replies and their evidence |
 | `surprise.js` | failure classifier (Jest, pytest, go, cargo, npm, tsc, Node, Python, PowerShell…), error excerpts and the files they cite, surprise score, reactions (corrects/insists/stops) and causal chains |
 | `bottega.js` | Workshop book: lessons per project deduced from the facts above, weight with a 30-day half-life, live learning and learning from the archive, Grandpa's hints, the section for `CLAUDE.md` |
@@ -57,7 +59,9 @@ Everything that depends on the operating system lives in three places: `osint.js
 | `POST /platypus-hook` | hook events (asynchronous) |
 | `POST /platypus-hook/permission` | synchronous permissions hook: waits for the office's answer |
 | `POST /api/approve` | answer to a permission: `allow`, `always`, `deny` |
-| `GET /api/agentmap`, `/api/agentmind` | map of reality, bubble and north star |
+| `GET /api/agentmap`, `/api/agentmind` | map of reality, bubble and north star (`/api/agentmind` also says the vector source `src`, its thresholds `th`, `pending`, `refining` and `fallback`) |
+| `GET /api/embed`, `POST /api/embed` | the meaning engine: source in use, state of each source, cache; `{action: 'probe'}` checks the sources, `{action: 'clear'}` clears the cache |
+| `GET /drift-rule.js` | the drift rule for the page (the engine's own file) |
 | `GET /api/archive`, `POST /api/replay` | archive and replay |
 | `POST /api/focus`, `/api/resume`, `/api/open-folder` | window, resume, folder |
 | `GET /api/stats/costs`, `/api/stats/honors`, `/api/report` | statistics and report |
@@ -84,9 +88,18 @@ The server rejects requests whose `Host` or `Origin` is not `127.0.0.1`/`localho
 
 Never `permissionDecision`, `updatedInput` or `updatedToolOutput`: Platypus adds context, it does not decide for you. Each feature is `off`, `shadow` or `on` (`fbSessionLessons`, `fbElder`, `fbLoop`, `fbStale`, `fbClaims`, `fbDrift` in the options; the last three are `shadow` at most in 2.11). Limits: one message per agent every 2 minutes, 6 per session per hour, the same lesson once per agent; shadow messages count like sent ones. The demo calls the same function without the network, with its own modes and an in-memory log.
 
+### Meaning (embeddings)
+
+The bubble and the north star measure what an agent is talking about with vectors. The lexical source (TF-IDF, always there) compares words; a neural source also understands synonyms ("login" and "authentication"). The option `embedEngine` chooses: `tfidf` (the default), `auto` (Ollama if it answers, then ONNX if installed, otherwise TF-IDF), `ollama` or `onnx` (that one, or TF-IDF saying why).
+
+- **Sources.** Ollama is called with Node's `http`, only on `127.0.0.1`, `::1` or `localhost` (`ollamaUrl`); the model is `embedModel` or the first embedding model found, multilingual first; Platypus never runs `ollama pull`, it shows the command. The ONNX provider lives in `optional/embed-onnx/` with its own `package.json` and runs `Xenova/multilingual-e5-small` in a `worker_thread`; the engine loads it with `require` only if `npm run embed:onnx:install` has installed it (that command asks first and is the only one that downloads a model).
+- **Never blocking.** One queue for the engine, batches of at most 16 texts, 5 s per request, the agents being looked at first; 3 failures in a row suspend a source for 5 minutes. A vector that is not there yet is simply missing: the TF-IDF picture is shown at once ("refining…") and replaced when the neural vectors of every goal and action have arrived. Vectors of different sources are never mixed in one calculation.
+- **Text and cache.** The pieces of an agent's context keep a short snippet of their text in memory (at most 320 characters, 480 for an action with its result), never on disk. The cache keeps vectors and sha1 hashes only: 5000 vectors in memory, and `embed-cache/<source>.bin` on disk, at most 50 MB per source.
+- **Thresholds per source.** Neural vectors have much higher background similarities than TF-IDF, so the drift rule has a row per source in `drift-rule.js` (background, widening, `rel`, `run`, `weak`), measured with `scripts/embed-eval.js` on a labelled set (results in `docs/plans/embedding-calibration.md`). A neural source without a row is "not calibrated": its geometry is shown, but the drift rule says "not measurable".
+
 ## Interface (`renderer/`)
 
-Static page: `index.html`, `style.css`, `game.js` (building, floors, balloons), `worldmap.js` (map of reality), `bottega.js` (Workshop book), `teams.js` (TEAMS panel: workflows, teams, messages), `report.html`, `i18n-runtime.js`. It talks to the engine only over HTTP and SSE. The only point of contact with the shell is the optional `window.officeApp` object (if it's missing, you're in the browser).
+Static page: `index.html`, `style.css`, `game.js` (building, floors, balloons), `worldmap.js` (map of reality), `bottega.js` (Workshop book), `teams.js` (TEAMS panel: workflows, teams, messages), `embed-ui.js` (the "Meaning engine" options), `report.html`, `i18n-runtime.js`, plus `/drift-rule.js` served by the engine. It talks to the engine only over HTTP and SSE. The only point of contact with the shell is the optional `window.officeApp` object (if it's missing, you're in the browser).
 
 ### The `window.officeApp` contract (from `src/preload.js`)
 
@@ -133,5 +146,7 @@ The benefit would be much smaller binaries (about 10 MB instead of 150) and less
 | `~/.platypus/bottega/<key>.json` | the Workshop book of each project (one file per project folder) |
 | `~/.platypus/feedback/<key>.jsonl` | the messages to the agents of each project, sent and in shadow, with their outcomes (rotated at 5 MB into `<key>.1.jsonl`) |
 | `~/.platypus/launch.log` | messages from the last window launch |
+| `~/.platypus/embed-cache/<source>.bin` | the vectors of the neural meaning sources, with the sha1 of their text (never the text), at most 50 MB per source |
+| `~/.platypus/models/` | the optional ONNX model, only after `npm run embed:onnx:install` |
 | `$PLATYPUS_DATA_DIR` | if set, used instead of `~/.platypus` (created empty, nothing copied from the old Agent Office folder), and the Electron data go in its `electron/` subfolder: for tests and for development loops running next to your own Platypus |
 | Electron data folder (`Platypus`) | window position and shell preferences |

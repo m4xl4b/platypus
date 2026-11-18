@@ -33,7 +33,9 @@ Solo moduli di Node.js, nessun pacchetto npm: per questo la modalità browser pa
 | `osint.js` | integrazione con il sistema: finestra in primo piano, riprendi sessione, apri cartella (Windows / macOS / Linux) |
 | `stats.js` | statistiche per giorno e settimana, report |
 | `worldmap.js` | mappa della realtà: territorio, frontiera, traiettoria a 7 dimensioni |
-| `semantic.js` | bolla del contesto e stella polare (TF-IDF, PCA, gruppi, allineamento) |
+| `semantic.js` | bolla del contesto e stella polare (TF-IDF, PCA, gruppi, allineamento), con vettori di qualsiasi lunghezza e di qualsiasi fonte ("spazi di significato") |
+| `drift-rule.js` | la regola della deriva della stella polare e le sue soglie per fonte, scritte una volta sola: le usano il motore, il feedback "ritorno al compito" e, come `/drift-rule.js`, la mappa |
+| `embed/` | significato neurale (facoltativo): `index.js` (catena dei provider, cache, coda), `ollama.js` (Ollama in locale, solo loopback), `onnx.js` (carica il modulo ONNX facoltativo), `fake.js` (provider dei sinonimi, solo per la demo) |
 | `grounding.js` | mappa contro territorio: ricordi scaduti (mtime sul disco con una cache di 10 s, e modifiche degli altri agenti), modifiche alla cieca, percorsi inventati, affermazioni nelle risposte e le loro prove |
 | `surprise.js` | classificazione dei fallimenti (Jest, pytest, go, cargo, npm, tsc, Node, Python, PowerShell…), estratti degli errori e file citati, sorpresa, reazioni (si corregge/insiste/si ferma) e catene causali |
 | `bottega.js` | Libro della bottega: lezioni per progetto dedotte dai fatti qui sopra, peso che si dimezza in 30 giorni, apprendimento dal vivo e dall'archivio, suggerimenti del Nonno, sezione per il `CLAUDE.md` |
@@ -57,7 +59,9 @@ Tutto ciò che dipende dal sistema operativo sta in tre punti: `osint.js`, `sour
 | `POST /platypus-hook` | eventi degli hook (asincroni) |
 | `POST /platypus-hook/permission` | hook sincrono dei permessi: resta in attesa della risposta dall'ufficio |
 | `POST /api/approve` | risposta a un permesso: `allow`, `always`, `deny` |
-| `GET /api/agentmap`, `/api/agentmind` | mappa della realtà, bolla e stella polare |
+| `GET /api/agentmap`, `/api/agentmind` | mappa della realtà, bolla e stella polare (`/api/agentmind` dice anche la fonte dei vettori `src`, le sue soglie `th`, `pending`, `refining` e `fallback`) |
+| `GET /api/embed`, `POST /api/embed` | il motore del significato: fonte in uso, stato di ogni fonte, cache; `{action: 'probe'}` controlla le fonti, `{action: 'clear'}` svuota la cache |
+| `GET /drift-rule.js` | la regola della deriva per la pagina (lo stesso file del motore) |
 | `GET /api/archive`, `POST /api/replay` | archivio e replay |
 | `POST /api/focus`, `/api/resume`, `/api/open-folder` | finestra, ripresa, cartella |
 | `GET /api/stats/costs`, `/api/stats/honors`, `/api/report` | statistiche e report |
@@ -84,9 +88,18 @@ Il server rifiuta le richieste con un `Host` o un `Origin` diversi da `127.0.0.1
 
 Mai `permissionDecision`, `updatedInput` o `updatedToolOutput`: Platypus aggiunge contesto, non decide al posto tuo. Ogni funzione è `off`, `shadow` oppure `on` (`fbSessionLessons`, `fbElder`, `fbLoop`, `fbStale`, `fbClaims`, `fbDrift` nelle opzioni; le ultime tre nella 2.11 arrivano al massimo a `shadow`). Limiti: un messaggio ogni 2 minuti per agente, 6 all'ora per sessione, la stessa lezione una volta sola per agente; i messaggi in ombra contano come quelli mandati. La demo chiama la stessa funzione senza passare dalla rete, con i suoi modi e un registro in memoria.
 
+### Significato (embedding)
+
+La bolla e la stella polare misurano di che cosa parla un agente con dei vettori. La fonte lessicale (TF-IDF, sempre presente) confronta le parole; una fonte neurale capisce anche i sinonimi ("login" e "autenticazione"). L'opzione `embedEngine` sceglie: `tfidf` (quella di base), `auto` (Ollama se risponde, poi ONNX se installato, altrimenti TF-IDF), `ollama` o `onnx` (quella, oppure il TF-IDF dicendo perché).
+
+- **Fonti.** Ollama si chiama con `http` di Node, solo su `127.0.0.1`, `::1` o `localhost` (`ollamaUrl`); il modello è `embedModel` o il primo modello di embedding presente, prima i multilingue; Platypus non lancia mai `ollama pull`, mostra il comando. Il provider ONNX sta in `optional/embed-onnx/` con il suo `package.json` e fa girare `Xenova/multilingual-e5-small` in un `worker_thread`; il motore lo carica con `require` solo se `npm run embed:onnx:install` l'ha installato (quel comando chiede prima conferma ed è l'unico che scarica un modello).
+- **Mai bloccare.** Una coda per tutto il motore, lotti di al massimo 16 testi, 5 s per richiesta, prima gli agenti che si stanno guardando; 3 fallimenti di fila sospendono una fonte per 5 minuti. Un vettore che non c'è ancora semplicemente manca: si vede subito il quadro del TF-IDF ("affino…"), sostituito quando sono arrivati i vettori neurali di ogni compito e di ogni azione. Vettori di fonti diverse non si mescolano mai in un calcolo.
+- **Testo e cache.** I pezzi del contesto di un agente tengono un breve estratto del loro testo in memoria (al massimo 320 caratteri, 480 per un'azione con il suo risultato), mai su disco. La cache tiene solo vettori e hash sha1: 5000 vettori in memoria e `embed-cache/<fonte>.bin` su disco, al massimo 50 MB per fonte.
+- **Soglie per fonte.** I vettori neurali hanno somiglianze di fondo molto più alte del TF-IDF, per questo la regola della deriva ha una riga per fonte in `drift-rule.js` (fondo, allargamento, `rel`, `run`, `weak`), misurata con `scripts/embed-eval.js` su un insieme etichettato (risultati in `docs/plans/embedding-calibration.md`). Una fonte neurale senza riga è "non calibrata": se ne vede la geometria, ma la regola della deriva dice "non misurabile".
+
 ## Interfaccia (`renderer/`)
 
-Pagina statica: `index.html`, `style.css`, `game.js` (palazzo, piani, fumetti), `worldmap.js` (mappa della realtà), `bottega.js` (Libro della bottega), `teams.js` (pannello SQUADRE: workflow, squadre, messaggi), `report.html`, `i18n-runtime.js`. Parla con il motore solo via HTTP e SSE. L'unico punto di contatto con il guscio è l'oggetto facoltativo `window.officeApp` (se manca, si è nel browser).
+Pagina statica: `index.html`, `style.css`, `game.js` (palazzo, piani, fumetti), `worldmap.js` (mappa della realtà), `bottega.js` (Libro della bottega), `teams.js` (pannello SQUADRE: workflow, squadre, messaggi), `embed-ui.js` (le opzioni del "motore del significato"), `report.html`, `i18n-runtime.js`, più `/drift-rule.js` servito dal motore. Parla con il motore solo via HTTP e SSE. L'unico punto di contatto con il guscio è l'oggetto facoltativo `window.officeApp` (se manca, si è nel browser).
 
 ### Contratto `window.officeApp` (da `src/preload.js`)
 
@@ -133,5 +146,7 @@ Il vantaggio sarebbero programmi compilati molto più piccoli (circa 10 MB invec
 | `~/.platypus/bottega/<chiave>.json` | il Libro della bottega di ogni progetto (un file per cartella di progetto) |
 | `~/.platypus/feedback/<chiave>.jsonl` | i messaggi agli agenti di ogni progetto, mandati e in ombra, con i loro esiti (oltre 5 MB passa a `<chiave>.1.jsonl`) |
 | `~/.platypus/launch.log` | messaggi dell'ultimo avvio della finestra |
+| `~/.platypus/embed-cache/<fonte>.bin` | i vettori delle fonti neurali del significato, con lo sha1 del loro testo (mai il testo), al massimo 50 MB per fonte |
+| `~/.platypus/models/` | il modello ONNX facoltativo, solo dopo `npm run embed:onnx:install` |
 | `$PLATYPUS_DATA_DIR` | se è impostata, si usa al posto di `~/.platypus` (creata vuota, senza copiare la vecchia cartella di Agent Office), e i dati di Electron vanno nella sua sottocartella `electron/`: per le prove e per i loop di sviluppo che girano accanto al tuo Platypus |
 | cartella dati di Electron (`Platypus`) | posizione della finestra e preferenze del guscio |
