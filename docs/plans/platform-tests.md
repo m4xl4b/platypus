@@ -146,7 +146,7 @@ Like W3 and W4, with the Linux terminals (GNOME Terminal, Konsole, the one in VS
 
 ## M · macOS without a Mac
 
-### M1 · System tests that run anywhere  [ ] [ci]
+### M1 · System tests that run anywhere  [x] [ci]
 
 - New `scripts/platform-test.js`, called by the Actions and runnable by hand. It works in a temporary `HOME` and does not touch the real system.
 - **For each system it tests:**
@@ -259,5 +259,16 @@ How it was run: the window was started from the test clone with the temporary ho
 - **Mini mode, three screens** (2048x1280 at 125 %, 1920x1080 right, 1920x1080 left): with the window on each screen in turn, MINI put the strip (about 380x150) in the bottom-right corner of the work area of the same screen, always on top; leaving mini mode restored the previous bounds. (After `setBounds` between screens with different scaling Electron resized the window itself; that is Electron, not Platypus.)
 - **After (everything restored):** `Run.reg` and `StartupApproved\Run` exports are byte-identical to the "before" exports; the Start menu hashes (29 files, including Max's `Platypus.lnk`) and the Desktop listing are identical; no process under `C:\Platypus Tests` is left, ports 47850 free; Max's Platypus (PID 56192, since 15:11) and his `~\.platypus` files were not touched.
 - **Doubts for Max:** tray badge (above); the first-run question "Connect Platypus to Claude Code?" appears at every first start of a new data folder and it was left unanswered (the test process was stopped); the shared start-up value name (above).
+
+### 2026-11-18 · M1 · System tests that run anywhere (taken by the Windows loop)
+
+- New `scripts/platform-test.js` (run by hand with `node scripts/platform-test.js`; M2 puts it in the Actions). It makes a temporary folder and points `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME` and `CLAUDE_CONFIG_DIR` into it **before** loading any module, then deletes it. Nothing of the real system is touched. Output uses the same "ok / FAIL / Tutto a posto." style as `npm test`.
+- What it checks, per system:
+  - **Shortcuts** (`scripts/shortcut.js`): Windows `Desktop\Platypus.lnk` (target, argument, working directory, icon file exists, read back with the shell COM object); macOS `Platypus.app` (`Info.plist` with `plutil -lint`, executable launcher, `icon.icns`); Linux `platypus.desktop` (Exec, Path, icon, executable). On every system: `start.sh` and `start.command` have mode 100755 in git and `start.cmd` has CRLF.
+  - **Autostart** (`src/autostart.js`, with a fake Electron `app`): macOS LaunchAgent created, `plutil -lint`, removed, old Agent Office plist removed; Linux `autostart\platypus.desktop` created and removed, old `agent-office.desktop` removed; Windows the arguments given to `setLoginItemSettings` (Electron path, repository folder), the removal of the old `com.agentoffice.desktop` value, and a write/read/delete round trip with `reg.exe` on a test branch `HKCU\Software\PlatypusPlatformTest` (so the real Run key is never touched).
+  - **osint** (`src/core/osint.js`): `cmdArgs` and `resumeWin` on a folder with spaces and with `%`, and which tools exist (printed as info: PowerShell/cmd/wt/code on Windows, osascript/ps/code on macOS, xdotool/wmctrl/ps/code on Linux) with the base ones required. `focusSession` on the real process is run only with `CI=true` or `--focus`, because on a real desktop it would raise a window.
+  - **Cowork search** (`coworkRoots()` and `findCoworkBases()` in `src/core/sources.js`) on a fake tree under each system's root: the right roots are listed, only the folder with transcripts is found (decoys inside `Cache`, `vm_bundles`, and an empty `projects` are ignored), `exclude` works, an extra root with `~` and quotes works, a root that does not exist is reported; on Windows also the Microsoft Store `Packages\Claude_...\LocalCache\Roaming\Claude` path.
+- **Run on Windows 11 (this PC):** 24 checks ok, "Tutto a posto."; the temporary folder and the registry branch are gone afterwards.
+- **Not run:** the macOS and Linux branches (no Mac here; WSL has a `rocky` distribution but no Node, and I did not install anything). They are written from the code and will be exercised by the Actions (M2) and by the Linux loop. `wt.exe` and `code` are not in the PATH on this PC (printed as info).
 
 ## Journal (Linux)
