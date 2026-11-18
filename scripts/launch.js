@@ -30,6 +30,8 @@ const passThrough = args.filter((a, i) => !['--web', '--background', '--setup', 
 const IS_WIN = process.platform === 'win32';
 const LOG_DIR = DATA_DIR;
 const LOG = path.join(LOG_DIR, 'launch.log');
+const { openLaunchLog, readSince } = require('./launch-log');
+let LOG_START = 0; // dove comincia, nel registro, questo avvio
 
 function say(msg) { console.log('[platypus] ' + msg); }
 function fail(msg) { console.error('[platypus] ' + msg); process.exitCode = 1; }
@@ -104,8 +106,10 @@ function wantsX11() {
 }
 function startElectron(extra, background) {
   const exe = electronPath();
-  try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch {}
-  const errFd = fs.openSync(LOG, 'w');
+  // il registro dell'avvio di prima diventa launch.log.1: mai svuotarlo (scripts/launch-log.js)
+  const log = openLaunchLog(LOG_DIR);
+  LOG_START = log.start;
+  const errFd = log.fd;
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE; // se è impostata, Electron partirebbe come Node senza finestra
   const child = spawn(exe, [ROOT, ...extra, ...passThrough], {
@@ -124,7 +128,7 @@ function startElectron(extra, background) {
     setTimeout(() => finish({ ok: true, child }), 5000);
   });
 }
-function logText() { try { return fs.readFileSync(LOG, 'utf8'); } catch { return ''; } }
+function logText() { return readSince(LOG, LOG_START); }
 
 async function runDesktop() {
   if (!canShowWindow()) { say('Nessuno schermo grafico (DISPLAY/WAYLAND_DISPLAY): passo alla modalità browser.'); return runWeb(); }
@@ -168,7 +172,10 @@ function runTauri() {
     return runDesktop();
   }
   const background = has('--background');
-  const child = spawn(exe, passThrough, { cwd: ROOT, detached: background, stdio: background ? 'ignore' : 'inherit', windowsHide: false });
+  // in background i messaggi del guscio e del motore vanno in launch.log, ruotato come per Electron (scripts/launch-log.js)
+  let out = 'inherit';
+  if (background) { const log = openLaunchLog(LOG_DIR); LOG_START = log.start; out = ['ignore', log.fd, log.fd]; }
+  const child = spawn(exe, passThrough, { cwd: ROOT, detached: background, stdio: out, windowsHide: false });
   child.on('error', e => { say('Il guscio Tauri non si avvia (' + e.message + '): apro Electron.'); runDesktop(); });
   child.on('spawn', () => {
     if (background) { child.unref(); say('Platypus (Tauri) è partito. Puoi chiudere questo terminale.'); process.exit(0); }

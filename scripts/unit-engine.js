@@ -325,6 +325,93 @@ function urlTests(ok) {
   ok(bad.every(u => !isExternalUrl(u)), 'file:, smb:, protocolli di altre app, javascript: e credenziali nell\'indirizzo: mai a openExternal');
 }
 
+// 2.12.1 · il registro del lanciatore si ruota (launch.log.1), non si svuota; le prove partono solo con una cartella
+// dei dati temporanea
+function launchLogTests(ok) {
+  const { openLaunchLog, readSince } = require(path.join(ROOT, 'scripts', 'launch-log'));
+  const guard = require(path.join(ROOT, 'scripts', 'test-guard'));
+  const { spawnSync } = require('child_process');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-launchlog-'));
+  try {
+    const log = path.join(tmp, 'launch.log');
+    fs.writeFileSync(log, 'avvio di prima: errore importante\n');
+    let l = openLaunchLog(tmp);
+    fs.writeSync(l.fd, 'secondo avvio\n'); fs.closeSync(l.fd);
+    ok(fs.readFileSync(log + '.1', 'utf8') === 'avvio di prima: errore importante\n' && fs.readFileSync(log, 'utf8') === 'secondo avvio\n' && l.start === 0, 'launch.log: il registro di prima diventa launch.log.1, non si svuota');
+    l = openLaunchLog(tmp); fs.closeSync(l.fd);
+    ok(fs.readFileSync(log + '.1', 'utf8') === 'secondo avvio\n' && fs.readFileSync(log, 'utf8') === '', 'launch.log: a ogni avvio si ruota di uno (se ne tengono due)');
+    l = openLaunchLog(tmp); fs.closeSync(l.fd);
+    ok(fs.readFileSync(log + '.1', 'utf8') === 'secondo avvio\n', 'launch.log: un registro vuoto non prende il posto di launch.log.1');
+    // se il file non si può rinominare (qui: launch.log.1 è una cartella), si scrive in coda e il vecchio resta
+    fs.writeFileSync(log, 'ancora aperto da un altro Platypus\n'); fs.rmSync(log + '.1'); fs.mkdirSync(log + '.1');
+    l = openLaunchLog(tmp);
+    fs.writeSync(l.fd, 'terzo avvio\n'); fs.closeSync(l.fd);
+    const all = fs.readFileSync(log, 'utf8');
+    ok(all.startsWith('ancora aperto da un altro Platypus\n') && /\n--- \d{4}-.*---\nterzo avvio\n$/.test(all) && readSince(log, l.start) === 'terzo avvio\n', 'launch.log: se non si può ruotare si scrive in coda, e del nuovo avvio si legge solo la sua parte');
+    // le prove: mai senza PLATYPUS_DATA_DIR, mai in una cartella che non sia temporanea
+    const inTmp = path.join(os.tmpdir(), 'platypus-guard', 'data');
+    // (le prove girano con una home temporanea: per una cartella "vera" si usa un percorso fisso fuori da quella temporanea)
+    const real = path.join(path.parse(os.tmpdir()).root, 'Users', 'max', '.platypus');
+    ok(guard.whyNot({}) !== '' && guard.whyNot({ PLATYPUS_DATA_DIR: '  ' }) !== '' && guard.whyNot({ PLATYPUS_DATA_DIR: real }) !== '' && guard.whyNot({ PLATYPUS_DATA_DIR: path.dirname(real) }) !== '' && guard.whyNot({ PLATYPUS_DATA_DIR: os.tmpdir() }) !== '' && guard.whyNot({ PLATYPUS_DATA_DIR: path.join(os.tmpdir(), '..', 'Documents') }) !== '', 'prove: si rifiutano senza PLATYPUS_DATA_DIR, con una cartella vera (~/.platypus, la home), con la cartella temporanea intera o con una che ne esce con ..');
+    ok(guard.whyNot({ PLATYPUS_DATA_DIR: inTmp }) === '' && guard.whyNot({ PLATYPUS_DATA_DIR: path.join(tmp, 'ci', 'data'), RUNNER_TEMP: path.join(tmp, 'ci') }) === '', 'prove: partono con una cartella dentro quella temporanea del sistema, o dentro RUNNER_TEMP nelle GitHub Actions');
+    const env = { ...process.env }; delete env.PLATYPUS_DATA_DIR;
+    const run = f => spawnSync(process.execPath, [path.join(ROOT, 'scripts', f)], { env, encoding: 'utf8', timeout: 30000 });
+    const r1 = run('smoke-test.js'), r2 = run('unit-notify.js');
+    ok(r1.status === 2 && /Mi rifiuto di partire/.test(r1.stderr) && !/sintassi/.test(r1.stdout) && r2.status === 2, `prove: npm test e una prova lanciata da sola, senza PLATYPUS_DATA_DIR, escono subito con il codice ${r1.status} senza fare niente`);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
+// 2.12.1 · i metadati di una sessione Cowork: solo i campi della lista ammessa, mai messaggi, prompt, nome o e-mail
+function coworkMetaTests(ok) {
+  const { readCoworkMeta, COWORK_META_FIELDS } = require(path.join(ROOT, 'src', 'core', 'sources'));
+  const ALLOWED = ['title', 'sessionId', 'cliSessionId', 'processName', 'model', 'effortOverride', 'createdAt', 'lastActivityAt', 'isArchived', 'isAgentCompleted'];
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-cwmeta-'));
+  try {
+    // ogni campo vietato (e ogni campo sconosciuto) porta un valore riconoscibile: non deve uscire da nessuna parte
+    const SECRET = 'SEGRETO-NON-DEVE-USCIRE';
+    const full = {
+      title: 'Report trimestrale', sessionId: 'local_1', cliSessionId: 'c1', processName: 'quiet-brave-otter', model: 'claude-opus-4-8[1m]',
+      effortOverride: 'high', createdAt: 1700000000000, lastActivityAt: 1700000100000, isArchived: false, isAgentCompleted: true,
+      initialMessage: SECRET + ' messaggio', systemPrompt: SECRET + ' prompt', accountName: SECRET + ' nome', emailAddress: SECRET + '@example.invalid',
+      vmProcessName: SECRET, cwd: '/sessions/' + SECRET, userSelectedFolders: ['C:/' + SECRET], mcqAnswers: { a: SECRET }, futureField: SECRET,
+    };
+    const f = path.join(tmp, 'local_1.json');
+    fs.writeFileSync(f, JSON.stringify(full));
+    const m = readCoworkMeta(f);
+    const keys = Object.keys(m).sort();
+    ok(JSON.stringify(Object.keys(COWORK_META_FIELDS).sort()) === JSON.stringify(ALLOWED.slice().sort()) && JSON.stringify(keys) === JSON.stringify(ALLOWED.slice().sort()), `Cowork: dai metadati escono esattamente i ${keys.length} campi ammessi (${keys.join(', ')})`);
+    ok(!JSON.stringify(m).includes(SECRET) && !('initialMessage' in m) && !('systemPrompt' in m) && !('accountName' in m) && !('emailAddress' in m), 'Cowork: mai initialMessage, systemPrompt, accountName, emailAddress, né campi sconosciuti (nemmeno un pezzo del loro valore)');
+    ok(m.processName === 'quiet-brave-otter' && m.effortOverride === 'high' && m.model === 'claude-opus-4-8[1m]' && m.isAgentCompleted === true && m.createdAt === 1700000000000, 'Cowork: i campi ammessi arrivano con il loro valore');
+    // tipi sbagliati e testi lunghissimi: scartati o accorciati; un file che non è un oggetto non dà niente
+    fs.writeFileSync(f, JSON.stringify({ title: 'x'.repeat(5000), model: 42, isArchived: 'true', createdAt: 'ieri', effortOverride: { a: 1 }, emailAddress: SECRET }));
+    const w = readCoworkMeta(f);
+    ok(w.title.length === 200 && !('model' in w) && !('isArchived' in w) && !('createdAt' in w) && !('effortOverride' in w) && !JSON.stringify(w).includes(SECRET), 'Cowork: tipi sbagliati scartati, testi accorciati');
+    fs.writeFileSync(f, JSON.stringify([SECRET]));
+    ok(readCoworkMeta(f) === null && readCoworkMeta(path.join(tmp, 'manca.json')) === null, 'Cowork: un file che non è un oggetto, o che manca, non dà metadati');
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
+// 2.12.1 · nomi dei modelli (src/core/models.js): il contesto da 1M con [1m], e l'età dei modelli nuovi o sconosciuti
+function modelTests(ok) {
+  const M = require(path.join(ROOT, 'src', 'core', 'models'));
+  const { AgentWorld } = require(path.join(ROOT, 'src', 'core', 'worldmap'));
+  // [1m]: contesto da 1M, nell'etichetta, nella finestra e nella stima del contesto del motore
+  const big = M.info('claude-opus-4-8[1m]'), plain = M.info('claude-opus-4-8');
+  ok(big.ctx1m && big.fam === 'opus' && big.ver === 4.8 && big.label === 'Opus 4.8 · 1M' && !plain.ctx1m && plain.label === 'Opus 4.8', 'modelli: [1m] vuol dire contesto da 1M, e la versione resta quella (Opus 4.8 · 1M)');
+  ok(M.contextLimit('claude-opus-4-8[1m]', 5000) === 1e6 && M.contextLimit('claude-opus-4-8', 5000) === 2e5 && M.contextLimit('claude-opus-4-8', 250000) === 1e6 && M.contextLimit('', 0) === 2e5 && M.contextLimit('claude-sonnet-4-5[1M]', 0) === 1e6, 'modelli: finestra di contesto 1M con [1m] (anche maiuscolo), altrimenti 200k finché il contesto visto non li supera');
+  const ctxDim = model => { const w = new AgentWorld(); w.model = model; w.start('t1', 'Read', { file_path: '/p/a.ts' }, 1000, '/p', 150000); return w.steps[0].vec[6]; };
+  ok(ctxDim('claude-opus-4-8[1m]') === 0.15 && ctxDim('claude-opus-4-8') === 0.75, `modelli: la stima del contesto del motore (150k token) è ${ctxDim('claude-opus-4-8[1m]')} su 1M con [1m] e ${ctxDim('claude-opus-4-8')} su 200k senza`);
+  // età: un modello nuovo è un personaggio giovane, anche di una famiglia nuova o sconosciuta
+  const age = (id, seen) => M.ageTier(id, seen && M.newest(seen));
+  ok(age('claude-fable-5') === 0 && age('claude-fable-5-2') === 0 && age('claude-opus-5-5') === 0 && age('claude-mythos-5-2') === 0 && age('claude-zeta-7') === 0 && age('gpt-4o') === 0, 'modelli: Fable 5, Fable 5.2, Opus 5.5 e le famiglie sconosciute recenti (Mythos 5.2, Zeta 7) sono giovani; un nome senza versione anche');
+  ok(age('claude-opus-4-8') === 1 && age('claude-opus-4-1') === 2 && age('claude-3-5-haiku-20241022') === 3 && age('claude-instant-1-2', ['claude-instant-1-2']) === 3 && age('claude-2-1', ['claude-2-1']) === 3, 'modelli: i vecchi invecchiano, anche di una famiglia sconosciuta vista da sola (Instant 1.2, Claude 2.1)');
+  ok(age('claude-fable-5', ['claude-fable-6-1']) === 2 && age('claude-opus-5-5', ['claude-fable-6-1']) === 0 && age('claude-mythos-5-2', ['claude-mythos-6-2']) === 2, "modelli: l'età si misura nella stessa famiglia (un Fable 6.1 invecchia Fable 5, non Opus 5.5); una famiglia sconosciuta contro la versione più recente di tutte");
+  ok(M.info('claude-sonnet-4-5-20250929').ver === 4.5 && M.info('claude-3-opus-20240229').ver === 3 && M.info('claude-2-1').label === 'Claude 2.1' && M.info('gpt-4o').label === 'gpt-4o' && M.info(null) === null, 'modelli: nomi con la data, con la versione prima della famiglia, e nomi che non sono di Claude');
+  // la pagina usa lo stesso modulo (niente regole scritte due volte), caricato prima di game.js
+  const game = fs.readFileSync(path.join(ROOT, 'renderer', 'game.js'), 'utf8'), wm = fs.readFileSync(path.join(ROOT, 'renderer', 'worldmap.js'), 'utf8'), html = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
+  ok(/PlatypusModels/.test(game) && !/NEWEST_KNOWN|opus|sonnet|haiku/.test(game) && /PlatypusModels.contextLimit/.test(wm) && !/mx > 200000 ? 1000000/.test(wm.replace(/: mx > 200000 ? 1000000 : 200000; }/, '')) && html.indexOf('models.js') > 0 && html.indexOf('models.js') < html.indexOf('game.js'), 'modelli: età e bolla della pagina usano models.js, caricato prima di game.js');
+}
+
 // PLATYPUS_DATA_DIR: un'altra cartella al posto di ~/.platypus (prove e loop in parallelo), creata se manca,
 // senza copiare il vecchio Agent Office e senza toccare ~/.platypus
 function dataDirOverrideTests(ok) {
@@ -350,7 +437,8 @@ function dataDirTests(ok) {
     // in un processo a parte: la home è quella temporanea, la cartella esiste già con i permessi di prima
     fs.mkdirSync(path.join(tmp, '.platypus'), { mode: 0o755 });
     fs.chmodSync(path.join(tmp, '.platypus'), 0o755);
-    execFileSync(process.execPath, ['-e', `require(${JSON.stringify(path.join(ROOT, 'src', 'paths'))}).dataDir()`], { env: { ...process.env, HOME: tmp } });
+    // senza PLATYPUS_DATA_DIR (le prove la impostano): qui si controlla proprio ~/.platypus, nella home temporanea
+    execFileSync(process.execPath, ['-e', `require(${JSON.stringify(path.join(ROOT, 'src', 'paths'))}).dataDir()`], { env: { ...process.env, HOME: tmp, PLATYPUS_DATA_DIR: '' } });
     const mode = fs.statSync(path.join(tmp, '.platypus')).mode & 0o777;
     ok(mode === 0o700, `~/.platypus solo per il proprietario (permessi ${mode.toString(8)})`);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
@@ -495,6 +583,9 @@ function run(ok) {
   nodeVersionTests(ok);
   dataDirTests(ok);
   dataDirOverrideTests(ok);
+  modelTests(ok);
+  coworkMetaTests(ok);
+  launchLogTests(ok);
   urlTests(ok);
   boundsTests(ok);
   forgetTests(ok);
@@ -1166,6 +1257,7 @@ function bashLabelTests(ok) {
 module.exports = { run };
 
 if (require.main === module) {
+  require('./test-guard').requireTempDataDir('unit-engine'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea
   let failed = 0;
   run((cond, msg) => { console.log((cond ? '  ok   ' : '  FAIL ') + msg); if (!cond) failed++; });
   console.log(failed ? `\n${failed} controlli falliti` : '\nTutto a posto.');

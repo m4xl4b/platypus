@@ -201,6 +201,7 @@ function run(ok) {
 module.exports = { run };
 
 if (require.main === module) {
+  require('./test-guard').requireTempDataDir('unit-claudemd'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea
   let failed = 0, n = 0;
   run((cond, msg) => { n++; console.log((cond ? '  ok   ' : '  FAIL ') + msg); if (!cond) failed++; });
   console.log(`\n${n} controlli`);

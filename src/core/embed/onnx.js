@@ -16,7 +16,7 @@ function create(settings = {}, deps = {}) {
   let mod;
   try { mod = require(deps.onnxModule || MODULE); } catch (e) { return notInstalled('optional/embed-onnx is missing (' + e.code + ')'); }
   if (!mod || typeof mod.create !== 'function') return notInstalled('optional/embed-onnx has no create()');
-  return mod.create(settings, { modelsDir: deps.modelsDir, transformers: deps.transformers, timeoutMs: deps.timeoutMs || 5000 });
+  return mod.create(settings, { modelsDir: deps.modelsDir, transformers: deps.transformers, timeoutMs: deps.timeoutMs || 5000, ...(deps.model ? { model: deps.model } : {}) });
 }
 
 module.exports = { create, MODULE, HINT };

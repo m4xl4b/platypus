@@ -739,7 +739,7 @@ class OfficeState extends EventEmitter {
 
   // mappa della realtà dell'agente (vedi worldmap.js)
   worldStart(s, a, id, name, input, ts) {
-    try { (a.world || (a.world = new AgentWorld())).start(id, name, input, ts || this.now(), s.cwd, a.ctx || 0); } catch {}
+    try { const w = a.world || (a.world = new AgentWorld()); w.model = a.model || w.model || ''; w.start(id, name, input, ts || this.now(), s.cwd, a.ctx || 0); } catch {}
     try { const m = this.mindOf(s, a); m.action(id, ts || this.now(), describeTool(name, input), actionText(name, input)); const p = m.byTool.get(id); if (p) p.tool = name; } catch {}
   }
   // testo completo delle ultime risposte: serve a confrontare quello che dice con quello che c'è (grounding.js)

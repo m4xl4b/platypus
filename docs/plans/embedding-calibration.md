@@ -26,9 +26,10 @@ Measured on 2026-11-18.
 | `ollama:nomic-embed-text-v2-moe` (0.96 GB) | 0.960 | 0.928 | 0.729 | 0.218 | 0.04 | 0.81 (1.0 / 0) | **0.78** (1.0 / 0) | | **0.227** |
 | `ollama:bge-m3` (1.16 GB) | 0.950 | 0.922 | 0.750 | 0.399 | 0.14 | 0.70 (1.0 / 0) | **0.66** (1.0 / 0) | | **0.186** |
 | `ollama:nomic-embed-text:v1.5` (0.27 GB) | 0.761 | 0.579 | 0 | 0.509 | 0 | 0.86 (0.8 / 0) | 0.86, none reaches 90% | | 0.03 — **does not beat TF-IDF, no row** |
-| `onnx:Xenova/multilingual-e5-small` (q8, 130 MB) | 0.845 | 0.689 | 0 | 0.806 | 0.11 (not separated: 0 / 0.11) | 0.91 (0.8 / 0) | 0.91, none reaches 90% | | 0.031 — **does not beat TF-IDF on drift, no row** |
+| `onnx:Xenova/multilingual-e5-small` (q8, 130 MB) | 0.845 | 0.689 | 0 | 0.806 | 0.11 (not separated: 0 / 0.11) | 0.91 (0.8 / 0) | 0.91, none reaches 90% | | 0.031 — **does not beat TF-IDF on drift, no row** (replaced in 2.12.1) |
+| `onnx:onnx-community/Qwen3-Embedding-0.6B-ONNX` (q8, 585 MB) | 0.935 | 0.867 | 0.396 | 0.382 | 0.194 | 0.77 (0.967 / 0) | **0.71** (0.967 / 0) | | **0.121** |
 
-The table of `drift-rule.js` has two rows: `tfidf` (`rel` 0.35, `run` 6, `weak` 0.031, `warn` 0.6, `floor` 0.03, `zero` 0, `widen` 0) and `fake:synonyms` (`rel` 0.53, `run` 6, `weak` 0.309, `warn` 0.78, `floor` 0.03, `zero` 0.621, `widen` 0.381). `warn` (the yellow band) is `rel` + 0.25. A test recomputes the `fake:synonyms` row from the measure and fails if the table and the measure disagree.
+The table of `drift-rule.js` has two rows: `tfidf` (`rel` 0.35, `run` 6, `weak` 0.031, `warn` 0.6, `floor` 0.03, `zero` 0, `widen` 0) and `fake:synonyms` (`rel` 0.53, `run` 6, `weak` 0.309, `warn` 0.78, `floor` 0.03, `zero` 0.621, `widen` 0.381). `warn` (the yellow band) is `rel` + 0.25, at most 0.95 (so 0.95 for `nomic-embed-text-v2-moe`, whose `rel` is 0.78). A test recomputes the `fake:synonyms` row from the measure and fails if the table and the measure disagree.
 
 What the TF-IDF numbers say:
 
@@ -57,16 +58,25 @@ At Max's request `npm run embed:onnx:install` was run (53 npm packages, `@huggin
 - So it has no row: it is "not calibrated". Since an uncalibrated source would make the drift rule say "not measurable", worse than TF-IDF, **`auto` now uses only calibrated sources**: with Ollama off and only the ONNX model installed, automatic mode stays lexical, without starting the model. Chosen by hand (`embedEngine = onnx`) it is used for the bubble, and the options say "not calibrated: automatic mode skips it, and chosen by hand it does not judge drift".
 - End to end in the real engine: chosen by hand, the worker loaded the model and the bubble switched to `onnx:Xenova/multilingual-e5-small` (384 dimensions) in about 1.6 s; in `auto` with Ollama off the engine stayed on TF-IDF.
 
+## Qwen3-Embedding in ONNX, measured on 2026-11-18 (2.12.1)
+
+The same model that is best on Ollama, in the ONNX version of `onnx-community/Qwen3-Embedding-0.6B-ONNX` (q8, `model_quantized.onnx`, 585 MB; Apache-2.0), with the pooling it needs (the last token) and the same instruction in front of the task as on Ollama (none in front of the actions). Measured with the same set and the same script, the model in a temporary data folder.
+
+- **It beats TF-IDF on both counts**: AUC 0.935 against 0.785, on synonyms 0.867 against 0.547, worst task 0.396 against 0.302; drift: with the proposed `rel` 0.71, 96.7% of the drifts caught with no false alarm (TF-IDF: 80% with its threshold in use, 86.7% at best). So it has a row in `drift-rule.js` and **it replaces `Xenova/multilingual-e5-small`** as the model of `npm run embed:onnx:install`; with Ollama off and this model installed, automatic mode uses it.
+- It is below the same model on Ollama (AUC 0.989, synonyms 0.979, every drift caught): most likely the 8-bit quantization. With Ollama on, automatic mode still prefers Ollama.
+- **Caveats**: `widen` is tight (0.194, the best early action of the tasks that cannot be measured, against 0.189, the 5th percentile of the real ones), and the suggested `weak` (0.121) sits above the 5th percentile of the base of the real tasks (0.092): with this model a few real tasks may be reported as "not measurable" rather than judged. The set is small (30 tasks) and written for the purpose.
+- Cost: about 380 MB of npm packages and 585 MB of model, against about 130 MB for e5-small.
+
 The commands, to measure again:
 
 ```
 node scripts/embed-eval.js --source ollama --model qwen3-embedding:0.6b
-node scripts/embed-eval.js --source onnx
+node scripts/embed-eval.js --source onnx                  # the installed model (Qwen3-Embedding)
 ```
 
 The script measures the background and `widen`, uses them as the engine would, and prints the row for `drift-rule.js` (`zero`, `widen`, the proposed `rel`, `warn`, the suggested `weak`). The row goes into the table **only if the source beats TF-IDF** on AUC and on the drift test.
 
 Still true:
 
-- a neural source without a row in the table (the ONNX model, `nomic-embed-text:v1.5`, any other model) is "not calibrated": in `auto` it is skipped (the chain moves on, down to TF-IDF, and it is not even loaded); chosen by hand it is used, and the bubble and the north star show its geometry, but the drift rule says "not measurable" (engine, feedback and map alike) instead of guessing;
+- a neural source without a row in the table (`nomic-embed-text:v1.5`, the old ONNX e5-small, any other model) is "not calibrated": in `auto` it is skipped (the chain moves on, down to TF-IDF, and it is not even loaded); chosen by hand it is used, and the bubble and the north star show its geometry, but the drift rule says "not measurable" (engine, feedback and map alike) instead of guessing;
 - **the default engine is `auto`** (`embedEngine` in `DEFAULT_SETTINGS`), as the plan allows once a neural source beats TF-IDF, and decided by Max on 2026-11-18. On a computer where Ollama runs with an embedding model, Platypus uses it on its own (snippets of the agents' text go to that local Ollama, which keeps the model loaded for 10 minutes); without Ollama nothing changes, it stays lexical. `tfidf` in the options turns it off.

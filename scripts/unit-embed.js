@@ -386,7 +386,8 @@ async function pipeline(task, model, opts) {
   if (env.allowRemoteModels !== false) throw new Error('remote models must be off');
   if (task !== 'feature-extraction') throw new Error('task ' + task);
   return async (texts, o) => {
-    if (!o || o.pooling !== 'mean' || !o.normalize) throw new Error('pooling');
+    // ogni modello con il suo pooling: Qwen3 l'ultimo token, gli altri la media
+    if (!o || o.pooling !== (/Qwen3/.test(model) ? 'last_token' : 'mean') || !o.normalize) throw new Error('pooling ' + (o && o.pooling) + ' per ' + model);
     if (texts.some(t => /BOOM/.test(t))) throw new Error('fake failure');
     const dim = 12, data = new Float32Array(texts.length * dim);
     texts.forEach((t, i) => data.set(wordVec(t, dim), i * dim));
@@ -421,19 +422,38 @@ async function onnxTests(ok) {
     const r = await p.ready();
     const [q, d] = [await p.embed(['rifai il login'], 'query'), await p.embed(['correggi l\'autenticazione'], 'document')];
     const same = (x, y) => x.length === y.length && x.every((v, i) => Math.abs(v - y[i]) < 1e-6);
-    ok(r && p.state === 'ready' && p.id === 'onnx:Xenova/multilingual-e5-small' && p.dim === 12 && p.worker && p.worker.threadId > 0 && same(q[0], wordVec('query: rifai il login', 12)) && same(d[0], wordVec('passage: correggi l\'autenticazione', 12)), `embedding E4: modulo finto → ${p.id}, ${p.dim} dimensioni, in un worker_thread (n. ${p.worker && p.worker.threadId}), prefissi e5 query:/passage:`);
+    ok(r && p.state === 'ready' && p.id === 'onnx:onnx-community/Qwen3-Embedding-0.6B-ONNX' && p.dim === 12 && p.worker && p.worker.threadId > 0 && same(q[0], wordVec(mod.prefix('query') + 'rifai il login', 12)) && same(d[0], wordVec('correggi l\'autenticazione', 12)), `embedding E4: modulo finto → ${p.id}, ${p.dim} dimensioni, in un worker_thread (n. ${p.worker && p.worker.threadId}), istruzione davanti alla domanda`);
+    // 2.12.1: un altro modello con le sue impostazioni (Qwen3: pooling sull'ultimo token, istruzione davanti alla domanda,
+    // niente davanti al documento), scelto da chi crea il provider
+    const QW = 'onnx-community/Qwen3-Embedding-0.6B-ONNX';
+    fs.mkdirSync(path.dirname(mod.markerOf(models, QW)), { recursive: true });
+    fs.writeFileSync(mod.markerOf(models, QW), '{}');
+    const pq = onnxLoader.create({}, { modelsDir: models, transformers: fake, model: QW });
+    stops.push(pq);
+    const rq = await pq.ready();
+    const [qq, qd] = [await pq.embed(['rifai il login'], 'query'), await pq.embed(['src/auth/login.ts'], 'document')];
+    ok(rq && pq.id === 'onnx:' + QW && same(qq[0], wordVec(mod.prefix('query', QW) + 'rifai il login', 12)) && /^Instruct: .*\nQuery: $/.test(mod.prefix('query', QW)) && same(qd[0], wordVec('src/auth/login.ts', 12)) && mod.specOf(QW).pooling === 'last_token' && mod.specOf(QW).dtype === 'q8' && mod.specOf('sconosciuto').pooling === 'mean', `embedding 2.12.1: ${QW} con le sue impostazioni (pooling sull'ultimo token, istruzione solo davanti alla domanda)`);
     let err = ''; try { await p.embed(['BOOM'], 'document'); } catch (e) { err = e.message; }
     const after = await p.embed(['ancora'], 'document');
     ok(/fake failure/.test(err) && after.length === 1, 'embedding E4: un errore del modello arriva come errore, e il worker resta in piedi');
-    // nella catena: Ollama spento, ONNX installato. Scelto a mano → ONNX. In automatico no: il modello ONNX misurato non
-    // batte il TF-IDF e non ha una riga in drift-rule.js, quindi si resta lessicali (senza nemmeno avviare il worker)
-    const mkEmb = engine => new embed.Embedder({ settings: { embedEngine: engine }, factories: { ollama: () => fakeProvider('ollama', { up: false }), onnx: (s, deps) => onnxLoader.create(s, deps) }, deps: { modelsDir: models, transformers: fake } });
+    // nella catena: Ollama spento, ONNX installato. Il modello predefinito (Qwen3) è misurato e ha la sua riga in
+    // drift-rule.js: si usa scelto a mano e anche in automatico
+    const mkEmb = (engine, model) => new embed.Embedder({ settings: { embedEngine: engine }, factories: { ollama: () => fakeProvider('ollama', { up: false }), onnx: (s, deps) => onnxLoader.create(s, deps) }, deps: { modelsDir: models, transformers: fake, ...(model ? { model } : {}) } });
     const emb = mkEmb('onnx'), embA = mkEmb('auto');
     stops.push(emb, embA);
     emb.space(1); embA.space(1); await settle(emb, 10000); await settle(embA, 10000);
     const st = emb.status(), stA = embA.status();
-    ok(st.active === 'onnx:Xenova/multilingual-e5-small' && st.sources.onnx.state === 'ready' && st.sources.onnx.calibrated === false, 'embedding E4: scelto a mano, con Ollama spento, si usa il modello ONNX installato (non calibrato)');
-    ok(stA.active === 'tfidf' && !stA.fallback && stA.sources.onnx.state === 'ready' && stA.sources.onnx.calibrated === false && !embA.sources.onnx.worker && stA.sources.ollama.state === 'not-found', 'embedding E4: in automatico il modello ONNX non calibrato si salta (lessicale), senza avviarlo');
+    ok(st.active === 'onnx:onnx-community/Qwen3-Embedding-0.6B-ONNX' && st.sources.onnx.state === 'ready' && st.sources.onnx.calibrated === true, 'embedding E4: scelto a mano, con Ollama spento, si usa il modello ONNX installato (calibrato)');
+    ok(stA.active === 'onnx:onnx-community/Qwen3-Embedding-0.6B-ONNX' && !stA.fallback && stA.sources.onnx.calibrated === true && stA.sources.ollama.state === 'not-found', 'embedding 2.12.1: in automatico, con Ollama spento, si usa il modello ONNX calibrato (Qwen3)');
+    // un modello ONNX non misurato (scelto per una prova): a mano sì, in automatico si salta senza avviarlo
+    const UN = 'Xenova/esempio-non-misurato';
+    fs.mkdirSync(path.dirname(mod.markerOf(models, UN)), { recursive: true });
+    fs.writeFileSync(mod.markerOf(models, UN), '{}');
+    const embU = mkEmb('onnx', UN), embUA = mkEmb('auto', UN);
+    stops.push(embU, embUA);
+    embU.space(1); embUA.space(1); await settle(embU, 10000); await settle(embUA, 10000);
+    const su = embU.status(), sua = embUA.status();
+    ok(su.active === 'onnx:' + UN && su.sources.onnx.calibrated === false && sua.active === 'tfidf' && !sua.fallback && sua.sources.onnx.calibrated === false && !embUA.sources.onnx.worker, 'embedding E4: un modello ONNX non calibrato si usa solo scelto a mano; in automatico si salta (lessicale), senza avviarlo');
     // nel motore vero di questa cartella, senza installazione: non installato
     if (!mod.installed()) {
       const real = onnxLoader.create({}, { modelsDir: models });
@@ -443,7 +463,7 @@ async function onnxTests(ok) {
     const env = { ...process.env, PLATYPUS_DATA_DIR: path.join(dir, 'data') };
     const before = fs.existsSync(path.join(ROOT, 'optional', 'embed-onnx', 'node_modules'));
     const ins = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'embed-onnx-install.js')], { input: 'n\n', encoding: 'utf8', env, timeout: 20000 });
-    ok(ins.status === 1 && /118 MB/.test(ins.stdout) && /Annullato/.test(ins.stdout) && fs.existsSync(path.join(ROOT, 'optional', 'embed-onnx', 'node_modules')) === before && !fs.existsSync(path.join(dir, 'data', 'models')), 'embedding E4: «npm run embed:onnx:install» chiede conferma con le dimensioni; con «no» non scarica niente');
+    ok(ins.status === 1 && new RegExp(mod.SIZE_MB + ' MB').test(ins.stdout) && /585 MB/.test(ins.stdout) && /380 MB/.test(ins.stdout) && /Qwen3-Embedding/.test(ins.stdout) && /Annullato/.test(ins.stdout) && fs.existsSync(path.join(ROOT, 'optional', 'embed-onnx', 'node_modules')) === before && !fs.existsSync(path.join(dir, 'data', 'models')), 'embedding E4: «npm run embed:onnx:install» chiede conferma con le dimensioni; con «no» non scarica niente');
   } finally {
     for (const x of stops) x.stop();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -484,6 +504,19 @@ function calibrationTests(ok) {
   ok(measured.length === 6 && measured.every(k => sane(rule.TABLE[k])) && rule.thresholdsFor('ollama:bge-m3:latest') === rule.TABLE['ollama:bge-m3'] && rule.thresholdsFor('ollama:qwen3-embedding:0.6b') === rule.TABLE['ollama:qwen3-embedding:0.6b'], `embedding E5: ${measured.length} modelli di Ollama misurati nella tabella (${measured.map(k => k.slice(7)).join(', ')})`);
   const ollamaMod = require(path.join(ROOT, 'src', 'core', 'embed', 'ollama'));
   ok(ollamaMod.SUGGESTED === 'qwen3-embedding:0.6b' && rule.thresholdsFor('ollama:' + ollamaMod.SUGGESTED).calibrated, 'embedding E5: il modello proposto è quello misurato meglio, e ha la sua riga');
+  // 2.12.1: le soglie del codice sono quelle del documento di taratura, modello per modello (rel proposto, weak
+  // suggerito, zero, widen; warn = rel + 0,25, al massimo 0,95), e ogni riga del documento con un rel proposto in
+  // grassetto ha la sua riga nel codice
+  const doc = fs.readFileSync(path.join(ROOT, 'docs', 'plans', 'embedding-calibration.md'), 'utf8');
+  const docRows = doc.split('\n').filter(l => /^\| `(ollama|onnx):/.test(l)).map(l => {
+    const c = l.split('|').map(x => x.trim());
+    const name = c[1].replace(/^`|`.*$/g, ''), num = s => { const m = /(\d+(?:\.\d+)?)/.exec(String(s).replace(/\*\*/g, '')); return m ? +m[1] : null; };
+    return { key: name.replace(/:latest$/, ''), proposed: /\*\*\d/.test(c[8]) ? num(c[8]) : null, zero: num(c[5]), widen: num(c[6]), weak: /\*\*\d/.test(c[10]) ? num(c[10]) : null };
+  });
+  const calibrated = docRows.filter(r => r.proposed !== null);
+  const wrong = calibrated.filter(r => { const t = rule.TABLE[r.key]; return !t || t.rel !== r.proposed || t.weak !== r.weak || t.zero !== r.zero || t.widen !== r.widen || t.warn !== +Math.min(0.95, r.proposed + 0.25).toFixed(2); });
+  const extra = Object.keys(rule.TABLE).filter(k => /^(ollama|onnx):/.test(k) && !calibrated.some(r => r.key === k));
+  ok(docRows.length === 9 && calibrated.length === 7 && !wrong.length && !extra.length && docRows.filter(r => r.proposed === null).every(r => !rule.TABLE[r.key]), `embedding 2.12.1: le soglie in drift-rule.js sono quelle di embedding-calibration.md per ognuno dei ${calibrated.length} modelli misurati (Ollama e ONNX)${wrong.length ? ' — diverse: ' + wrong.map(r => r.key).join(', ') : ''}${extra.length ? ' — in più: ' + extra.join(', ') : ''}`);
   // una regola in tre posti: motore, feedback e mappa danno la stessa risposta sulle stesse righe
   const { st, s } = require(path.join(ROOT, 'src', 'i18n')).withLang('it', demoScenario);
   const plan = s.subs.get('plan1').mind, page = ruleAsInPage();
@@ -524,6 +557,7 @@ async function run(ok) {
 module.exports = { run, demoScenario, fakeOllama, wordVec };
 
 if (require.main === module) {
+  require('./test-guard').requireTempDataDir('unit-embed'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea
   let failed = 0;
   run((cond, msg) => { console.log((cond ? '  ok   ' : '  FAIL ') + msg); if (!cond) failed++; }).then(() => process.exit(failed ? 1 : 0));
 }

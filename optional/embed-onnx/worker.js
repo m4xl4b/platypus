@@ -17,7 +17,7 @@ async function load() {
 parentPort.on('message', async ({ id, texts }) => {
   try {
     const pipe = await (loading || (loading = load()));
-    const out = await pipe(texts, { pooling: 'mean', normalize: true });
+    const out = await pipe(texts, { pooling: workerData.pooling || 'mean', normalize: true });
     const dim = out.dims[out.dims.length - 1], data = out.data;
     const vecs = texts.map((_, i) => Array.from(data.subarray(i * dim, (i + 1) * dim)));
     parentPort.postMessage({ id, vecs });

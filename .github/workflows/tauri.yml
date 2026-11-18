@@ -53,6 +53,8 @@ jobs:
         shell: bash
         env:
           PLATYPUS_PORT: '47812'
+          # like the tests: a temporary data folder, never the runner's ~/.platypus (scripts/test-guard.js)
+          PLATYPUS_DATA_DIR: ${{ runner.temp }}/platypus-data
         run: |
           exe=shells/tauri/src-tauri/target/release/platypus
           # --smoke exits by itself with 1 after 120 s (macOS has no `timeout` command)

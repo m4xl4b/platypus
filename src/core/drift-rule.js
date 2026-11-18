@@ -30,6 +30,8 @@
     'ollama:embeddinggemma-2:570m': Object.freeze({ rel: 0.68, run: 6, weak: 0.278, warn: 0.93, floor: 0.03, zero: 0.62, widen: 0.167, calibrated: true }),
     'ollama:snowflake-arctic-embed2': Object.freeze({ rel: 0.62, run: 6, weak: 0.222, warn: 0.87, floor: 0.03, zero: 0.24, widen: 0.174, calibrated: true }),
     'ollama:nomic-embed-text-v2-moe': Object.freeze({ rel: 0.78, run: 6, weak: 0.227, warn: 0.95, floor: 0.03, zero: 0.218, widen: 0.04, calibrated: true }),
+    // il modello ONNX facoltativo (optional/embed-onnx, q8), misurato il 2026-11-18: batte il TF-IDF, quindi ha la sua riga
+    'onnx:onnx-community/Qwen3-Embedding-0.6B-ONNX': Object.freeze({ rel: 0.71, run: 6, weak: 0.121, warn: 0.95, floor: 0.03, zero: 0.382, widen: 0.194, calibrated: true }),
     'ollama:bge-m3': Object.freeze({ rel: 0.66, run: 6, weak: 0.186, warn: 0.91, floor: 0.03, zero: 0.399, widen: 0.14, calibrated: true }),
   });
   const UNCALIBRATED = Object.freeze({ ...TFIDF, calibrated: false });

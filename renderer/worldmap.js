@@ -798,7 +798,8 @@
   const KIND_COL = { prompt: '#FFEC27', file: '#29ADFF', search: '#1D7FD0', output: '#00E436', web: '#FF77A8', reply: '#FFF1E8', thinking: '#B8A6E0', report: '#FFA300', action: '#83769C', result: '#83769C', summary: '#FFFFFF' };
   const KIND_NAME = { prompt: tr('compito'), file: tr('file letto'), search: tr('risultati di ricerca'), output: tr('output di un comando'), web: tr('pagina web'), reply: tr('sua risposta'), thinking: tr('suo ragionamento'), report: tr('rapporto di un sottoagente'), action: tr('azione'), result: tr('risultato'), summary: tr('riassunto della compattazione') };
   const CLUSTER_COLS = ['#00E436', '#29ADFF', '#FFEC27', '#FF77A8', '#FFA300', '#C2C3C7'];
-  function limitOf(hist) { let mx = 0; for (const h of hist || []) mx = Math.max(mx, h[1]); return mx > 200000 ? 1000000 : 200000; }
+  // la finestra di contesto: 1M con [1m] nel nome del modello, o quando il contesto visto supera 200k (src/core/models.js)
+  function limitOf(hist, model) { let mx = 0; for (const h of hist || []) mx = Math.max(mx, h[1]); return window.PlatypusModels ? PlatypusModels.contextLimit(model, mx) : mx > 200000 ? 1000000 : 200000; }
   function ctxAt(id, T) {
     const m = W.mind; if (!m) return 0;
     const c = m.ctx.find(x => x.id === id) || m.ctx[0];
@@ -824,7 +825,7 @@
     const T = nowT();
     const single = m.ctx.length === 1;
     const mainId = m.ctx[0] && m.ctx[0].id;
-    const fill = single ? Math.min(1, ctxAt(mainId, T) / limitOf(m.ctx[0].hist)) : 0.55;
+    const fill = single ? Math.min(1, ctxAt(mainId, T) / limitOf(m.ctx[0].hist, m.models && m.models[mainId])) : 0.55;
     const R = 0.55 + 0.5 * fill;
     const bubCol = fill >= 0.85 ? '#FF004D' : fill >= 0.6 ? '#FFEC27' : '#00E436';
     const proj = p => project(p, w, h);
@@ -995,7 +996,7 @@
     if (!m || !m.ctx) return;
     const c = m.ctx[0];
     if (m.ctx.length === 1 && c.hist.length) {
-      const lim = limitOf(c.hist);
+      const lim = limitOf(c.hist, m.models && m.models[c.id]);
       for (let i = 0; i < c.hist.length; i++) {
         const [t0, v] = c.hist[i], t1 = i + 1 < c.hist.length ? c.hist[i + 1][0] : b;
         const f = Math.min(1, v / lim);

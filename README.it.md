@@ -93,11 +93,12 @@ Tutto avviene **sul tuo computer, in sola lettura**: niente cloud, niente chiavi
 ## Per chi sviluppa
 
 ```sh
-npm test            # prove su motore, API, hook e traduzioni (non serve installare nulla)
+PLATYPUS_DATA_DIR="$(mktemp -d)" npm test   # prove su motore, API, hook e traduzioni (non serve installare nulla)
 npm run i18n:check  # testi da tradurre
 npm run start:demo  # finestra con la demo
 ```
 
+- Le prove partono solo con `PLATYPUS_DATA_DIR` dentro una cartella temporanea, così non scrivono mai nel tuo `~/.platypus` vero.
 - Il **motore** (`src/core`) è Node.js puro, senza dipendenze: legge i dati, tiene lo stato e serve l'interfaccia e le API su HTTP.
 - L'**interfaccia** (`renderer/`) è una pagina web statica: la stessa nella finestra desktop e nel browser.
 - La **finestra** (`src/main.js`) è un guscio Electron sottile; i dettagli, e come sostituirlo con Tauri, sono in [docs/ARCHITETTURA.md](docs/ARCHITETTURA.md).

@@ -93,11 +93,12 @@ Everything happens **on your computer, read-only**: no cloud, no API keys. The o
 ## For developers
 
 ```sh
-npm test            # checks on engine, API, hooks and translations (nothing to install)
+PLATYPUS_DATA_DIR="$(mktemp -d)" npm test   # checks on engine, API, hooks and translations (nothing to install)
 npm run i18n:check  # strings to translate
 npm run start:demo  # window with the demo
 ```
 
+- The tests only start with `PLATYPUS_DATA_DIR` pointing into a temporary folder, so they never write into your real `~/.platypus`.
 - The **engine** (`src/core`) is pure Node.js, with no dependencies: it reads the data, keeps the state and serves the interface and the API over HTTP.
 - The **interface** (`renderer/`) is a static web page: the same in the desktop window and in the browser.
 - The **window** (`src/main.js`) is a thin Electron shell; the details, and how to replace it with Tauri, are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

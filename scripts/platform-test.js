@@ -23,7 +23,9 @@ const dirs = {
   share: path.join(home, '.local', 'share'),
 };
 for (const d of [home, path.join(home, 'Desktop'), ...Object.values(dirs)]) fs.mkdirSync(d, { recursive: true });
-Object.assign(process.env, { HOME: home, USERPROFILE: home, APPDATA: dirs.roaming, LOCALAPPDATA: dirs.local, XDG_CONFIG_HOME: dirs.config, XDG_DATA_HOME: dirs.share, CLAUDE_CONFIG_DIR: path.join(home, '.claude') });
+Object.assign(process.env, { HOME: home, USERPROFILE: home, APPDATA: dirs.roaming, LOCALAPPDATA: dirs.local, XDG_CONFIG_HOME: dirs.config, XDG_DATA_HOME: dirs.share, CLAUDE_CONFIG_DIR: path.join(home, '.claude'), PLATYPUS_DATA_DIR: path.join(tmp, 'data') });
+// la cartella dei dati è dentro la cartella temporanea di questa prova: il controllo comune lo conferma
+require('./test-guard').requireTempDataDir('platform-test');
 delete process.env.XDG_SESSION_TYPE; delete process.env.WAYLAND_DISPLAY;
 
 let failed = 0;

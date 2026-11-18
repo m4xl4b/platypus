@@ -384,13 +384,13 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     if (!s || !s.corpus) return { ok: false };
     const aid = q.get('aid') || 'main';
     const list = aid === 'all' ? [s.main, ...s.subs.values()] : [aid === 'main' ? s.main : s.subs.get(aid)].filter(Boolean);
-    const minds = list.filter(a => a.mind && a.mind.pieces.length).slice(0, 40).map(a => ({ id: a.id, name: displayName(a), mind: a.mind, ctx: a.ctx || 0 }));
+    const minds = list.filter(a => a.mind && a.mind.pieces.length).slice(0, 40).map(a => ({ id: a.id, name: displayName(a), mind: a.mind, ctx: a.ctx || 0, model: a.model || '' }));
     if (!minds.length) return { ok: true, empty: true, sid: s.id, aid };
     try {
       const space = semantic.pickSpace(minds.map(m => m.mind), s.corpus, [embedder.space(0, { demo: !!s.demo })]);
       const v = semantic.snapshotMinds(minds, s.corpus, (q.get('replay') ? 'r:' : '') + s.id + ':' + aid, 0, space);
       const active = embedder.activeId(); // la fonte scelta: finché non ha tutti i vettori si mostra il TF-IDF e si "affina"
-      return { ok: true, sid: s.id, aid, now: st.now(), active, refining: active !== 'tfidf' && !(active.startsWith('fake:') && !s.demo) && (v.src !== active || v.pending > 0), fallback: embedder.fallback, names: Object.fromEntries(minds.map(m => [m.id, m.name])), ctxNow: Object.fromEntries(minds.map(m => [m.id, m.ctx])), ...v };
+      return { ok: true, sid: s.id, aid, now: st.now(), active, refining: active !== 'tfidf' && !(active.startsWith('fake:') && !s.demo) && (v.src !== active || v.pending > 0), fallback: embedder.fallback, names: Object.fromEntries(minds.map(m => [m.id, m.name])), ctxNow: Object.fromEntries(minds.map(m => [m.id, m.ctx])), models: Object.fromEntries(minds.map(m => [m.id, m.model])), ...v };
     } catch (e) { return { ok: false, error: e.message }; }
   }
 
@@ -621,6 +621,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
       return res.end('window.AO_I18N=' + JSON.stringify({ lang, locale: i18n.localeTag(lang), dict: i18n.dict(lang), langs: i18n.LANGS }) + ';');
     }
+    if (url.pathname === '/models.js') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' }); return res.end(fs.readFileSync(path.join(__dirname, 'models.js'))); } // nomi dei modelli, età e contesto: gli stessi del motore
     if (url.pathname === '/drift-rule.js') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' }); return res.end(fs.readFileSync(path.join(__dirname, 'drift-rule.js'))); } // la regola della deriva, la stessa del motore
     if (url.pathname === '/api/settings') return json(res, 200, state.settings);
     if (url.pathname === '/api/cowork-scan') return json(res, 200, state.coworkScan || {});
