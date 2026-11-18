@@ -4,7 +4,7 @@ Le versioni di Platypus (fino alla 2.7 si chiamava Agent Office), dalla più rec
 
 *English version: [CHANGELOG.md](CHANGELOG.md).*
 
-## Prossima versione: significato con gli embedding neurali, un guscio Tauri sperimentale
+## 2.12: significato con gli embedding neurali, un guscio Tauri sperimentale
 
 La bolla del contesto e la stella polare nella mappa della realtà confrontavano le parole: "aggiusta il login" e "correggi l'autenticazione" sembravano due compiti diversi. Ora, se c'è un Ollama locale acceso con un modello di embedding, confrontano i significati, e il giudizio sulla deriva non scambia più i sinonimi per una deviazione.
 

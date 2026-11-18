@@ -4,7 +4,7 @@ Platypus releases (up to 2.7 it was called Agent Office), newest first.
 
 *Versione italiana: [CHANGELOG.it.md](CHANGELOG.it.md).*
 
-## Next version: meaning with neural embeddings, an experimental Tauri shell
+## 2.12: meaning with neural embeddings, an experimental Tauri shell
 
 The context bubble and the north star in the map of reality used to compare words: "fix the login" and "repair the authentication" looked like two different tasks. Now, if a local Ollama with an embedding model is running, they compare meanings, and the drift judgement no longer mistakes synonyms for a detour.
 
