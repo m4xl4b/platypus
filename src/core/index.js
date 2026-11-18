@@ -35,7 +35,7 @@ const worldmap = require('./worldmap');
 const semantic = require('./semantic');
 const grounding = require('./grounding');
 const surprise = require('./surprise');
-const { Bottega, digest, hints, renderSection, projectKey } = require('./bottega');
+const { Bottega, digest, hints, renderSection, projectKey, normDir } = require('./bottega');
 const claudemd = require('./claudemd');
 const { TranscriptWatcher, SessionRegistry, claudeDir, findCoworkBases } = require('./sources');
 const { Weather } = require('./weather');
@@ -49,7 +49,7 @@ const osint = require('./osint');
 const { Stats } = require('./stats');
 const hooks = require('./hooks');
 const feedback = require('./feedback');
-const { FeedbackLog } = require('./feedbacklog');
+const { FeedbackLog, MemoryFeedbackLog } = require('./feedbacklog');
 const outcomes = require('./outcomes');
 require('./feedback-rules'); // aggiunge le regole a feedback.RULES
 
@@ -95,7 +95,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   state.includeCowork = !!includeCowork;
   const watcher = new TranscriptWatcher(state, { base });
   const registry = new SessionRegistry(state, watcher, { base });
-  const demo = new Demo(state, { bottega });
+  const demo = new Demo(state, { bottega, feedback: j => feedbackAnswer(j), dropFeedback: () => dropDemoFeedback() });
   const weather = new Weather(state, fetchImpl ? { fetch: fetchImpl } : {});
   const clients = new Set();
   let replay = null;
@@ -210,19 +210,34 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const feedbackStats = { calls: 0, said: 0, shadow: 0, late: 0, errors: 0 };
   const feedbackLog = new FeedbackLog(path.join(path.dirname(settingsPath), 'feedback')); // accanto alle opzioni: ~/.platypus/feedback
   const feedbackGate = new feedback.Gate(); // i limiti di frequenza, in memoria: ripartono con Platypus
+  // la demo (C3): agenti finti, quindi ogni funzione nel modo più alto che ha nella 2.11, qualunque cosa dicano le
+  // opzioni; un registro tutto suo, in memoria, che si svuota quando la demo finisce
+  const demoFeedbackLog = new MemoryFeedbackLog();
+  const DEMO_FEEDBACK = { fbSessionLessons: 'on', fbElder: 'on', fbLoop: 'on', fbStale: 'shadow', fbClaims: 'shadow', fbDrift: 'shadow' };
+  const isDemoCwd = cwd => { const k = normDir(cwd); return [...state.sessions.values()].some(x => x.demo && normDir(x.cwd) === k); };
   // PLATYPUS_FEEDBACK_CHECK=1: solo per la prova su una sessione vera (docs/plans/2.11-real-check.md)
   const FEEDBACK_CHECK = process.env.PLATYPUS_FEEDBACK_CHECK === '1';
   function feedbackHook(j, res, req) {
-    const t0 = Date.now();
-    let out = null, entry = null, cwd = '';
-    feedbackStats.calls++;
     if (FEEDBACK_CHECK) {
+      feedbackStats.calls++;
       let a = null;
       try { a = feedback.checkAnswer(j); } catch {}
       console.log('[feedback-check]', (j && j.hook_event_name) || '?', (j && j.tool_name) || '-', 'agent=' + ((j && j.agent_id) || 'main'), 'origin=' + ((req && req.headers.origin) || '-'), a ? '→ ' + (a.decision || 'context') : '→ 204');
       try { if (a) json(res, 200, a); else { res.writeHead(204); res.end(); } } catch {}
       return;
     }
+    const out = feedbackAnswer(j);
+    try {
+      if (out) json(res, 200, out);
+      else { res.writeHead(204); res.end(); }
+    } catch {}
+  }
+  // la risposta per Claude Code (null = niente da dire), con tutto quello che ci gira intorno: registro, fumetti, esiti.
+  // La chiamano l'hook vero e la demo, che recita i suoi scenari senza passare dalla rete.
+  function feedbackAnswer(j) {
+    const t0 = Date.now();
+    let out = null, entry = null, cwd = '', log = feedbackLog;
+    feedbackStats.calls++;
     try {
       const ev = j && j.hook_event_name;
       // a fine turno le ultime righe del transcript possono non essere ancora lette: servono per giudicare il turno
@@ -230,18 +245,20 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       const s = (j && state.sessions.get(j.session_id)) || null;
       // la cartella del progetto è quella della sessione, se la conosciamo: quella dell'hook cambia quando l'agente fa cd
       cwd = (s && s.cwd) || (j && j.cwd) || '';
+      if (s && s.demo) log = demoFeedbackLog; // la demo non lascia righe nel registro vero
       const r = feedback.respond(j, {
-        now: Date.now, deadline: t0 + FEEDBACK_MS, session: s, cwd, settings: state.settings,
+        now: Date.now, deadline: t0 + FEEDBACK_MS, session: s, cwd, settings: s && s.demo ? DEMO_FEEDBACK : state.settings,
         lessons: cwd => { try { return bottega.view(cwd).lessons; } catch { return []; } },
         muted: cwd => bottega.muted(cwd),
-        hasSection: cwd => claudemd.hasSection(cwd),
+        // i progetti della demo sono finti: anche se una cartella con quel nome esiste sul computer, non la guardiamo
+        hasSection: cwd => (s && s.demo ? false : claudemd.hasSection(cwd)),
         // i passi già visti dell'agente che ha mandato l'hook (il principale, o il sottoagente con quell'identificativo)
         agent: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a && a.world ? { id: a.id, steps: a.world.steps, nodes: a.world.nodes, goals: (a.mind && a.mind.goals) || [], mind: a.mind || null, corpus: s.corpus || null } : null; },
         waiting: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return !!(a && state.userPending(s, a, i.agent_id || null)); },
         agentName: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a ? displayName(a) : ''; },
         // tutti gli agenti della sessione, con il nome che hanno in ufficio (serve a dire chi ha cambiato un file)
         team: () => (s ? [s.main, ...s.subs.values()].filter(a => a && a.world).map(a => ({ id: a.id, name: displayName(a), nodes: a.world.nodes })) : []),
-        log: s && s.demo ? null : feedbackLog, // la demo non lascia righe nel registro vero
+        log,
       }, feedbackGate);
       out = r.out; entry = r.entry;
       if (entry && entry.mode === 'shadow') feedbackStats.shadow++;
@@ -249,28 +266,26 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     // calcolata tardi: non la mandiamo (la regola del tempo massimo vale anche per noi)
     if (out && Date.now() - t0 > FEEDBACK_MS) {
       feedbackStats.late++; out = null;
-      try { if (entry && entry.id) feedbackLog.setOutcome(cwd, entry.id, 'late'); } catch {} // nel registro risultava mandata: non lo è stata
+      try { if (entry && entry.id) log.setOutcome(cwd, entry.id, 'late'); } catch {} // nel registro risultava mandata: non lo è stata
       try { if (entry && entry.lessonId) feedbackGate.untell(j, entry.lessonId); } catch {}
     }
-    try {
-      if (out) { feedbackStats.said++; json(res, 200, out); }
-      else { res.writeHead(204); res.end(); }
-    } catch {}
+    if (out) feedbackStats.said++;
     // l'ufficio lo mostra sull'agente per un po': mandato davvero, oppure in ombra («avrebbe detto»)
     if (entry && (out || entry.mode === 'shadow')) {
       feedbackSaid.push({ id: entry.id || '', sid: entry.sid, agent: entry.agent, feature: entry.feature, mode: entry.mode, text: entry.local || entry.text, t: entry.t });
       if (feedbackSaid.length > 60) feedbackSaid.shift();
       try { state.touch(); } catch {}
       // e aspetta il suo esito (mandato o in ombra, mai quello arrivato tardi): lo decidono i passi dopo dell'agente
-      if (entry.id && feedbackPending.size < 500) feedbackPending.set(entry.id, { entry, cwd });
+      if (entry.id && feedbackPending.size < 500) feedbackPending.set(entry.id, { entry, cwd, log });
     }
+    return out;
   }
   // ---- C2 · esiti: i messaggi in attesa si giudicano con i passi successivi dell'agente (outcomes.js), ogni 15 secondi.
   // In memoria: se Platypus si chiude prima, quei messaggi restano senza esito nel registro.
-  const feedbackPending = new Map(); // id -> { entry, cwd }
+  const feedbackPending = new Map(); // id -> { entry, cwd, log }
   function judgeFeedback(now = Date.now()) {
     let n = 0;
-    for (const [id, { entry, cwd }] of feedbackPending) {
+    for (const [id, { entry, cwd, log }] of feedbackPending) {
       let r = null;
       try {
         const s = state.sessions.get(entry.sid);
@@ -279,11 +294,17 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         r = outcomes.judge(entry, ag, now);
       } catch { r = { outcome: 'unclear', why: '' }; }
       if (!r) continue;
-      try { feedbackLog.setOutcome(cwd, id, r.outcome, r.why); } catch {}
+      try { (log || feedbackLog).setOutcome(cwd, id, r.outcome, r.why); } catch {}
       feedbackPending.delete(id);
       n++;
     }
     return n;
+  }
+  // la demo finisce: il suo registro si svuota, e i suoi messaggi non aspettano più un esito
+  function dropDemoFeedback() {
+    demoFeedbackLog.clear();
+    for (const [id, p] of feedbackPending) if (p.log === demoFeedbackLog) feedbackPending.delete(id);
+    feedbackSaid = feedbackSaid.filter(x => !String(x.sid).startsWith('demo-'));
   }
   const judgeTimer = setInterval(() => judgeFeedback(), 15000);
   judgeTimer.unref && judgeTimer.unref();
@@ -591,7 +612,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     if (url.pathname === '/api/feedback/log') {
       const cwd = projectCwd(Object.fromEntries(url.searchParams));
       if (!cwd) return json(res, 404, { ok: false });
-      try { return json(res, 200, { ok: true, entries: feedbackLog.recent(cwd, 200).map(feedbackRow) }); } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+      try { return json(res, 200, { ok: true, demo: isDemoCwd(cwd), entries: (isDemoCwd(cwd) ? demoFeedbackLog : feedbackLog).recent(cwd, 200).map(feedbackRow) }); } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
     }
     // quanti messaggi per funzione negli ultimi 7 giorni, in tutti i progetti (accanto agli interruttori delle opzioni)
     if (url.pathname === '/api/feedback/counts') {

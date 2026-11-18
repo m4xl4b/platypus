@@ -77,4 +77,28 @@ class FeedbackLog {
   }
 }
 
-module.exports = { FeedbackLog, MAX_BYTES };
+// il registro della demo: la stessa interfaccia, solo in memoria (la demo non scrive niente sul disco, e si svuota quando finisce)
+class MemoryFeedbackLog {
+  constructor(max = 500) { this.rows = new Map(); this.max = max; } // cartella normalizzata -> righe
+  key(cwd) { return require('./bottega').normDir(cwd); }
+  append(cwd, entry) {
+    const e = { id: 'm' + Date.now().toString(36) + crypto.randomBytes(3).toString('hex'), ...entry };
+    const k = this.key(cwd), l = this.rows.get(k) || [];
+    l.push(e);
+    if (l.length > this.max) l.shift();
+    this.rows.set(k, l);
+    return { ...e };
+  }
+  setOutcome(cwd, id, outcome, why) {
+    const e = id && (this.rows.get(this.key(cwd)) || []).find(x => x.id === id);
+    if (!e || !outcome) return false;
+    Object.assign(e, { outcome: String(outcome), at: Date.now() }, why ? { why: String(why).slice(0, 200) } : {});
+    return true;
+  }
+  recent(cwd, n = 200) { return (this.rows.get(this.key(cwd)) || []).map(e => ({ ...e })).sort((a, b) => b.t - a.t).slice(0, n); }
+  has(cwd) { return this.rows.has(this.key(cwd)); }
+  counts() { return {}; } // i numeri delle opzioni contano solo i messaggi veri
+  clear() { this.rows.clear(); }
+}
+
+module.exports = { FeedbackLog, MemoryFeedbackLog, MAX_BYTES };

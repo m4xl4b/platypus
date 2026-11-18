@@ -139,6 +139,23 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(['stale-trap', 'ghost-path', 'flaky-command', 'known-fix', 'fragile-file'].every(k => demoKinds.has(k)), 'libro della demo coerente con gli scenari (file conteso, percorso inventato, test instabile, correzione nota, file fragile)');
   const hd = JSON.parse((await get(port, '/api/bottega/hints?sid=' + p1.id)).body);
   ok(hd.ok && hd.hints.length >= 1, `il Nonno ha qualcosa da dire sul piano 1: «${hd.hints && hd.hints[0] ? hd.hints[0].text : '-'}»`);
+  // C3 · feedback agli agenti nella demo: una scena per funzione sul piano 1 (e le lezioni a inizio sessione sul piano 2),
+  // passando dalla stessa funzione dell'hook vero; un registro tutto della demo, in memoria
+  const p2 = st.sessions.find(s => /mes-clone/.test(s.cwd));
+  let dfb = [];
+  for (let k = 0; k < 40; k++) { dfb = p1 ? (JSON.parse((await get(port, '/api/feedback/log?sid=' + p1.id)).body).entries || []) : []; if (dfb.length >= 6) break; await sleep(100); }
+  const dByF = f => dfb.filter(e => e.feature === f);
+  const dNames = dfb.map(e => e.feature + ':' + e.name + ':' + e.mode).join(', ');
+  ok(dByF('elder').some(e => e.name === 'CLAUDE' && e.mode === 'on') && dByF('elder').some(e => /TEST-RUNNER/.test(e.name) && e.event === 'PostToolUseFailure') && dByF('claims').some(e => e.name === 'CLAUDE' && e.mode === 'shadow' && e.event === 'Stop'), 'demo, feedback: il Nonno a CLAUDE e al test-runner, l\'affermazione senza prove in ombra → ' + dNames);
+  ok(dByF('loop').some(e => e.mode === 'on' && /failed 2 times|fallito 2 volte/.test(e.text + e.sent)) && dByF('stale').some(e => /ARCHITECT/.test(e.name) && e.mode === 'shadow') && dByF('drift').some(e => e.mode === 'shadow'), 'demo, feedback: giro in tondo, file cambiato da un altro e ritorno al compito');
+  const dfb2 = p2 ? (JSON.parse((await get(port, '/api/feedback/log?sid=' + p2.id)).body).entries || []) : [];
+  ok(dfb2.some(e => e.feature === 'sessionLessons' && e.mode === 'on') && !core.feedbackLog.recent(p1.cwd).length && !core.feedbackLog.recent(p2.cwd).length, 'demo, feedback: le lezioni a inizio sessione sul piano 2, e niente nel registro vero');
+  ok(core.feedbackSaid().some(x => x.sid === p1.id && x.feature === 'loop'), 'demo, feedback: i fumetti dell\'ufficio li mostrano');
+  core.judgeFeedback(Date.now() + 20 * 60000);
+  const dOc = JSON.parse((await get(port, '/api/feedback/log?sid=' + p1.id)).body).entries;
+  const oc = f => (dOc.find(e => e.feature === f) || {}).outcome;
+  const ocE = dOc.filter(e => e.feature === 'elder').map(e => e.name + '=' + e.outcome).sort().join(' ');
+  ok(oc('loop') === 'helped' && oc('stale') === 'helped' && oc('claims') === 'ignored' && oc('drift') === 'unclear' && /CLAUDE=ignored/.test(ocE) && /TEST-RUNNER\S*=helped/.test(ocE), `demo, esiti: giro in tondo ${oc('loop')}, file cambiato ${oc('stale')}, affermazione ${oc('claims')}, deriva ${oc('drift')}, Nonno ${ocE}`);
   const bk404 = p1 ? await get(port, '/api/bottega', 'POST', JSON.stringify({ sid: p1.id, action: 'pin', id: 'nessuna' })) : { status: 0 };
   ok(bk404.status === 404, 'azione su una lezione che non c\'è → ' + bk404.status);
   const learned = core.learnLive();
@@ -435,6 +452,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const malformed = await get(port, '/%');
   const stillUp = await get(port, '/api/settings');
   ok(malformed.status === 400 && stillUp.status === 200, `URL malformato (GET /%) → ${malformed.status}, il server risponde ancora → ${stillUp.status}`);
+  // C3 · la demo finisce: il suo registro di feedback si svuota e i suoi messaggi non aspettano più un esito
+  const p1Cwd = p1 && p1.cwd;
+  core.demo.stop();
+  const dAfter = p1Cwd ? JSON.parse((await get(port, '/api/feedback/log?cwd=' + encodeURIComponent(p1Cwd))).body) : {};
+  ok(dAfter.ok && dAfter.demo === false && dAfter.entries.length === 0 && ![...core.feedbackPending.values()].some(p => /^demo-/.test(p.entry.sid)) && !core.feedbackSaid().some(x => /^demo-/.test(x.sid)), 'demo spenta: niente più righe di feedback della demo, né in attesa né nei fumetti');
   core.stop();
 
   console.log('hook di Claude Code');

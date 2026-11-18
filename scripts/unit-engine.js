@@ -971,6 +971,16 @@ function feedbackShownTests(ok, fb, inp, rules) {
     fl.setOutcome('/p/app', late.id, 'helped', 'ha lanciato i test');
     ok(fl.recent('/p/app').find(r => r.id === late.id).why === 'ha lanciato i test', 'registro: l\'esito porta con sé il perché');
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  // il registro della demo: la stessa interfaccia, in memoria, svuotabile, e fuori dai conteggi
+  const { MemoryFeedbackLog } = require(path.join(ROOT, 'src', 'core', 'feedbacklog'));
+  const ml = new MemoryFeedbackLog(3);
+  const m1 = ml.append('C:\\Progetti\\App', { t: now - 3000, feature: 'loop', mode: 'on', text: 'a' });
+  ml.append('c:/progetti/app/', { t: now - 1000, feature: 'elder', mode: 'shadow', text: 'b' });
+  ok(ml.recent('C:/Progetti/App').map(e => e.text).join() === 'b,a' && ml.setOutcome('C:/Progetti/App', m1.id, 'helped', 'perché') && ml.recent('C:/Progetti/App')[1].why === 'perché' && !ml.setOutcome('C:/Progetti/App', 'nessuno', 'x'), 'registro della demo: righe e esiti in memoria, stessa cartella scritta in modi diversi');
+  for (let i = 0; i < 4; i++) ml.append('/d', { t: now + i, feature: 'loop', mode: 'on', text: 'x' + i });
+  ok(ml.recent('/d').length === 3 && JSON.stringify(ml.counts()) === '{}' && ml.has('/d'), 'registro della demo: non cresce senza fine e non entra nei conteggi delle opzioni');
+  ml.clear();
+  ok(!ml.has('/d') && ml.recent('C:/Progetti/App').length === 0, 'registro della demo: si svuota quando la demo finisce');
   outcomeTests(ok, fb, inp, rules);
 }
 
