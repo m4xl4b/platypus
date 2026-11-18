@@ -55,7 +55,7 @@ Checked against the code of 2.11 (Electron 44, see `package.json`). Places are g
 - Check what is already on the computer (`rustc -V`, `cargo -V`; today neither is there) and **ask Max** before installing anything. While waiting, go ahead with T2 and T9.
 - **Decision to record: how to expose `officeApp` to the page served by the engine.** The proposed way is an initialisation script that defines `window.officeApp` on top of `window.__TAURI__.core.invoke`, with the permission limited to `http://127.0.0.1:*`. Check that it is safe: no dangerous command exposed and no other domain.
 
-## T2 · Notifications decided by the engine, the same for both shells  [ ]
+## T2 · Notifications decided by the engine, the same for both shells  [x]
 
 Today it is Electron that decides when to send a notification, by listening to the state in its own process. Tauri cannot do that, because the engine is a separate process.
 
@@ -194,3 +194,20 @@ On `[win]` and on `[linux]`, Electron against Tauri, with the demo on:
   - Known limit from the docs: on Linux Tauri cannot tell an iframe on an allowed origin from the window. The office pages only allow frames from themselves (CSP `default-src 'self'`, `frame-ancestors 'none'`), so no foreign iframe can get the commands.
 - Checked: the plan's links and the commands above against the docs pages listed; `npm test` (temporary home, port 47830, `PLATYPUS_DATA_DIR`) ends with "Tutto a posto.".
 - Questions for Max: may I install Rust (rustup, stable MSVC toolchain, 1.90+) and the Microsoft C++ Build Tools ("Desktop development with C++") on this PC? WebView2 is already part of Windows 11. On the Linux computer the packages above would be needed for the `[linux]` tasks. Until then I go on with T2 and T9.
+
+### 2026-11-18 · T2 · Notifications decided by the engine
+
+- Done:
+  - New `src/core/notify.js` (`Notifier`): the logic that was in `src/main.js` (`checkWaiting`, `checkAlerts`, `checkReport`, `scheduleWaitCheck`) moved there unchanged: same texts, same 300 ms debounce after a state change, waits already in progress at start-up are not notified, demo sessions and finished agents are skipped, alerts of kind `wait` are skipped, `alertsNotify: false` silences alerts, the report comes once a day after `reportHour` and not for an empty day (except with `PLATYPUS_NOTIFY_TEST`).
+  - It emits `notify` events `{kind: 'wait'|'alert'|'report', title, body, sid, key, n}`. `key` is `wait:<sid>:<agent>`, `alert:<sid>:<alert>` or `report:<YYYY-MM-DD>`, for shells that want a notification tag.
+  - `src/core/index.js` (small hooks only): creates the notifier next to `stats`, exposes it as `core.notify`, stops it in `stop()`, and serves `GET /api/shell/events`. That stream sends `event: counts` (the engine's own `state.counts()`, at once and then only when they change) and `event: notify`, plus a comment ping every 20 s. It sits behind the same Host and Origin checks as every other route, and it is a separate set of clients: it does not count as an open office window, so a permission is not held for it. `/events` and `/platypus-hook/feedback` are untouched.
+  - `src/main.js`: Electron subscribes with `core.notify.on('notify', showNotice)`. `showNotice` keeps the shell-side rules: the tray option "Notifiche per i permessi" (`cfg.notify`), `canNotify()` (no toasts in snapshot mode), no wait or alert toast when the window is visible and focused, a click on a wait or alert brings the window up and goes to that floor, a click on the report opens `/report`.
+- Decisions:
+  - The engine decides *when* there is something to say; the shell decides *whether* to show it. So `cfg.notify` (a tray option stored in Electron's `config.json`) and the "window already focused" rule stay in the shell; `alertsNotify` and `reportHour` (engine settings) are applied by the engine. The Tauri shell will need its own `notify` option (T4).
+  - The day of the last report is now kept by the engine in `notify.json` next to `settings.json` (so both shells share it and a second shell does not show the report again). Electron hands over its old `cfg.reportDay` once at start (`seenReport`), only if it is today. The report is only "consumed" when someone listens (Electron in-process or a shell on the stream), so the browser mode does not swallow it.
+  - Notifications still skip the demo sessions, as before. The smoke test therefore checks with a permission on a non-demo session (`smoke-1`) posted while the demo is running.
+- Checked:
+  - `npm test` (temporary home, port 47830, `PLATYPUS_DATA_DIR`): "Tutto a posto.". New `scripts/unit-notify.js` (14 checks: start-up priming, no duplicates, again after working, two waits in one toast, demo and finished skipped, alerts and `alertsNotify`, report hour, once a day, restart on the same day, empty day, report off, hand-over of Electron's day). New smoke checks: the stream sends counters at once, a permission during the demo arrives on the stream and in-process exactly once, the counters see the wait, another Origin or Host gets 403, and the permission is still not held (204).
+  - `npm run i18n:check`: 0 missing (the texts kept the same keys).
+  - Electron itself, from the binary already in the main checkout's `node_modules` (nothing installed), in snapshot mode with `--demo`, port 47830, temporary home: a permission posted to the engine reached `showNotice` (`[notify] wait | CLAUDE is waiting for you | Floor 4 · t2 / Needs your OK: Runs: ls`), the screenshot shows the office with floor 4 waiting, and the process exited by itself.
+- Doubts for Max: none blocking. The tray option "Notifiche per i permessi" stays per shell: if you want it shared between Electron and Tauri, it could move into the engine's settings later.
