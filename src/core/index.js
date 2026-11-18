@@ -6,6 +6,8 @@
 //   POST /platypus-hook/feedback  hook sincrono: quello che Platypus dice all'agente (o 204), sempre entro un tempo massimo
 //   GET  /api/feedback/hooks  gli hook di feedback: installati o no, e le righe che l'installazione scriverebbe
 //   POST /api/feedback/hooks  {action: install|uninstall, confirm: true}  li scrive o li toglie da settings.json
+//   GET  /api/feedback/log    {sid|cwd|key}  i messaggi agli agenti di un progetto, mandati e in ombra
+//   GET  /api/feedback/counts quanti messaggi per funzione negli ultimi 7 giorni
 //   POST /api/demo           {on}
 //   POST /api/cowork         {on}
 //   GET/POST /api/settings   soglie degli avvisi, budget, prezzo di stima
@@ -235,6 +237,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         // i passi già visti dell'agente che ha mandato l'hook (il principale, o il sottoagente con quell'identificativo)
         agent: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a && a.world ? { id: a.id, steps: a.world.steps, nodes: a.world.nodes, goals: (a.mind && a.mind.goals) || [], mind: a.mind || null, corpus: s.corpus || null } : null; },
         waiting: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return !!(a && state.userPending(s, a, i.agent_id || null)); },
+        agentName: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a ? displayName(a) : ''; },
         // tutti gli agenti della sessione, con il nome che hanno in ufficio (serve a dire chi ha cambiato un file)
         team: () => (s ? [s.main, ...s.subs.values()].filter(a => a && a.world).map(a => ({ id: a.id, name: displayName(a), nodes: a.world.nodes })) : []),
         log: s && s.demo ? null : feedbackLog, // la demo non lascia righe nel registro vero
@@ -252,7 +255,18 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       if (out) { feedbackStats.said++; json(res, 200, out); }
       else { res.writeHead(204); res.end(); }
     } catch {}
+    // l'ufficio lo mostra sull'agente per un po': mandato davvero, oppure in ombra («avrebbe detto»)
+    if (entry && (out || entry.mode === 'shadow')) {
+      feedbackSaid.push({ id: entry.id || '', sid: entry.sid, agent: entry.agent, feature: entry.feature, mode: entry.mode, text: entry.local || entry.text, t: entry.t });
+      if (feedbackSaid.length > 60) feedbackSaid.shift();
+      try { state.touch(); } catch {}
+    }
   }
+  // i messaggi degli ultimi secondi, per i fumetti dell'ufficio (il registro completo sta nel Libro)
+  const SAID_MS = 45000;
+  let feedbackSaid = [];
+  // una riga del registro come la mostrano l'ufficio e il Libro: nella lingua dell'ufficio, con l'inglese accanto se è diverso
+  const feedbackRow = e => ({ id: e.id, t: e.t, sid: e.sid, agent: e.agent, name: e.name || '', feature: e.feature, mode: e.mode, event: e.event, tag: e.tag || '', text: e.local || e.text, sent: e.local ? e.text : '', outcome: e.outcome || '' });
 
   let hooksCache = { t: 0, v: false, f: false };
   function hooksInstalled() {
@@ -263,6 +277,9 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     const snap = state.snapshot();
     snap.hooks.installed = hooksInstalled();
     snap.hooks.feedback = hooksCache.f; // gli hook di feedback, installati a parte
+    const nowMs = Date.now();
+    feedbackSaid = feedbackSaid.filter(x => nowMs - x.t < SAID_MS);
+    snap.feedback = feedbackSaid;
     snap.replay = replay ? { key: replay.key } : null;
     return 'data: ' + JSON.stringify(snap) + '\n\n';
   }
@@ -545,6 +562,16 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       try { return json(res, 200, { ok: true, installed: hooks.feedbackStatus({ base }), ...hooks.feedbackPreview({ port, base, curl: url.searchParams.get('curl') === '1' }) }); }
       catch (e) { return json(res, 200, { ok: false, reason: e.message }); }
     }
+    // il registro dei messaggi agli agenti di un progetto (scheda FEEDBACK del Libro), dal più recente
+    if (url.pathname === '/api/feedback/log') {
+      const cwd = projectCwd(Object.fromEntries(url.searchParams));
+      if (!cwd) return json(res, 404, { ok: false });
+      try { return json(res, 200, { ok: true, entries: feedbackLog.recent(cwd, 200).map(feedbackRow) }); } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+    }
+    // quanti messaggi per funzione negli ultimi 7 giorni, in tutti i progetti (accanto agli interruttori delle opzioni)
+    if (url.pathname === '/api/feedback/counts') {
+      try { return json(res, 200, { ok: true, days: 7, counts: feedbackLog.counts(Date.now() - 7 * 86400000) }); } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+    }
     if (url.pathname === '/api/bottega/hints') {
       const s = state.sessions.get(url.searchParams.get('sid') || '');
       if (!s || !s.cwd) return json(res, 404, { ok: false });
@@ -617,7 +644,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     server.close();
   }
 
-  return { state, stats, bottega, learnLive, feedbackStats, feedbackLog, feedbackGate, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
+  return { state, stats, bottega, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
     install: () => hooks.install({ port, base }),
     uninstall: () => hooks.uninstall({ base }),
     status: () => hooks.status({ base }),

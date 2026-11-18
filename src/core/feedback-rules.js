@@ -17,7 +17,11 @@ const { extractClaims, judgeClaim } = require('./grounding');
 const { isTestCommand } = require('./releases');
 const { drift: semanticDrift } = require('./semantic');
 
+const { tr } = i18n;
 const en = fn => i18n.withLang('en', fn);
+// ogni messaggio in due versioni: text in inglese, per l'agente, e local nella lingua dell'ufficio, per chi lo rilegge
+// nell'ufficio e nel Libro (solo se è diversa). fn costruisce il testo con tr(): viene chiamata una volta per lingua.
+const two = (fn, extra = {}) => { const text = en(fn), local = fn(); return { text, ...(local && local !== text ? { local } : {}), ...extra }; };
 
 // ---- B1 · le lezioni del progetto a inizio sessione (avvio, ripresa, /clear, dopo una compattazione)
 const MAX_START = 6;
@@ -25,12 +29,10 @@ function sessionLessons(input, ctx) {
   const cwd = ctx.cwd || input.cwd || '';
   if (!cwd || !ctx.lessons) return null;
   if (ctx.hasSection && ctx.hasSection(cwd)) return null; // le ha già nel CLAUDE.md: non si ripetono
-  const lines = en(() => lessonLines(ctx.lessons(cwd) || [], MAX_START));
-  if (!lines.length) return null;
-  return {
-    text: ['Platypus (project memory): lessons inferred from past sessions of this project. They are clues from what happened, not rules.', ...lines.map(l => '- ' + l)].join('\n'),
-    lines: true, max: feedback.MAX_LONG,
-  };
+  const lessons = ctx.lessons(cwd) || [];
+  if (!lessonLines(lessons, MAX_START).length) return null;
+  return two(() => [tr('Platypus (memoria del progetto): lezioni dedotte dalle sessioni passate di questo progetto. Sono indizi tratti da quello che è successo, non regole.'),
+    ...lessonLines(lessons, MAX_START).map(l => '- ' + l)].join('\n'), { lines: true, max: feedback.MAX_LONG });
 }
 
 // ---- B2 · il Nonno parla all'agente: dopo una trappola nota, la lezione del Libro che la riguarda
@@ -39,7 +41,7 @@ function sessionLessons(input, ctx) {
 // stato dell'ufficio, che può essere indietro di qualche riga. Solo lezioni forti e non ignorate, una volta per agente.
 const BASH = new Set(['Bash', 'PowerShell']), EDITS = new Set(['Edit', 'Write', 'MultiEdit']);
 // quello che il Nonno direbbe nel fumetto, in inglese, più (dove serve) che cosa fare adesso
-const elderSay = (l, then) => ({ text: en(() => elderLine(l)) + (then ? ' ' + then : ''), lessonId: l.id });
+const elderSay = (l, tests) => two(() => elderLine(l) + (tests ? ' ' + tr('Lancia i test adesso.') : ''), { lessonId: l.id });
 const strongest = (ls, ok) => ls.filter(ok).sort((x, y) => y.weight - x.weight)[0] || null;
 // Glob e Grep non falliscono quando non trovano niente: lo dice il risultato (se ha la forma che conosciamo)
 function foundNothing(r) {
@@ -83,7 +85,7 @@ function elder(input, ctx) {
   if (EDITS.has(tool)) {
     const k = key(ti.file_path);
     const l = k && strongest(strong, l => l.kind === 'fragile-file' && l.key === k);
-    return l ? elderSay(l, 'Run the tests now.') : null;
+    return l ? elderSay(l, true) : null;
   }
   if ((tool === 'Glob' || tool === 'Grep') && foundNothing(input.tool_response)) {
     const g = tool === 'Glob' ? globTarget(ti.pattern) : '';
@@ -135,11 +137,9 @@ function loop(input, ctx) {
   // senza l'identificativo dello strumento non sappiamo se l'ultimo fallimento nello stato è questo: contiamo per difetto
   const n = id ? before + 1 : before;
   if (n < 2) return null;
-  const quote = excerpt.length > 120 ? excerpt.slice(0, 119) + '…' : excerpt;
-  return {
-    text: `this command failed ${n} times in a row with the same error («${quote}») and no edit in between. Change something before running it again, or stop and say what is blocking you.`,
-    once: 'loop|' + sig + '|' + pat,
-  };
+  const error = excerpt.length > 120 ? excerpt.slice(0, 119) + '…' : excerpt;
+  return two(() => tr('questo comando è fallito {n} volte di fila con lo stesso errore («{error}») e senza modifiche in mezzo. Cambia qualcosa prima di rilanciarlo, oppure fermati e di\' che cosa ti blocca.', { n, error }),
+    { once: 'loop|' + sig + '|' + pat });
 }
 
 // ---- B4 · memoria non aggiornata: l'agente ha appena modificato un file che un altro agente aveva cambiato dopo la
@@ -165,19 +165,19 @@ function stale(input, ctx) {
   if (!from) return null; // mai letto né modificato da lui: non c'è una memoria da dire vecchia
   const to = step ? step.t : ctx.now ? ctx.now() : Date.now();
   let by = null;
-  for (const a of en(() => ctx.team()) || []) {
+  for (const a of ctx.team() || []) {
     if (a.id === me.id || !a.nodes) continue;
     const o = a.nodes.get(key);
-    for (const t of (o && o.edits) || []) if (t > from && t <= to && (!by || t > by.t)) by = { t, name: a.name };
+    for (const t of (o && o.edits) || []) if (t > from && t <= to && (!by || t > by.t)) by = { t, id: a.id };
   }
   if (!by) return null;
-  const file = '`' + key + '`', who = by.name || 'another agent';
-  return {
-    text: tool === 'Write'
-      ? `you just rewrote ${file}, but ${who} changed it at ${hhmm(by.t)}, after you last read it. Check that you did not undo that change.`
-      : `${who} changed ${file} at ${hhmm(by.t)}, after you last read it, and you just edited it without reading it again. Read it again and check that your edit still fits.`,
-    once: 'stale|' + key + '|' + by.t,
-  };
+  return two(() => {
+    // il nome dell'altro agente è quello dell'ufficio, nella lingua in cui si sta scrivendo
+    const p = { file: '`' + key + '`', time: hhmm(by.t), who: ((ctx.team() || []).find(a => a.id === by.id) || {}).name || tr('un altro agente') };
+    return tool === 'Write'
+      ? tr('hai appena riscritto {file}, ma {who} l\'aveva cambiato alle {time}, dopo la tua ultima lettura. Controlla di non aver annullato quella modifica.', p)
+      : tr('{who} ha cambiato {file} alle {time}, dopo la tua ultima lettura, e tu l\'hai appena modificato senza rileggerlo. Rileggilo e controlla che la tua modifica regga ancora.', p);
+  }, { once: 'stale|' + key + '|' + by.t });
 }
 
 // ---- B5 · affermazioni senza prove a fine turno: l'agente sta per fermarsi dicendo «i test passano» o «ho verificato»,
@@ -212,22 +212,17 @@ function claims(input, ctx) {
     if (j.status === 'ungrounded' && edited && !pick) pick = { c, j };
   }
   if (!pick) return null;
-  const { c, j } = pick;
-  let why, then;
-  if (j.status === 'contradicted' && c.kind === 'tests') {
-    why = `the last test run failed (at ${hhmm(j.step.t)})`; then = 'Fix it and run the tests again, or say that they fail.';
-  } else if (j.status === 'contradicted') {
-    why = `the last check you ran failed (\`${clip(cmdCore(j.step.sig), 60)}\` at ${hhmm(j.step.t)})`; then = 'Run it again, or say that it is not verified.';
-  } else if (c.kind === 'tests') {
-    const last = me.steps.filter(s => s.err !== null && isTestStep(s)).pop();
-    why = 'no test ran after your last edit' + (last ? ` (last run: ${last.err ? 'failed' : 'passed'} at ${hhmm(last.t)})` : ''); then = 'Run them, or say that it is not verified.';
-  } else {
-    why = 'nothing was run after your last edit to check it'; then = 'Run a check, or say that it is not verified.';
-  }
-  return {
-    text: `you said «${clip(c.text, 100)}», but ${why}. ${then}`,
-    block: true, once: 'claims|' + (input.agent_id || 'main') + '|' + from, tag: c.kind + '/' + j.status,
-  };
+  const { c, j } = pick, claim = clip(c.text, 100);
+  const last = me.steps.filter(s => s.err !== null && isTestStep(s)).pop(); // l'ultimo lancio dei test, anche di prima
+  return two(() => {
+    if (j.status === 'contradicted' && c.kind === 'tests') return tr('hai detto «{claim}», ma l\'ultimo lancio dei test è fallito (alle {time}). Sistema e rilancia i test, oppure di\' che falliscono.', { claim, time: hhmm(j.step.t) });
+    if (j.status === 'contradicted') return tr('hai detto «{claim}», ma l\'ultimo controllo che hai lanciato è fallito (`{cmd}` alle {time}). Rilancialo, oppure di\' che non è verificato.', { claim, cmd: clip(cmdCore(j.step.sig), 60), time: hhmm(j.step.t) });
+    if (c.kind !== 'tests') return tr('hai detto «{claim}», ma dopo la tua ultima modifica non hai lanciato niente per controllarlo. Lancia un controllo, oppure di\' che non è verificato.', { claim });
+    if (!last) return tr('hai detto «{claim}», ma dopo la tua ultima modifica non è partito nessun test. Lanciali, oppure di\' che non è verificato.', { claim });
+    return last.err
+      ? tr('hai detto «{claim}», ma dopo la tua ultima modifica non è partito nessun test (ultimo lancio: fallito alle {time}). Lanciali, oppure di\' che non è verificato.', { claim, time: hhmm(last.t) })
+      : tr('hai detto «{claim}», ma dopo la tua ultima modifica non è partito nessun test (ultimo lancio: passato alle {time}). Lanciali, oppure di\' che non è verificato.', { claim, time: hhmm(last.t) });
+  }, { block: true, once: 'claims|' + (input.agent_id || 'main') + '|' + from, tag: c.kind + '/' + j.status });
 }
 
 // ---- B6 · ritorno al compito (sperimentale): la stella polare dice che l'agente è alla deriva, con la stessa regola
@@ -239,10 +234,8 @@ function driftBack(input, ctx) {
   if (!me || !me.mind || !me.corpus) return null;
   const d = semanticDrift(me.mind, me.corpus);
   if (!d || !d.drifting || !d.goal.label) return null;
-  return {
-    text: `your last ${d.run} actions look far from the task you were given: «${clip(d.goal.label, 160)}». If this detour is needed, carry on; otherwise go back to the task.`,
-    once: 'drift|' + (input.agent_id || 'main') + '|' + d.goal.t, tag: 'run=' + d.run,
-  };
+  return two(() => tr('le tue ultime {n} azioni sembrano lontane dal compito che hai ricevuto: «{task}». Se questa deviazione serve, continua; altrimenti torna al compito.', { n: d.run, task: clip(d.goal.label, 160) }),
+    { once: 'drift|' + (input.agent_id || 'main') + '|' + d.goal.t, tag: 'run=' + d.run });
 }
 
 // le regole entrano in RULES una volta sola, nell'ordine in cui devono parlare. Dopo un fallimento il Nonno viene prima:

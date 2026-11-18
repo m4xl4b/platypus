@@ -22,6 +22,23 @@ function walk(dir, out = []) {
   }
   return out;
 }
+// il primo stato che la pagina riceve dal flusso degli eventi (quello di /api/state più quello che aggiunge il server)
+function sseFirst(port) {
+  return new Promise(resolve => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/events' }, res => {
+      let d = '';
+      res.on('data', c => {
+        d += c;
+        const m = /(?:^|\n)data: (.*)\n\n/.exec(d);
+        if (!m) return;
+        req.destroy();
+        try { resolve(JSON.parse(m[1])); } catch { resolve({}); }
+      });
+    });
+    req.on('error', () => resolve({}));
+    req.setTimeout(5000, () => { req.destroy(); resolve({}); });
+  });
+}
 function get(port, p, method = 'GET', body) {
   return new Promise(resolve => {
     const req = http.request({ host: '127.0.0.1', port, path: p, method, headers: { 'Content-Type': 'application/json' } }, res => {
@@ -339,6 +356,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(core.state.settings.fbDrift === 'shadow' && fbDr.status === 204 && fbDrE && fbDrE.mode === 'shadow' && /^Platypus: your last \d+ actions look far from the task you were given: «Fix the login token refresh/.test(fbDrE.text), 'ritorno al compito: la deriva viene dalla stella polare dell\'ufficio, e resta in ombra → ' + fbDr.status + ' «' + (fbDrE ? fbDrE.text.slice(0, 60) : '-') + '…»');
   ok(fbDrLast && fbDrLast[2] / fbDrLast[3] < 0.35, `ritorno al compito: è la stessa serie che la mappa disegna (allineamento ${fbDrLast ? Math.round(100 * fbDrLast[2] / fbDrLast[3]) : '-'}%)`);
   core.state.setSettings({ fbDrift: 'off' });
+  // C1 · quello che l'ufficio e il Libro mostrano: gli ultimi messaggi nello stato, il registro del progetto, i conteggi
+  const fbSaid = core.feedbackSaid();
+  ok(fbSaid.some(x => x.sid === 'bottega-smoke-0001' && x.agent === 'main' && x.feature === 'loop' && x.mode === 'on' && /^Platypus: /.test(x.text)) && fbSaid.some(x => x.sid === 'fb-claims-0001' && x.mode === 'shadow') && !fbSaid.some(x => x.sid === 'fb-slow'), `ufficio: gli ultimi messaggi (mandati e in ombra, non quelli in ritardo) sono pronti per i fumetti (${fbSaid.length})`);
+  const fbSse = await sseFirst(port);
+  ok(Array.isArray(fbSse.feedback) && fbSse.feedback.some(x => x.feature === 'loop' && x.sid === 'bottega-smoke-0001'), 'ufficio: arrivano alla pagina con lo stato');
+  const fbBook = JSON.parse((await get(port, '/api/feedback/log?cwd=' + encodeURIComponent(fakeCwd))).body);
+  const fbRowL = fbBook.entries && fbBook.entries.find(e => e.feature === 'loop');
+  ok(fbBook.ok && fbRowL && fbRowL.mode === 'on' && fbRowL.name === 'CLAUDE' && fbRowL.event === 'PostToolUseFailure' && /this command failed 4 times/.test(fbRowL.sent || fbRowL.text) && fbBook.entries.every((e, i, l) => !i || l[i - 1].t >= e.t), `Libro, scheda FEEDBACK: ${fbBook.entries ? fbBook.entries.length : '-'} righe del progetto, dalla più recente, con a chi e che cosa`);
+  ok(['stale', 'claims', 'drift', 'elder', 'sessionLessons'].every(f => fbBook.entries.some(e => e.feature === f)) && fbBook.entries.find(e => e.feature === 'claims').tag === 'tests/ungrounded' && (await get(port, '/api/feedback/log')).status === 404, 'Libro, scheda FEEDBACK: tutte le funzioni provate qui sopra, e niente senza un progetto');
+  const fbCnt = JSON.parse((await get(port, '/api/feedback/counts')).body);
+  ok(fbCnt.ok && fbCnt.days === 7 && fbCnt.counts.loop.on === 1 && fbCnt.counts.claims.shadow === 1 && fbCnt.counts.claims.on === 0 && fbCnt.counts.elder.on >= 2, 'opzioni: i conteggi degli ultimi 7 giorni per funzione → ' + JSON.stringify(fbCnt.counts));
   const fb4 = await get(port, '/platypus-hook/feedback', 'POST', 'non è json {');
   ok(fb4.status === 204, 'feedback con un corpo che non è JSON: 204 → ' + fb4.status);
   // gli hook di feedback dal pannello delle opzioni: prima le righe da vedere, poi si scrive solo con la conferma

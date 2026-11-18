@@ -6,6 +6,7 @@
 // Una regola è { feature, run } (o una funzione sola): run(input, ctx) -> null | { feature, text, lessonId?, once?, block?, lines?, max? }
 //   once    una chiave per gli avvisi che non vengono dal Libro: lo stesso avviso non torna allo stesso agente
 //   tag     che cosa ha trovato la regola, in breve: finisce nel registro accanto al testo
+//   local   lo stesso testo nella lingua dell'ufficio (text è sempre in inglese): lo mostrano l'ufficio e il Libro
 // Le regole vere stanno in feedback-rules.js, che le aggiunge a RULES quando il motore parte.
 //   input   l'oggetto che Claude Code manda all'hook (hook_event_name, session_id, agent_id, cwd, tool_name, tool_input…)
 //   ctx     { now(), deadline, session, cwd, lessons(cwd), agent(input), settings } : solo stato già in memoria, niente letture lente
@@ -76,7 +77,9 @@ function decide(input, ctx = {}, rules = RULES) {
       if (!text) continue;
       const block = !!m.block && STOP_EVENTS.has(ev);
       if (STOP_EVENTS.has(ev) && !block) continue; // a fine turno si può solo chiedere di continuare
-      const message = { feature: String(m.feature || rule.feature || ''), text, lessonId: m.lessonId || null, once: m.once ? String(m.once).slice(0, 400) : null, tag: m.tag ? String(m.tag).slice(0, 60) : null, block };
+      // lo stesso messaggio nella lingua dell'ufficio, per chi lo rilegge (l'agente riceve sempre text)
+      const local = m.local ? say(m.local, { max: m.max, lines: m.lines }) : '';
+      const message = { feature: String(m.feature || rule.feature || ''), text, local: local && local !== text ? local : null, lessonId: m.lessonId || null, once: m.once ? String(m.once).slice(0, 400) : null, tag: m.tag ? String(m.tag).slice(0, 60) : null, block };
       let ok = true;
       try { if (ctx.allow) ok = !!ctx.allow(message, rule); } catch { ok = false; }
       if (!ok) continue;
@@ -158,6 +161,8 @@ function respond(input, ctx = {}, gate, rules = RULES) {
     const now = ctx.now || Date.now;
     let entry = { t: now(), sid: input.session_id, agent: input.agent_id || 'main', feature: r.message.feature, mode, event: input.hook_event_name, lessonId: r.message.lessonId, text: r.message.text };
     if (r.message.tag) entry.tag = r.message.tag; // che cosa ha trovato la regola, in breve (es. «tests/ungrounded»)
+    if (r.message.local) entry.local = r.message.local;
+    try { const name = ctx.agentName && ctx.agentName(input); if (name) entry.name = String(name).slice(0, 60); } catch {} // come si chiama in ufficio
     try { if (ctx.log) entry = ctx.log.append(cwd, entry) || entry; } catch {}
     return { out: mode === 'on' ? answer(input.hook_event_name, r.message) : null, entry };
   } catch { return { out: null, entry: null }; }

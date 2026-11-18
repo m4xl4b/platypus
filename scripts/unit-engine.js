@@ -920,6 +920,55 @@ function driftRuleTests(ok, fb, inp, rules) {
   const r1 = go({ fbDrift: 'on' });
   ok(r1.out === null && r1.entry && r1.entry.mode === 'shadow' && r1.entry.feature === 'drift' && /^Platypus: your last \d+ actions look far/.test(r1.entry.text) && /^run=\d+$/.test(r1.entry.tag), 'ritorno al compito: anche «acceso» resta in ombra, con la riga nel registro');
   ok(go({ fbDrift: 'shadow' }).entry === null, 'ritorno al compito: una volta sola per compito');
+  feedbackShownTests(ok, fb, inp, rules);
+}
+
+// C1 · quello che si vede in ufficio e nel Libro: lo stesso messaggio nella lingua dell'ufficio, e i conteggi del registro
+function feedbackShownTests(ok, fb, inp, rules) {
+  const i18n = require(path.join(ROOT, 'src', 'i18n'));
+  const { AgentWorld } = require(path.join(ROOT, 'src', 'core', 'worldmap'));
+  const { FeedbackLog } = require(path.join(ROOT, 'src', 'core', 'feedbacklog'));
+  const now = Date.parse('2026-11-18T10:00:00Z');
+  const w = new AgentWorld();
+  w.start('t1', 'Bash', { command: 'npm test' }, now - 5000, '/p', 0);
+  w.end('t1', true, { content: 'Exit code 1\nTypeError: boom is not a function' }, null, now - 4000, '/p');
+  const ctx = { now: () => now, agent: () => ({ id: 'main', steps: w.steps, nodes: w.nodes, goals: [] }) };
+  const hook = inp('PostToolUseFailure', { tool_name: 'Bash', tool_input: { command: 'npm test' }, error: 'Exit code 1\nTypeError: boom is not a function', tool_use_id: 't2' });
+  const lesson = { id: 'L-flaky', kind: 'flaky-command', key: 'npm test', count: 3, evidence: [{ sid: 's1', t: Date.parse('2026-10-12T09:00:00Z'), agent: 'EXPLORE' }], ignored: false, weight: 3, level: 'lesson' };
+  const lang = i18n.getLang();
+  try {
+    i18n.setLang('it');
+    let m = rules.loop(hook, ctx);
+    ok(/^this command failed 2 times in a row/.test(m.text) && /^questo comando è fallito 2 volte di fila con lo stesso errore \(«TypeError: boom is not a function»\) e senza modifiche in mezzo\./.test(m.local), 'messaggi in due lingue: all\'agente in inglese, in ufficio in italiano «' + m.local + '»');
+    const e = rules.elder(hook, { cwd: '/p', lessons: () => [lesson] });
+    ok(/^Last time npm test got stuck 3 times/.test(e.text) && /^L'ultima volta npm test si è piantato 3 volte/.test(e.local), 'messaggi in due lingue: anche la lezione del Nonno');
+    const s = rules.sessionLessons(inp('SessionStart', { source: 'startup' }), { cwd: '/p', lessons: () => [lesson] });
+    ok(/^Platypus \(project memory\)/.test(s.text) && /^Platypus \(memoria del progetto\)/.test(s.local) && /\n- .*instabile/.test(s.local), 'messaggi in due lingue: l\'elenco di inizio sessione');
+    // nel registro: il testo mandato e quello da mostrare, con il nome che l'agente ha in ufficio
+    const r = fb.respond(hook, { ...ctx, cwd: '/p', settings: { fbLoop: 'on' }, agentName: () => 'CLAUDE', log: { append: (cwd, x) => ({ id: 'x1', ...x }) } }, new fb.Gate({ now: () => now }), { PostToolUseFailure: [{ feature: 'loop', run: rules.loop }] });
+    ok(r.out && /^Platypus: this command failed/.test(r.out.hookSpecificOutput.additionalContext) && /^Platypus: this command failed/.test(r.entry.text) && /^Platypus: questo comando è fallito/.test(r.entry.local) && r.entry.name === 'CLAUDE', 'registro: il testo arrivato all\'agente, quello nella lingua dell\'ufficio e il nome dell\'agente');
+    i18n.setLang('en');
+    m = rules.loop(hook, ctx);
+    const r2 = fb.respond(hook, { ...ctx, cwd: '/p', settings: { fbLoop: 'on' } }, new fb.Gate({ now: () => now }), { PostToolUseFailure: [{ feature: 'loop', run: rules.loop }] });
+    ok(m.text && !('local' in m) && !('local' in r2.entry) && !('name' in r2.entry), 'messaggi in due lingue: con l\'ufficio in inglese basta un testo');
+  } finally { i18n.setLang(lang); }
+  // i conteggi accanto agli interruttori: per funzione, mandati e in ombra, da un certo giorno in poi, in tutti i progetti
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-fbcount-'));
+  try {
+    const fl = new FeedbackLog(tmp);
+    ok(JSON.stringify(fl.counts(0)) === '{}', 'conteggi: registro vuoto');
+    const row = (cwd, t, feature, mode) => fl.append(cwd, { t, sid: 's', agent: 'main', feature, mode, event: 'PostToolUse', text: 'Platypus: x' });
+    row('/p/app', now - 10 * 86400000, 'elder', 'on');   // troppo vecchio
+    row('/p/app', now - 2 * 86400000, 'elder', 'on');
+    row('/p/app', now - 86400000, 'elder', 'shadow');
+    row('/p/altro', now - 3600000, 'elder', 'on');
+    row('/p/altro', now - 3600000, 'claims', 'shadow');
+    const late = row('/p/app', now - 1000, 'loop', 'on');
+    fl.setOutcome('/p/app', late.id, 'late');
+    fl.setOutcome('/p/app', fl.recent('/p/app')[1].id, 'helped');
+    const c = fl.counts(now - 7 * 86400000);
+    ok(c.elder.on === 2 && c.elder.shadow === 1 && c.claims.shadow === 1 && c.claims.on === 0 && !c.loop, `conteggi degli ultimi 7 giorni: ${JSON.stringify(c)} (non contano i vecchi né le risposte in ritardo)`);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 
 // feedback (2.11, A3): i tre modi di ogni funzione, i limiti di frequenza, il progetto zittito e il registro

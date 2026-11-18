@@ -648,6 +648,24 @@ body.tiny .balloon .ung { display: none; }
 #bottega .md .mh .dim { font-family: 'VT'; font-size: 14px; }
 #bottega .md pre { white-space: pre-wrap; font-family: 'VT'; font-size: 15px; background: #000; color: var(--ink); padding: 6px; margin: 0 0 6px; max-height: 30vh; overflow: auto; }
 #bottega button[disabled] { opacity: .45; cursor: not-allowed; }
+/* Libro: le due schede (lezioni e messaggi agli agenti) e le righe del registro */
+#bottega .tabs { display: flex; gap: 4px; margin: 0 0 8px; border-bottom: 2px solid #2a2440; }
+#bottega .tabs button { background: transparent; color: var(--dim); padding: 6px 9px; }
+#bottega .tabs button.on { background: #2a2440; color: var(--yellow); }
+#bottega .fbrow.sh { border-style: dashed; }
+#bottega .fbrow .w { color: var(--yellow); } #bottega .fbrow .ag { color: #9fd8ff; }
+#bottega .fbrow .ftx { color: var(--ink); margin: 3px 0 0; overflow-wrap: anywhere; white-space: pre-line; }
+#bottega .fbrow.sh .ftx { color: #c2c3c7; font-style: italic; }
+#bottega .fbrow .ld { overflow-wrap: anywhere; white-space: pre-line; }
+/* feedback agli agenti in ufficio: l'ultimo messaggio di Platypus nel fumetto di chi l'ha ricevuto (in ombra: tratteggiato) */
+.balloon .fbk { color: #1d2b53; border-top: 1px solid #1d2b53; margin-top: 2px; padding-top: 1px;
+  white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.05; } /* due righe, il resto al passaggio del mouse */
+.balloon .fbk.sh { color: #5f574f; font-style: italic; border-top-style: dashed; border-top-color: #5f574f; }
+.balloon.st-waiting .fbk { color: #fff; border-top-color: #fff; }
+body.tiny .balloon .fbk, .balloon.walking .fbk { display: none; }
+/* opzioni: sotto ogni funzione di feedback, quanti messaggi negli ultimi 7 giorni */
+#settings .fbhooks .fbn { display: block; color: var(--dim); font-size: 14px; }
+#settings .fbhooks .fbn:empty { display: none; }
 
 /* ---------- squadre: workflow, squadre e reparti, messaggi tra agenti ---------- */
 #teams { position: absolute; right: 10px; top: 10px; bottom: 10px; z-index: 4000; width: min(600px, calc(100% - 20px)); display: flex; flex-direction: column;

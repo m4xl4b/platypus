@@ -51,6 +51,30 @@ class FeedbackLog {
     for (const r of rows) if (r.outcome && r.id) outcomes.set(r.id, { outcome: r.outcome, at: r.at });
     return rows.filter(r => r.text).map(r => ({ ...r, ...(outcomes.get(r.id) || {}) })).sort((a, b) => b.t - a.t).slice(0, n);
   }
+  // quanti messaggi per funzione da un certo momento in poi, in tutti i progetti: { funzione: { on, shadow } }.
+  // Una risposta arrivata tardi (outcome «late») non è stata mandata: non conta tra quelle mandate.
+  counts(since = 0) {
+    const out = {};
+    let files = [];
+    try { files = fs.readdirSync(this.dir).filter(f => f.endsWith('.jsonl')); } catch { return out; }
+    for (const f of files) {
+      let text = '';
+      try { text = fs.readFileSync(path.join(this.dir, f), 'utf8'); } catch { continue; }
+      const rows = [], late = new Set();
+      for (const l of text.split('\n')) {
+        if (!l) continue;
+        let r; try { r = JSON.parse(l); } catch { continue; }
+        if (r.outcome === 'late') late.add(r.id);
+        else if (r.text && r.t >= since && r.feature) rows.push(r);
+      }
+      for (const r of rows) {
+        if (late.has(r.id)) continue;
+        const c = out[r.feature] || (out[r.feature] = { on: 0, shadow: 0 });
+        if (r.mode === 'on') c.on++; else c.shadow++;
+      }
+    }
+    return out;
+  }
 }
 
 module.exports = { FeedbackLog, MAX_BYTES };
