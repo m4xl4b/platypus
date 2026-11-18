@@ -379,21 +379,25 @@ function hasTranscripts(projectsDir) {
 // Percorso noto (docs/plans/cowork-structure.md, app 6.6395 su Windows):
 //   <radice>/local-agent-mode-sessions/<account>/<organizzazione>/local_<uuid>/.claude   (cartella config, con projects/)
 //   <radice>/local-agent-mode-sessions/<account>/<organizzazione>/local_<uuid>.json      (metadati della sessione)
-// Dai metadati teniamo solo i campi che servono: mai messaggi, prompt di sistema, e-mail o nome dell'account.
+// Dai metadati teniamo solo i campi di questa lista, ognuno con il suo tipo (e i testi accorciati): tutto il resto
+// non viene nemmeno copiato. Mai initialMessage, systemPrompt, accountName, emailAddress, né qualunque campo nuovo
+// che l'app aggiunga in futuro.
+const COWORK_META_FIELDS = Object.freeze({
+  title: ['string', 200], sessionId: ['string', 80], cliSessionId: ['string', 80], processName: ['string', 80],
+  model: ['string', 80], effortOverride: ['string', 20],
+  createdAt: ['number'], lastActivityAt: ['number'], isArchived: ['boolean'], isAgentCompleted: ['boolean'],
+});
 function readCoworkMeta(file) {
   const j = readJson(file);
-  if (!j || typeof j !== 'object') return null;
-  const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : undefined);
-  return {
-    title: str(j.title, 200),
-    sessionId: str(j.sessionId, 80),
-    cliSessionId: str(j.cliSessionId, 80),
-    model: str(j.model, 80),
-    createdAt: Number.isFinite(j.createdAt) ? j.createdAt : undefined,
-    lastActivityAt: Number.isFinite(j.lastActivityAt) ? j.lastActivityAt : undefined,
-    isArchived: typeof j.isArchived === 'boolean' ? j.isArchived : undefined,
-    isAgentCompleted: typeof j.isAgentCompleted === 'boolean' ? j.isAgentCompleted : undefined,
-  };
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return null;
+  const out = {};
+  for (const [k, [type, max]] of Object.entries(COWORK_META_FIELDS)) {
+    const v = Object.prototype.hasOwnProperty.call(j, k) ? j[k] : undefined;
+    if (type === 'string' && typeof v === 'string') out[k] = v.slice(0, max);
+    else if (type === 'number' && Number.isFinite(v)) out[k] = v;
+    else if (type === 'boolean' && typeof v === 'boolean') out[k] = v;
+  }
+  return out;
 }
 function subdirs(d) {
   try { return fs.readdirSync(d, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name); } catch { return []; }
@@ -449,4 +453,4 @@ function findCoworkBases(extra = '', exclude = []) {
   return { roots, bases, visited };
 }
 
-module.exports = { TranscriptWatcher, SessionRegistry, claudeDir, findCoworkBases, coworkRoots, readCoworkMeta };
+module.exports = { TranscriptWatcher, SessionRegistry, claudeDir, findCoworkBases, coworkRoots, readCoworkMeta, COWORK_META_FIELDS };

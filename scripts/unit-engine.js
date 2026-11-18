@@ -325,6 +325,36 @@ function urlTests(ok) {
   ok(bad.every(u => !isExternalUrl(u)), 'file:, smb:, protocolli di altre app, javascript: e credenziali nell\'indirizzo: mai a openExternal');
 }
 
+// 2.12.1 · i metadati di una sessione Cowork: solo i campi della lista ammessa, mai messaggi, prompt, nome o e-mail
+function coworkMetaTests(ok) {
+  const { readCoworkMeta, COWORK_META_FIELDS } = require(path.join(ROOT, 'src', 'core', 'sources'));
+  const ALLOWED = ['title', 'sessionId', 'cliSessionId', 'processName', 'model', 'effortOverride', 'createdAt', 'lastActivityAt', 'isArchived', 'isAgentCompleted'];
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-cwmeta-'));
+  try {
+    // ogni campo vietato (e ogni campo sconosciuto) porta un valore riconoscibile: non deve uscire da nessuna parte
+    const SECRET = 'SEGRETO-NON-DEVE-USCIRE';
+    const full = {
+      title: 'Report trimestrale', sessionId: 'local_1', cliSessionId: 'c1', processName: 'quiet-brave-otter', model: 'claude-opus-4-8[1m]',
+      effortOverride: 'high', createdAt: 1700000000000, lastActivityAt: 1700000100000, isArchived: false, isAgentCompleted: true,
+      initialMessage: SECRET + ' messaggio', systemPrompt: SECRET + ' prompt', accountName: SECRET + ' nome', emailAddress: SECRET + '@example.invalid',
+      vmProcessName: SECRET, cwd: '/sessions/' + SECRET, userSelectedFolders: ['C:/' + SECRET], mcqAnswers: { a: SECRET }, futureField: SECRET,
+    };
+    const f = path.join(tmp, 'local_1.json');
+    fs.writeFileSync(f, JSON.stringify(full));
+    const m = readCoworkMeta(f);
+    const keys = Object.keys(m).sort();
+    ok(JSON.stringify(Object.keys(COWORK_META_FIELDS).sort()) === JSON.stringify(ALLOWED.slice().sort()) && JSON.stringify(keys) === JSON.stringify(ALLOWED.slice().sort()), `Cowork: dai metadati escono esattamente i ${keys.length} campi ammessi (${keys.join(', ')})`);
+    ok(!JSON.stringify(m).includes(SECRET) && !('initialMessage' in m) && !('systemPrompt' in m) && !('accountName' in m) && !('emailAddress' in m), 'Cowork: mai initialMessage, systemPrompt, accountName, emailAddress, né campi sconosciuti (nemmeno un pezzo del loro valore)');
+    ok(m.processName === 'quiet-brave-otter' && m.effortOverride === 'high' && m.model === 'claude-opus-4-8[1m]' && m.isAgentCompleted === true && m.createdAt === 1700000000000, 'Cowork: i campi ammessi arrivano con il loro valore');
+    // tipi sbagliati e testi lunghissimi: scartati o accorciati; un file che non è un oggetto non dà niente
+    fs.writeFileSync(f, JSON.stringify({ title: 'x'.repeat(5000), model: 42, isArchived: 'true', createdAt: 'ieri', effortOverride: { a: 1 }, emailAddress: SECRET }));
+    const w = readCoworkMeta(f);
+    ok(w.title.length === 200 && !('model' in w) && !('isArchived' in w) && !('createdAt' in w) && !('effortOverride' in w) && !JSON.stringify(w).includes(SECRET), 'Cowork: tipi sbagliati scartati, testi accorciati');
+    fs.writeFileSync(f, JSON.stringify([SECRET]));
+    ok(readCoworkMeta(f) === null && readCoworkMeta(path.join(tmp, 'manca.json')) === null, 'Cowork: un file che non è un oggetto, o che manca, non dà metadati');
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
 // 2.12.1 · nomi dei modelli (src/core/models.js): il contesto da 1M con [1m], e l'età dei modelli nuovi o sconosciuti
 function modelTests(ok) {
   const M = require(path.join(ROOT, 'src', 'core', 'models'));
@@ -517,6 +547,7 @@ function run(ok) {
   dataDirTests(ok);
   dataDirOverrideTests(ok);
   modelTests(ok);
+  coworkMetaTests(ok);
   urlTests(ok);
   boundsTests(ok);
   forgetTests(ok);
