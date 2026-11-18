@@ -80,15 +80,15 @@ function pinnedTests(ok) {
 
 // uno spazio finto di lunghezza qualsiasi: parole del testo sparse con un hash in dim posizioni, poi normalizzate.
 // has(x) decide quali vettori sono "già arrivati".
+function wordVec(text, dim) {
+  const v = new Float32Array(dim);
+  for (const w of String(text || '').toLowerCase().split(/[^a-z0-9àèéìòù]+/).filter(x => x.length > 2)) { let h = 7; for (const c of w) h = (h * 31 + c.charCodeAt(0)) >>> 0; v[h % dim] += 1; }
+  let n = 0; for (const x of v) n += x * x; n = Math.sqrt(n) || 1;
+  for (let i = 0; i < dim; i++) v[i] /= n;
+  return v;
+}
 function fakeSpace(src, dim, has = () => true) {
-  const vec = text => {
-    const v = new Float32Array(dim);
-    for (const w of String(text || '').toLowerCase().split(/[^a-z0-9àèéìòù]+/).filter(x => x.length > 2)) { let h = 7; for (const c of w) h = (h * 31 + c.charCodeAt(0)) >>> 0; v[h % dim] += 1; }
-    let n = 0; for (const x of v) n += x * x; n = Math.sqrt(n) || 1;
-    for (let i = 0; i < dim; i++) v[i] /= n;
-    return v;
-  };
-  return { src, version: 1, goal: g => (has(g) ? vec(g.text) : null), piece: p => (has(p) ? vec(p.text) : null) };
+  return { src, version: 1, goal: g => (has(g) ? wordVec(g.text, dim) : null), piece: p => (has(p) ? wordVec(p.text, dim) : null) };
 }
 
 function anyLengthTests(ok) {
@@ -125,16 +125,146 @@ function anyLengthTests(ok) {
   st.stop && st.stop();
 }
 
-function run(ok) {
+// ---------------------------------------------------------------- E2 · provider, catena, cache, coda
+// un provider finto: up dice se risponde, hang non risponde mai, fail sbaglia sempre
+function fakeProvider(kind, { dim = 8, model = 'fake', up = true, hang = false, fail = false } = {}) {
+  const p = {
+    id: kind + ':' + model, dim, model, state: 'unknown', calls: [],
+    ready: async () => { p.state = up ? 'ready' : 'not-found'; return up; },
+    embed: async (texts, k) => { p.calls.push({ n: texts.length, kind: k, texts }); if (hang) return new Promise(() => {}); if (fail) throw new Error('boom'); return texts.map(t => wordVec(k + ' ' + t, dim)); },
+  };
+  return p;
+}
+const facts = map => Object.fromEntries(Object.entries(map).map(([k, f]) => [k, () => f]));
+// aspetta che la coda si svuoti
+async function settle(emb, ms = 3000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) { await new Promise(r => setImmediate(r)); if (!emb.queue.size && !emb.busy && !emb.kicked && !emb.resolving) return true; }
+  return false;
+}
+
+async function providerTests(ok) {
+  const embed = require(path.join(ROOT, 'src', 'core', 'embed'));
+  const os = require('os');
+  // la catena
+  const chain = async (engine, o, x) => (await embed.resolveChain(engine, { ollama: o, onnx: x }, { timeoutMs: 200 }));
+  const up = () => fakeProvider('ollama'), down = () => fakeProvider('ollama', { up: false }), onnx = () => fakeProvider('onnx'), gone = { id: 'onnx', dim: 0, state: 'not-installed', ready: async () => false };
+  const hangReady = { id: 'ollama', dim: 8, ready: () => new Promise(() => {}) };
+  let r = await chain('auto', up(), onnx());
+  const r2 = await chain('auto', down(), onnx()), r3 = await chain('auto', down(), gone), r4 = await chain('auto', hangReady, onnx());
+  ok(r.provider.id === 'ollama:fake' && r2.provider.id === 'onnx:fake' && r3.provider.id === 'tfidf' && !r3.fallback && r4.provider.id === 'onnx:fake', 'embedding E2: in automatico Ollama se risponde, poi ONNX se c\'è, altrimenti TF-IDF (anche se Ollama non risponde in tempo)');
+  const f1 = await chain('ollama', down(), onnx()), f2 = await chain('onnx', up(), gone), f3 = await chain('tfidf', up(), onnx()), f4 = await chain('qualcosa', up(), onnx());
+  ok(f1.provider.id === 'tfidf' && f1.fallback && f1.fallback.source === 'ollama' && f1.fallback.state === 'not-found' && f2.provider.id === 'tfidf' && f2.fallback.state === 'not-installed' && f3.provider.id === 'tfidf' && !f3.fallback && f4.provider.id === 'ollama:fake', 'embedding E2: con una fonte scelta che non va si torna al TF-IDF e si dice perché; «tfidf» resta lessicale');
+  const gp = embed.getProvider({ embedEngine: 'auto' }, { factories: facts({ ollama: down(), onnx: onnx() }) });
+  const gpOk = await gp.ready();
+  const v = await gp.embed(['ciao'], 'query');
+  ok(gpOk && gp.id === 'onnx:fake' && gp.dim === 8 && v.length === 1 && v[0].length === 8 && typeof gp.ready === 'function', 'embedding E2: getProvider(settings) → {id, dim, embed, ready} con la catena dentro');
+
+  // la coda: lotti di 16, priorità, una fonte alla volta
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-embed-'));
+  try {
+    const p1 = up();
+    let emb = new embed.Embedder({ settings: { embedEngine: 'auto' }, dir, factories: facts({ ollama: p1, onnx: gone }), timeoutMs: 300 });
+    ok(emb.space(0) === null, 'embedding E2: finché la catena non ha scelto si usa il TF-IDF (nessuno spazio neurale)');
+    await settle(emb);
+    let sp = emb.space(1);
+    const docs = Array.from({ length: 40 }, (_, i) => ({ text: 'pezzo numero ' + i + ' del contesto' }));
+    const first = docs.map(d => sp.piece(d));
+    const goal = { text: 'rifai il login' };
+    ok(first.every(x => x === null) && sp.goal(goal) === null && sp.src === 'ollama:fake', 'embedding E2: un vettore che non c\'è ancora → null, e va in coda');
+    await settle(emb);
+    const sizes = p1.calls.map(c => c.n + c.kind[0]).join(',');
+    ok(p1.calls.length >= 3 && p1.calls.every(c => c.n <= 16) && p1.calls[0].kind === 'document' && p1.calls.some(c => c.kind === 'query'), `embedding E2: lotti di al massimo 16 testi, compito e pezzi a parte (${sizes})`);
+    sp = emb.space(1);
+    ok(docs.every(d => sp.piece(d) && sp.piece(d).length === 8) && sp.goal(goal) && sp.version > 1, 'embedding E2: quando arrivano i vettori lo spazio li ha (e la versione cresce)');
+    // priorità: chi si sta guardando passa davanti
+    p1.calls.length = 0;
+    const low = Array.from({ length: 20 }, (_, i) => ({ text: 'sottofondo ' + i }));
+    const hi = Array.from({ length: 3 }, (_, i) => ({ text: 'visibile ' + i }));
+    const spl = emb.space(1), sph = emb.space(0);
+    low.forEach(x => spl.piece(x)); hi.forEach(x => sph.piece(x));
+    await settle(emb);
+    ok(p1.calls[0] && hi.every(x => p1.calls[0].texts.includes(x.text)), 'embedding E2: la priorità va agli agenti visibili');
+    // la cache su disco: solo vettori e hash, mai il testo; una nuova istanza non richiede di nuovo
+    await emb.disks.get('ollama:fake').chain;
+    const file = path.join(dir, embed.fileOf('ollama:fake'));
+    const raw = fs.readFileSync(file);
+    ok(raw.length > 16 && !raw.includes(Buffer.from('pezzo numero')) && !raw.includes(Buffer.from('visibile')) && raw.subarray(0, 8).toString() === 'PLEMB001', `embedding E2: cache su disco in embed-cache/${path.basename(file)} (${raw.length} byte), niente testo dentro`);
+    const p2 = up();
+    emb = new embed.Embedder({ settings: { embedEngine: 'auto' }, dir, factories: facts({ ollama: p2, onnx: gone }) });
+    emb.space(1); await settle(emb); // la catena sceglie al primo uso
+    sp = emb.space(1);
+    docs.forEach(d => sp.piece(d));
+    await settle(emb);
+    sp = emb.space(1);
+    ok(p2.calls.length === 0 && docs.every(d => sp.piece(d)), 'embedding E2: alla ripartenza i vettori vengono dal disco, senza chiedere di nuovo');
+    // un altro modello con lo stesso nome (altra dimensione): la cache si butta, non si mischia
+    const p3 = fakeProvider('ollama', { dim: 12 });
+    emb = new embed.Embedder({ settings: { embedEngine: 'auto' }, dir, factories: facts({ ollama: p3, onnx: gone }) });
+    emb.space(1); await settle(emb); // la catena sceglie al primo uso
+    sp = emb.space(1); sp.piece(docs[0]); await settle(emb);
+    ok(p3.calls.length === 1 && emb.space(1).piece(docs[0]).length === 12, 'embedding E2: vettori su disco di un\'altra dimensione → si ricalcolano');
+    // tetti: memoria (LRU) e disco
+    const p4 = up();
+    emb = new embed.Embedder({ settings: { embedEngine: 'auto' }, dir: path.join(dir, 'small'), factories: facts({ ollama: p4, onnx: gone }), memCap: 10, diskCap: 2000 });
+    emb.space(1); await settle(emb); // la catena sceglie al primo uso
+    sp = emb.space(1);
+    const many = Array.from({ length: 60 }, (_, i) => ({ text: 'riga ' + i }));
+    many.forEach(x => sp.piece(x));
+    await settle(emb);
+    await emb.disks.get('ollama:fake').chain;
+    const st1 = emb.status();
+    ok(st1.cache.vectors === 10 && st1.cache.diskBytes > 0 && st1.cache.diskBytes <= 2000, `embedding E2: tetti rispettati (memoria ${st1.cache.vectors} vettori, disco ${st1.cache.diskBytes} byte)`);
+    await emb.clearCache();
+    const st2 = emb.status();
+    ok(st2.cache.vectors === 0 && st2.cache.diskBytes === 0 && !fs.readdirSync(path.join(dir, 'small')).some(f => f.endsWith('.bin')), 'embedding E2: «svuota la cache» toglie memoria e file');
+    // tempo scaduto e tre fallimenti di fila: sospesa per 5 minuti, si torna al TF-IDF
+    let now = Date.parse('2026-11-18T10:00:00Z');
+    const slow = fakeProvider('ollama', { hang: true });
+    emb = new embed.Embedder({ settings: { embedEngine: 'ollama' }, factories: facts({ ollama: slow, onnx: gone }), timeoutMs: 40, now: () => now });
+    emb.space(1); await settle(emb); // la catena sceglie al primo uso
+    for (let i = 0; i < 3; i++) { const s3 = emb.space(1); if (s3) s3.piece({ text: 'lento ' + i }); await settle(emb); }
+    const st3 = emb.status();
+    ok(slow.calls.length === 3 && st3.active === 'tfidf' && st3.sources.ollama.state === 'error' && /timeout/.test(st3.sources.ollama.detail) && st3.fallback && st3.fallback.source === 'ollama' && emb.space(1) === null, `embedding E2: 3 richieste oltre il tempo → sospesa, TF-IDF e il motivo (${st3.sources.ollama.detail})`);
+    now += embed.SUSPEND_MS + 1000;
+    slow.embed = async texts => texts.map(t => wordVec(t, 8));
+    emb.space(1); await settle(emb);
+    ok(emb.status().active === 'ollama:fake' && emb.space(1) !== null, 'embedding E2: dopo 5 minuti ci si riprova');
+    // in automatico una fonte sospesa lascia il posto alla successiva
+    const bad = fakeProvider('ollama', { fail: true }), alt = onnx();
+    emb = new embed.Embedder({ settings: { embedEngine: 'auto' }, factories: facts({ ollama: bad, onnx: alt }), timeoutMs: 100 });
+    emb.space(1); await settle(emb); // la catena sceglie al primo uso
+    for (let i = 0; i < 3; i++) { const s4 = emb.space(1); if (s4) s4.piece({ text: 'errore ' + i }); await settle(emb); }
+    ok(emb.status().active === 'onnx:fake' && !emb.status().fallback && bad.calls.length === 3, 'embedding E2: in automatico, dopo 3 errori di Ollama si passa all\'ONNX');
+    // con semantic.js: prima il TF-IDF subito, poi lo spazio neurale quando ha tutti i compiti e tutte le azioni
+    const sem = require(path.join(ROOT, 'src', 'core', 'semantic'));
+    const { st, s } = require(path.join(ROOT, 'src', 'i18n')).withLang('it', demoScenario);
+    const plan = s.subs.get('plan1').mind;
+    const before = sem.pickSpace([plan], s.corpus, [emb.space(0)]);
+    await settle(emb);
+    const after = sem.pickSpace([plan], s.corpus, [emb.space(0)]);
+    const snap0 = sem.snapshotMinds([{ id: 'plan1', name: 'PLAN', mind: plan }], s.corpus, 'unit-embed-e2', 0, after);
+    await settle(emb);
+    const snap = sem.snapshotMinds([{ id: 'plan1', name: 'PLAN', mind: plan }], s.corpus, 'unit-embed-e2', 0, emb.space(0));
+    ok(before.src === 'tfidf' && after.src === 'onnx:fake' && snap0.pending > 0 && snap.src === 'onnx:fake' && snap.pending === 0 && snap.align.length === plan.pieces.filter(p => p.kind === 'action').length, `embedding E2: la bolla parte col TF-IDF e passa a ${after.src} quando i vettori ci sono tutti`);
+    st.stop && st.stop();
+    // cambiare le opzioni rifà la catena e riparte da zero
+    ok(emb.configure({ embedEngine: 'tfidf' }) === true && emb.configure({ embedEngine: 'tfidf' }) === false && emb.space(1) === null, 'embedding E2: cambiare motore rifà la catena (e lo stesso valore non fa niente)');
+    await settle(emb);
+    ok(emb.status().active === 'tfidf' && embed.cleanEngine('xyz') === 'auto', 'embedding E2: «solo lessicale» resta TF-IDF');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+async function run(ok) {
   console.log('significato (embedding)');
   pinnedTests(ok);
   anyLengthTests(ok);
+  await providerTests(ok);
 }
 
 module.exports = { run, demoScenario };
 
 if (require.main === module) {
   let failed = 0;
-  run((cond, msg) => { console.log((cond ? '  ok   ' : '  FAIL ') + msg); if (!cond) failed++; });
-  process.exit(failed ? 1 : 0);
+  run((cond, msg) => { console.log((cond ? '  ok   ' : '  FAIL ') + msg); if (!cond) failed++; }).then(() => process.exit(failed ? 1 : 0));
 }

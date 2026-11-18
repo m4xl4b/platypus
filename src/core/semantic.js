@@ -168,12 +168,14 @@ function tfidfSpace(corpus) {
 // La regola delle fonti miste: si prende il primo spazio candidato che ha un vettore per ogni compito e ogni azione
 // delle menti in gioco; se nessuno ce l'ha, il TF-IDF. I pezzi che non sono azioni e non hanno ancora un vettore nello
 // spazio scelto restano fuori dalla nuvola finché non arriva (vedi snapshotMinds: pending).
+// Si guardano tutti, senza fermarsi al primo che manca: chiedere un vettore è anche metterlo in coda.
 function covers(space, minds) {
+  let all = true;
   for (const mind of minds) {
-    for (const g of mind.goals) if (!space.goal(g)) return false;
-    for (const p of mind.pieces) if (p.kind === 'action' && !space.piece(p)) return false;
+    for (const g of mind.goals) if (!space.goal(g)) all = false;
+    for (const p of mind.pieces) if (p.kind === 'action' && !space.piece(p)) all = false;
   }
-  return true;
+  return all;
 }
 function pickSpace(minds, corpus, candidates) {
   for (const sp of candidates || []) if (sp && sp.src !== 'tfidf' && covers(sp, minds)) return sp;

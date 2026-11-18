@@ -59,7 +59,7 @@ Everything in `docs/plans/parallel.md` still applies. In addition:
 - **The pieces keep only term maps today, not the text.** A neural source needs the text, so decide in the Journal how to carry it (for example a short, bounded snippet kept in memory only, never written to disk) before E2 starts.
 - **No visible change:** with TF-IDF alone, the numbers of `/api/agentmind` must stay identical. Pin a test that compares them on a demo scenario. The same test must cover `drift()` (`run`, `rel`, `weak`, `drifting`) and the 2.11 feedback drift tests (`driftBack`) in `scripts/unit-engine.js`, which must pass unchanged.
 
-## E2 · Interface of the embedding providers  [ ]
+## E2 · Interface of the embedding providers  [x]
 
 - New `src/core/embed/index.js`:
   - `getProvider(settings)` returns `{id, dim, embed(texts, kind) → Promise<Float32Array[]>, ready()}`;
@@ -188,3 +188,21 @@ Today's thresholds are valid for TF-IDF, not for neural vectors, which have much
 - `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing. Run with a temporary home, `PLATYPUS_PORT=47840`, `PLATYPUS_DATA_DIR=<worktree>/.platypus-dev`.
 
 **Doubts for Max.** None blocking. The 320-character snippet is a guess at what is useful for small multilingual models (about 80–100 tokens); E5 can say whether more text helps.
+
+### 2026-11-18 · E2 · Interface of the embedding providers
+
+**Done.** New `src/core/embed/index.js`, no npm dependencies.
+- **Contract.** A provider is `{id, dim, embed(texts, kind) → Promise<Float32Array[]>, ready() → Promise<boolean>}`, plus `state` (`ready` / `not-found` / `not-installed` / `error` / `unknown`), `model`, `detail` and `hint` for the options panel. `kind` is `query` (goals) or `document` (pieces). `getProvider(settings)` returns the chain as one provider with that contract; `ready()` picks the source.
+- **Chain** (`resolveChain`). `auto`: Ollama if `ready()` answers within 5 s, then ONNX, otherwise TF-IDF (in `auto` TF-IDF is a choice, so `fallback` is `null`). `ollama` / `onnx`: that source or TF-IDF with `fallback = {source, state, detail}`, which E6 will show. `tfidf`: lexical only. Unknown values become `auto`. The Ollama and ONNX providers are loaded with `require('./ollama')` / `require('./onnx')` inside `try`; a missing module gives a provider in state `not-installed` and the chain moves on.
+- **`Embedder`**, one for the whole engine (wired into the engine in E3):
+  - `space(prio)` gives `semantic.js` the meaning space of the active source, or `null` for TF-IDF. A lookup that misses returns `null` and queues the text; `version` grows when vectors arrive, which refreshes the snapshot cache. The sha1 of each piece's snippet is memoized in a `WeakMap`, so the pieces are not touched.
+  - Queue: one per engine, deduplicated by key, priority 0 for agents being looked at and 1 for the rest, then arrival order; batches of at most 16 texts of the same source and kind; one request at a time; 5 s timeout each; at most 4000 waiting (the rest is asked again later).
+  - Failures: 3 in a row suspend the source for 5 minutes, the queue is emptied and the chain is resolved again (in `auto` it moves on to the next source; with a chosen source it falls back to TF-IDF and says why). After the suspension, and every minute while on a fallback, the next lookup tries the chain again. No timers run in the background: everything starts from a lookup.
+  - Cache in memory: LRU of 5000 vectors, keyed by `source|sha1`.
+  - Cache on disk: `<dataDir>/embed-cache/<source>.bin` (source name sanitized), a 16-byte header (`PLEMB001` + dimension) and records of 20 bytes of sha1 + the float32 vector. Hashes and vectors only, never text. The index is read once per source; writes are appended in order; past the 50 MB cap the file is rewritten keeping the newest half. A file with a different dimension (another model with the same name) is thrown away.
+  - `clearCache()` empties memory and deletes the files; `status()` gives the engine setting, the active source, the fallback, the state of each source, the cache size (vectors in memory, bytes on disk) and the queue length; `configure(settings)` redoes the chain only when `embedEngine`, `embedModel` or `ollamaUrl` change.
+- `semantic.js`: the coverage check of `pickSpace` no longer stops at the first missing vector, because asking for a vector is also what queues it (found by the new test).
+
+**Checks.** New tests in `scripts/unit-embed.js` (now async; `smoke-test.js` awaits it), with fake providers and a temporary folder: the chain in every mode, including a `ready()` that never answers; `getProvider`; null-then-vector; batch sizes (16, 16, 8 documents, 1 query); priority to visible agents; the disk file holds no text and serves a new instance without new requests; a dimension change recomputes; the memory and disk caps (10 vectors / 2000 bytes in the test); clearing the cache; three timeouts → suspended, TF-IDF and the reason, then retried after 5 minutes with a fake clock; in `auto` three errors from Ollama move to ONNX; the demo scenario starts on TF-IDF and switches to the neural space when every goal and action has a vector, with the other pieces counted as pending until they arrive. `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing (no new UI strings yet).
+
+**Decisions.** One request at a time is enough for a local model and keeps Ollama from being flooded. Queued work is not persisted: after a restart, vectors come back from the disk cache when they are asked for again.
