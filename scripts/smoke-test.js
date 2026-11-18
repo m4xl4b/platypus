@@ -457,6 +457,44 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   core.demo.stop();
   const dAfter = p1Cwd ? JSON.parse((await get(port, '/api/feedback/log?cwd=' + encodeURIComponent(p1Cwd))).body) : {};
   ok(dAfter.ok && dAfter.demo === false && dAfter.entries.length === 0 && ![...core.feedbackPending.values()].some(p => /^demo-/.test(p.entry.sid)) && !core.feedbackSaid().some(x => /^demo-/.test(x.sid)), 'demo spenta: niente più righe di feedback della demo, né in attesa né nei fumetti');
+
+  // Cowork su un albero finto di Windows (docs/plans/cowork-structure.md): percorso noto, titolo e stato dai metadati
+  console.log('Cowork (albero finto di Windows)');
+  {
+    const copyTree = (from, to) => { // `_claude` è la cartella `.claude` (git ignora `.claude/`)
+      fs.mkdirSync(to, { recursive: true });
+      for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+        const dst = path.join(to, e.name === '_claude' ? '.claude' : e.name);
+        if (e.isDirectory()) copyTree(path.join(from, e.name), dst); else fs.copyFileSync(path.join(from, e.name), dst);
+      }
+    };
+    const cwRoot = path.join(tmp, 'cowork-win');
+    copyTree(path.join(__dirname, 'fixtures', 'cowork-win'), cwRoot);
+    const fresh = new Date(); // i file di prova sembrano scritti adesso (il motore segue solo le cartelle usate nelle ultime 36 ore)
+    const touchAll = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) touchAll(p); else fs.utimesSync(p, fresh, fresh); } };
+    touchAll(cwRoot);
+    const { findCoworkBases, readCoworkMeta } = require(path.join(ROOT, 'src', 'core', 'sources'));
+    const r = findCoworkBases(cwRoot).bases.filter(b => b.path.startsWith(cwRoot));
+    const act = r.find(b => b.meta && b.meta.title === 'Prova Cowork dal metadato'), arc = r.find(b => b.meta && b.meta.isArchived === true);
+    ok(r.length === 2 && act && arc && act.files === 1 && act.path.endsWith(path.join('local_11111111-0000-4000-8000-000000000001', '.claude')), `Cowork: il percorso noto trova le due sessioni e non il decoy delle abilità (${r.map(b => path.basename(path.dirname(b.path))).join(', ')})`);
+    ok(act && act.meta.cliSessionId === 'cccccccc-0000-4000-8000-00000000c001' && act.meta.model === 'claude-opus-4-8' && act.meta.isArchived === false, 'Cowork: dai metadati titolo, id del transcript, modello e stato');
+    const meta = readCoworkMeta(path.join(cwRoot, 'local-agent-mode-sessions', 'aaaaaaaa-0000-4000-8000-0000000000a1', 'bbbbbbbb-0000-4000-8000-0000000000b1', 'local_11111111-0000-4000-8000-000000000001.json'));
+    ok(meta && !('emailAddress' in meta) && !('accountName' in meta) && !('systemPrompt' in meta) && !('initialMessage' in meta) && !JSON.stringify(meta).includes('example.invalid'), 'Cowork: dei metadati si tengono solo i campi che servono (niente e-mail, nome, prompt)');
+    // una radice senza il percorso noto (cartella indicata a mano, struttura cambiata): resta la ricerca larga
+    const odd = path.join(tmp, 'cowork-odd');
+    fs.mkdirSync(path.join(odd, 'chissa', 'dove', 'projects', 'p'), { recursive: true });
+    fs.writeFileSync(path.join(odd, 'chissa', 'dove', 'projects', 'p', 'x.jsonl'), '{}\n');
+    const r2 = findCoworkBases(odd).bases.filter(b => b.path.startsWith(odd));
+    ok(r2.length === 1 && r2[0].meta === undefined, 'Cowork: struttura sconosciuta → la ricerca larga trova lo stesso la cartella');
+    // nel motore: il titolo dell'app vince su quello del transcript, e la sessione archiviata non si segue
+    await get(port, '/api/settings', 'POST', JSON.stringify({ coworkDirs: cwRoot }));
+    let cw = null;
+    for (let k = 0; k < 40 && !cw; k++) { await sleep(150); const st = JSON.parse((await get(port, '/api/state')).body); cw = st.sessions.find(s => s.wing === 'cowork' && /Prova Cowork|Titolo dal transcript/.test(s.title || '')); }
+    ok(cw && cw.title === 'Prova Cowork dal metadato', `Cowork: la scheda mostra il titolo dei metadati (${cw && cw.title})`);
+    const st2 = JSON.parse((await get(port, '/api/state')).body);
+    ok(!st2.sessions.some(s => s.title === 'Sessione archiviata'), 'Cowork: la sessione archiviata nell\'app non compare');
+    await get(port, '/api/settings', 'POST', JSON.stringify({ coworkDirs: '' }));
+  }
   core.stop();
 
   console.log('hook di Claude Code');

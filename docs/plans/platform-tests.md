@@ -189,7 +189,7 @@ Like W3 and W4, with the Linux terminals (GNOME Terminal, Konsole, the one in VS
 - **Use:** write `docs/plans/cowork-structure.md`, **anonymized**.
 - **Also note** the version of the Claude app: the structure may change.
 
-### K2 · Targeted search  [ ] [win]
+### K2 · Targeted search  [x] [win]
 
 - **Update `findCoworkBases`** (`src/core/sources.js`, called from `scanCowork` in `src/core/index.js` with the `coworkDirs` setting):
   - first try the known paths found in K1;
@@ -230,7 +230,7 @@ Conventions of this loop (Windows PC, Max's own computer, port 47850): every run
 
 ### 2026-11-18 · W1 · Install from scratch
 
-- **Machine:** Windows 11 Pro 10.0.26200 (build 26200), x64 (`AMD64`), Node 24.13.0, npm 11.6.2, Git 2.56.0.windows.4, `curl.exe` is `C:\Windows\system32\curl.exe`. The user folder is `C:\Users\massi` (no space, no accent, not inside OneDrive; OneDrive exists next to it).
+- **Machine:** Windows 11 Pro 10.0.26200 (build 26200), x64 (`AMD64`), Node 24.13.0, npm 11.6.2, Git 2.56.0.windows.4, `curl.exe` is `C:\Windows\system32\curl.exe`. The user folder is `C:\Users\<user>` (no space, no accent, not inside OneDrive; OneDrive exists next to it).
 - **Path of a new user:** clone of the repository into `C:\Platypus Tests\platypus` (a space in the name), then `.\start.cmd` with the temporary home (so the npm cache and the Electron cache were empty, as for a new user).
   - `npm ci` + Electron download: about 4 minutes on this connection. `node_modules` is 381 MB; the Electron zip is 158 MB (the "~120 MB" in the launcher message is a bit low; harmless).
   - The Electron window opened ("Platypus", 1245x786), the engine listened on 47850 only, `/api/state` answered 200 with zero sessions (so the empty temporary home was honoured: Max's real sessions were not read). Screenshot looked at: the lobby with "INSERT COIN", top bar, floors.
@@ -349,5 +349,16 @@ How it was run: the window was started from the test clone with the temporary ho
   - the Cowork virtual machine is `vm_bundles\claudevm.bundle` (11 GB), run by `cowork-svc`.
 - **Not done / limits:** no Cowork session is active on this PC (newest transcript 2026-07-28), so "active" is deduced, not seen; I did not start a Cowork session (that is for Max to open, if he wants it checked). Only one app version, one PC, one account. Several expected roots do not exist here (`AnthropicClaude`, `Claude-3p`).
 - **Side effects:** none; nothing was written outside the scratch folder and the new document. Max's real data is not in the repository (no title, path, project name, account or session id is reproduced).
+
+### 2026-11-18 · K2 · Targeted search
+
+- **Code:**
+  - `src/core/sources.js`: `findCoworkBases` first tries the known path of K1 (`<root>/local-agent-mode-sessions/<account>/<org>/local_<uuid>/.claude`, two directory levels, no walk). For each root where it finds nothing, the old wide search runs as before (fallback: new app versions, hand-made roots). Each base found through the known path carries `meta` read from the sibling `local_<uuid>.json`: only `title`, `sessionId`, `cliSessionId`, `model`, `createdAt`, `lastActivityAt`, `isArchived`, `isAgentCompleted` (new `readCoworkMeta`; the e-mail, account name, prompts and messages in that file are never kept);
+  - `src/core/index.js` (`scanCowork`): archived sessions are not watched; the app's titles are applied at once and again 6 s later (when the freshly opened transcripts have created the sessions);
+  - `src/core/state.js`: small `applyCoworkMeta`; a title from the app is no longer overwritten by the `ai-title` / `custom-title` lines of the transcript.
+- **Tests (`npm test`, new "Cowork (albero finto di Windows)" group, 6 checks):** the fake tree is `scripts/fixtures/cowork-win/` (the shape of K1 with made-up content; `_claude` stands for `.claude`, which git ignores, so the test copies the tree to a temporary folder and renames it). It checks: the known path finds the two sessions and not the `skills-plugin` decoy; the metadata fields; that e-mail, account name and prompts are not kept; the wide search still works on an unknown structure; in the running engine the card shows the metadata title (the transcript says another one); the archived session does not appear.
+- **By hand:** a real window (temporary home, port 47850) with `coworkDirs` pointing at a copy of the fixture: the Cowork wing shows floor 1 "Prova Cowork dal metadato" (screenshot looked at), source COWORK, "New task: Ciao". A real Cowork session could not be tested (none is active on this PC, and starting one is for Max).
+- **On the real tree (counts only):** the same 27 session folders as before are found, with metadata for all 27, and the number of folders visited drops from 412 to 2 (65 ms to 42 ms). Nothing from the real data was printed or kept.
+- **State of "active":** nothing new is derived from `lastActivityAt` yet: a Cowork session is still "active" when its transcript is written, as before. K1 shows the two agree within a few minutes, so a later change can use the metadata if wanted.
 
 ## Journal (Linux)
