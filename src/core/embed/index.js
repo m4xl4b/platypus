@@ -156,7 +156,8 @@ async function resolveChain(engine, sources, { skip = () => false, timeoutMs = T
     if (!p) continue;
     if (skip(k)) { reason = reason || { source: k, state: 'error', detail: 'suspended' }; continue; }
     let okp = false;
-    try { okp = await withTimeout(p.ready(), timeoutMs, k); } catch (e) { p.state = 'error'; p.detail = e.message; }
+    // ready() può dover caricare il modello: il provider dice quanto può durare (readyTimeoutMs)
+    try { okp = await withTimeout(p.ready(), Math.max(timeoutMs, p.readyTimeoutMs || 0), k); } catch (e) { p.state = 'error'; p.detail = e.message; }
     if (okp && p.dim > 0) return { provider: p, wanted, fallback: null };
     reason = reason || { source: k, state: p.state || 'error', detail: p.detail || '' };
   }
@@ -305,7 +306,9 @@ class Embedder {
         const rest = b.filter(x => !this.mem.has(p.id + '|' + x.key));
         if (rest.length) {
           try {
-            const vecs = await withTimeout(p.embed(rest.map(x => x.text), rest[0].kind), this.timeoutMs, p.id);
+            // 5 s a richiesta; di più solo se il provider dice che il modello è "freddo" e va caricato (timeoutFor)
+            const ms = typeof p.timeoutFor === 'function' ? Math.max(this.timeoutMs, p.timeoutFor()) : this.timeoutMs;
+            const vecs = await withTimeout(p.embed(rest.map(x => x.text), rest[0].kind), ms, p.id);
             if (!Array.isArray(vecs) || vecs.length !== rest.length || vecs.some(v => !v || v.length !== p.dim)) throw new Error(p.id + ': wrong answer');
             const entries = rest.map((x, i) => [x.key, normalize(Float32Array.from(vecs[i]))]);
             if (this.provider !== p) continue; // la fonte è cambiata nel frattempo: vettori buttati

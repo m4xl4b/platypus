@@ -36,6 +36,8 @@ function create(settings = {}, { modelsDir, transformers, timeoutMs = 5000, mode
   const pending = new Map();
   let seq = 0, loaded = false;
   const fail = (state, detail, hint) => { Object.assign(p, { state, detail, hint: hint || '', dim: 0 }); return false; };
+  p.timeoutFor = () => (loaded ? timeoutMs : LOAD_MS); // per la coda del motore: il primo uso carica il modello
+  p.readyTimeoutMs = LOAD_MS + timeoutMs;
 
   function start() {
     if (p.worker) return;

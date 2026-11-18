@@ -250,6 +250,14 @@ async function providerTests(ok) {
     const snap = sem.snapshotMinds([{ id: 'plan1', name: 'PLAN', mind: plan }], s.corpus, 'unit-embed-e2', 0, emb.space(0));
     ok(before.src === 'tfidf' && after.src === 'onnx:fake' && snap0.pending > 0 && snap.src === 'onnx:fake' && snap.pending === 0 && snap.align.length === plan.pieces.filter(p => p.kind === 'action').length, `embedding E2: la bolla parte col TF-IDF e passa a ${after.src} quando i vettori ci sono tutti`);
     st.stop && st.stop();
+    // un provider che dice di essere "freddo" ha più tempo, sia per ready() sia per la prima richiesta
+    const slowCold = { ...fakeProvider('ollama'), readyTimeoutMs: 1000, timeoutFor: () => 1000 };
+    slowCold.ready = async () => { await new Promise(r => setTimeout(r, 150)); slowCold.state = 'ready'; return true; };
+    slowCold.embed = async texts => { await new Promise(r => setTimeout(r, 150)); return texts.map(t => wordVec(t, 8)); };
+    const embCold = new embed.Embedder({ settings: { embedEngine: 'ollama' }, factories: facts({ ollama: slowCold, onnx: gone }), timeoutMs: 50 });
+    embCold.space(1); await settle(embCold);
+    const sc = embCold.space(1); sc && sc.piece({ text: 'a freddo' }); await settle(embCold);
+    ok(embCold.status().active === 'ollama:fake' && embCold.space(1).piece({ text: 'a freddo' }) && !embCold.status().fallback, 'embedding E2: la coda dà al modello "freddo" il tempo di caricarsi (readyTimeoutMs, timeoutFor) invece di sospenderlo');
     // cambiare le opzioni rifà la catena e riparte da zero
     ok(emb.configure({ embedEngine: 'tfidf' }) === true && emb.configure({ embedEngine: 'tfidf' }) === false && emb.space(1) === null, 'embedding E2: cambiare motore rifà la catena (e lo stesso valore non fa niente)');
     await settle(emb);
@@ -262,7 +270,8 @@ async function providerTests(ok) {
 // o.models: i modelli di /api/tags; o.legacy: niente /api/embed (Ollama vecchio); o.delayMs: risposte lente.
 function fakeOllama(o = {}) {
   const http = require('http');
-  const opts = { models: [{ name: 'nomic-embed-text:latest', details: { family: 'nomic-bert' } }, { name: 'llama3.2:latest', details: { family: 'llama' } }], legacy: false, delayMs: 0, dim: 16, ...o };
+  const opts = { models: [{ name: 'nomic-embed-text:latest', details: { family: 'nomic-bert' } }, { name: 'llama3.2:latest', details: { family: 'llama' } }], legacy: false, delayMs: 0, coldMs: 0, dim: 16, ...o };
+  let warm = false; // coldMs: il primo /api/embed carica il modello e ci mette di più, come un Ollama vero
   const log = [];
   const server = http.createServer((req, res) => {
     let body = '';
@@ -273,6 +282,7 @@ function fakeOllama(o = {}) {
       const send = (code, obj) => setTimeout(() => { if (!res.writableEnded) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); } }, opts.delayMs);
       const known = name => opts.models.some(m => m.name === name);
       if (req.method === 'GET' && req.url === '/api/tags') return send(200, { models: opts.models });
+      if (req.method === 'POST' && req.url === '/api/embed' && !warm && opts.coldMs) { warm = true; return setTimeout(() => res.end(JSON.stringify({ model: j.model, embeddings: (j.input || []).map(t => Array.from(wordVec(t, opts.dim))) })), opts.coldMs); }
       if (req.method === 'POST' && req.url === '/api/embed') {
         if (opts.legacy) return send(404, '404 page not found');
         if (!known(j.model)) return send(404, { error: `model "${j.model}" not found, try pulling it first` });
@@ -301,7 +311,7 @@ async function ollamaTests(ok) {
     ok(srv.log[0].url === '/api/tags' && !srv.log.some(x => /pull/.test(x.url)), 'embedding E3: guarda /api/tags e non scarica niente');
     // la scelta del modello
     const M = n => ({ name: n });
-    ok(ollama.pickModel([M('llama3.2:latest'), M('nomic-embed-text:latest'), M('bge-m3:latest')]) === 'bge-m3:latest' && ollama.pickModel([M('qwen3-embedding:latest'), M('snowflake-arctic-embed2:latest'), M('nomic-embed-text:latest')]) === 'snowflake-arctic-embed2:latest' && ollama.pickModel([M('llama3.2:latest'), M('mxbai-embed-large:latest')]) === 'mxbai-embed-large:latest' && ollama.pickModel([M('llama3.2:latest')]) === null && ollama.pickModel([M('bge-m3:latest')], 'bge-m3') === 'bge-m3:latest' && ollama.pickModel([M('bge-m3:latest')], 'e5') === null, 'embedding E3: il modello: quello scelto, altrimenti il primo di embedding, prima i multilingue');
+    ok(ollama.pickModel([M('llama3.2:latest'), M('nomic-embed-text:latest'), M('bge-m3:latest')]) === 'bge-m3:latest' && ollama.pickModel([M('snowflake-arctic-embed2:latest'), M('qwen3-embedding:4b'), M('qwen3-embedding:0.6b'), M('nomic-embed-text:latest')]) === 'qwen3-embedding:0.6b' && ollama.pickModel([M('llama3.2:latest'), M('mxbai-embed-large:latest')]) === 'mxbai-embed-large:latest' && ollama.pickModel([M('llama3.2:latest')]) === null && ollama.pickModel([M('bge-m3:latest')], 'bge-m3') === 'bge-m3:latest' && ollama.pickModel([M('bge-m3:latest')], 'e5') === null, 'embedding E3: il modello: quello scelto, altrimenti il primo di embedding, prima i multilingue');
     ok(ollama.prefix('jeffh/intfloat-multilingual-e5-small:f16', 'query') === 'query: ' && ollama.prefix('multilingual-e5-small', 'document') === 'passage: ' && ollama.prefix('bge-m3:latest', 'query') === '', 'embedding E3: prefissi e5 (query:/passage:), nessuno per bge-m3');
     // un modello che non c'è: si dice, con il comando da lanciare (non lo lancia)
     p = ollama.create({ ollamaUrl: srv.url, embedModel: 'bge-m3' }, { timeoutMs: 1000 });
@@ -325,6 +335,14 @@ async function ollamaTests(ok) {
     await p.ready(); srv.opts.delayMs = 400;
     let err = ''; try { await p.embed(['lento'], 'document'); } catch (e) { err = e.message; }
     ok(/timeout/.test(err), 'embedding E3: una richiesta di vettori oltre il tempo è un errore (la coda conta i fallimenti)');
+    // a freddo: il primo uso carica il modello e può durare più di 5 s; interromperlo farebbe annullare il caricamento
+    srv.opts.delayMs = 0; srv.opts.coldMs = 300;
+    let clock = Date.parse('2026-11-18T10:00:00Z');
+    const pw = ollama.create({ ollamaUrl: srv.url }, { timeoutMs: 100, loadMs: 1000, now: () => clock });
+    const cold = pw.timeoutFor(), rw = await pw.ready(), warmMs = pw.timeoutFor();
+    const lastEmbed = srv.log.filter(x => x.url === '/api/embed').pop();
+    clock += 10 * 60 * 1000;
+    ok(cold === 1000 && rw && pw.dim === 16 && warmMs === 100 && pw.timeoutFor() === 1000 && pw.readyTimeoutMs === 1100 && lastEmbed.body.keep_alive === ollama.KEEP_ALIVE, `embedding E3: a freddo il modello ha tempo per caricarsi (300 ms con 100 ms di limite a caldo), poi resta caricato ${ollama.KEEP_ALIVE} e valgono di nuovo i tempi brevi`);
     srv.opts.delayMs = 0;
   } finally { await srv.close(); }
   // Ollama spento: la porta non risponde
@@ -447,8 +465,14 @@ function calibrationTests(ok) {
   ok(row && row.rel === fr.chosen.rel && row.weak === fr.weak.suggested && row.zero === fr.used.zero && row.widen === fr.used.widen && row.warn === +Math.min(0.95, fr.chosen.rel + 0.25).toFixed(2), `embedding E7: la riga «${fake.ID}» di drift-rule.js è quella misurata (rel ${fr.chosen.rel}, weak ${fr.weak.suggested}, zero ${fr.used.zero}, widen ${fr.used.widen})`);
   ok(fr.auc > r.auc && fr.aucSyn > r.aucSyn + 0.2 && fr.chosen.tpr >= r.current.tpr && fr.chosen.fpr === 0 && fr.weak.unmeasurableMax < fr.weak.suggested, `embedding E7: sull'insieme il provider finto batte il TF-IDF (AUC ${fr.auc} contro ${r.auc}, sinonimi ${fr.aucSyn} contro ${r.aucSyn})`);
   // la tabella: il TF-IDF con i numeri di sempre; una fonte neurale senza misure non giudica
-  const un = rule.thresholdsFor('ollama:bge-m3:latest');
-  ok(rule.thresholdsFor('tfidf') === rule.TFIDF && rule.TFIDF.rel === 0.35 && rule.TFIDF.run === 6 && rule.TFIDF.weak === 0.031 && rule.TFIDF.floor === 0.03 && un.calibrated === false, 'embedding E5: soglie per fonte: TF-IDF 0,35 · 6 · 0,031 · 0,03; una fonte neurale non misurata è «non calibrata»');
+  const un = rule.thresholdsFor('ollama:nomic-embed-text:v1.5');
+  ok(rule.thresholdsFor('tfidf') === rule.TFIDF && rule.TFIDF.rel === 0.35 && rule.TFIDF.run === 6 && rule.TFIDF.weak === 0.031 && rule.TFIDF.floor === 0.03 && un.calibrated === false, 'embedding E5: soglie per fonte: TF-IDF 0,35 · 6 · 0,031 · 0,03; una fonte neurale non misurata (o che non batte il TF-IDF) è «non calibrata»');
+  // i modelli di Ollama misurati: una riga ciascuno, trovata anche con ":latest", con valori sensati
+  const measured = Object.keys(rule.TABLE).filter(k => k.startsWith('ollama:'));
+  const sane = t => t.calibrated && t.run === 6 && t.rel > 0 && t.rel < 1 && t.warn > t.rel && t.weak > t.floor && t.zero >= 0 && t.zero < 1 && t.widen >= 0 && t.widen < 1;
+  ok(measured.length === 6 && measured.every(k => sane(rule.TABLE[k])) && rule.thresholdsFor('ollama:bge-m3:latest') === rule.TABLE['ollama:bge-m3'] && rule.thresholdsFor('ollama:qwen3-embedding:0.6b') === rule.TABLE['ollama:qwen3-embedding:0.6b'], `embedding E5: ${measured.length} modelli di Ollama misurati nella tabella (${measured.map(k => k.slice(7)).join(', ')})`);
+  const ollamaMod = require(path.join(ROOT, 'src', 'core', 'embed', 'ollama'));
+  ok(ollamaMod.SUGGESTED === 'qwen3-embedding:0.6b' && rule.thresholdsFor('ollama:' + ollamaMod.SUGGESTED).calibrated, 'embedding E5: il modello proposto è quello misurato meglio, e ha la sua riga');
   // una regola in tre posti: motore, feedback e mappa danno la stessa risposta sulle stesse righe
   const { st, s } = require(path.join(ROOT, 'src', 'i18n')).withLang('it', demoScenario);
   const plan = s.subs.get('plan1').mind, page = ruleAsInPage();

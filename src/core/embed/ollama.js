@@ -13,8 +13,9 @@ const https = require('https');
 const DEFAULT_URL = 'http://127.0.0.1:11434';
 const LOOPBACK = new Set(['127.0.0.1', '::1', '[::1]', 'localhost']);
 const MAX_BODY = 64 * 1024 * 1024;
-// il modello da proporre quando non ce n'è nessuno (da verificare sull'italiano: vedi il Journal del piano)
-const SUGGESTED = 'bge-m3';
+// il modello da proporre quando non ce n'è nessuno: il migliore misurato sull'insieme italiano e inglese, e il più piccolo
+// (0,64 GB; vedi docs/plans/embedding-calibration.md)
+const SUGGESTED = 'qwen3-embedding:0.6b';
 
 // l'indirizzo, se è di loopback; altrimenti null
 function loopbackUrl(v) {
@@ -30,8 +31,9 @@ function loopbackUrl(v) {
 // i modelli di embedding tra quelli presenti, i multilingue per primi
 const EMBED_NAME = /embed|bge|e5|gte|minilm|mpnet|paraphrase|arctic|granite-embedding|jina|nomic/i;
 const EMBED_FAMILY = /bert|xlm|roberta|nomic/i;
-// i multilingue, nell'ordine in cui si preferiscono (ancora da misurare sull'italiano con scripts/embed-eval.js)
-const MULTI = [/bge-m3/i, /arctic-embed2/i, /embeddinggemma/i, /qwen3-embedding/i, /nomic-embed-text-v2/i, /granite-embedding/i, /multilingual-e5|(^|[/:-])e5/i, /paraphrase-multilingual|multilingual/i, /jina-embeddings-v3/i];
+// i multilingue, nell'ordine in cui si preferiscono: prima quelli misurati con scripts/embed-eval.js, dal migliore
+// (qualità sull'insieme, poi dimensione), poi gli altri multilingue non ancora misurati
+const MULTI = [/qwen3-embedding:0\.6b/i, /qwen3-embedding/i, /embeddinggemma/i, /arctic-embed2/i, /nomic-embed-text-v2/i, /bge-m3/i, /granite-embedding/i, /multilingual-e5|(^|[/:-])e5/i, /paraphrase-multilingual|multilingual/i, /jina-embeddings-v3/i];
 function isEmbedModel(m) {
   const name = String(m && (m.name || m.model) || '');
   const fam = m && m.details ? [m.details.family, ...(m.details.families || [])].join(' ') : '';
@@ -79,16 +81,30 @@ function request(base, method, p, body, timeoutMs) {
   });
 }
 
-function create(settings = {}, { timeoutMs = 5000 } = {}) {
+// Il primo uso di un modello lo carica in memoria: può volerci più dei 5 s di una richiesta, e interromperla farebbe
+// annullare il caricamento a Ollama (che allora non finisce mai). Così la richiesta "a freddo" ha fino a loadMs, e si
+// chiede a Ollama di tenere il modello caricato per KEEP_ALIVE; finché è caldo valgono i 5 s.
+const KEEP_ALIVE = '10m', WARM_MS = 9 * 60 * 1000, LOAD_MS = 60000;
+function create(settings = {}, { timeoutMs = 5000, loadMs = LOAD_MS, now = Date.now } = {}) {
   const base = loopbackUrl(settings.ollamaUrl);
   const p = { id: 'ollama', dim: 0, state: 'unknown', model: '', detail: '', hint: '', url: base || String(settings.ollamaUrl || ''), legacy: false };
   const fail = (state, detail, hint = '') => { Object.assign(p, { state, detail, hint, dim: 0 }); return false; };
   const toVec = a => (Array.isArray(a) && a.length && a.every(Number.isFinite) ? Float32Array.from(a) : null);
+  let warmUntil = 0;
+  p.timeoutFor = () => (now() < warmUntil ? timeoutMs : loadMs); // per la coda: quanto può durare la prossima richiesta
+  p.readyTimeoutMs = loadMs + timeoutMs;
 
   async function embedRaw(texts, kind) {
     const input = texts.map(t => prefix(p.model, kind) + t);
+    const ms = p.timeoutFor();
+    const out = await embedReq(input, ms);
+    warmUntil = now() + WARM_MS;
+    return out;
+  }
+  async function embedReq(input, ms) {
+    const texts = input;
     if (!p.legacy) {
-      const r = await request(base, 'POST', '/api/embed', { model: p.model, input, truncate: true }, timeoutMs);
+      const r = await request(base, 'POST', '/api/embed', { model: p.model, input, truncate: true, keep_alive: KEEP_ALIVE }, ms);
       if (r.status === 404 && !(r.json && /model/i.test(String(r.json.error || '')))) p.legacy = true; // Ollama vecchio: niente /api/embed
       else {
         if (r.status !== 200 || !r.json || !Array.isArray(r.json.embeddings)) throw new Error('ollama /api/embed: ' + r.status + ' ' + ((r.json && r.json.error) || r.text.slice(0, 120)));
@@ -99,7 +115,7 @@ function create(settings = {}, { timeoutMs = 5000 } = {}) {
     }
     const out = [];
     for (const prompt of input) {
-      const r = await request(base, 'POST', '/api/embeddings', { model: p.model, prompt }, timeoutMs);
+      const r = await request(base, 'POST', '/api/embeddings', { model: p.model, prompt, keep_alive: KEEP_ALIVE }, ms);
       const v = r.status === 200 && r.json ? toVec(r.json.embedding) : null;
       if (!v) throw new Error('ollama /api/embeddings: ' + r.status + ' ' + ((r.json && r.json.error) || r.text.slice(0, 120)));
       out.push(v);
@@ -147,4 +163,4 @@ function create(settings = {}, { timeoutMs = 5000 } = {}) {
   return p;
 }
 
-module.exports = { create, loopbackUrl, pickModel, isEmbedModel, prefix, DEFAULT_URL, SUGGESTED };
+module.exports = { create, loopbackUrl, pickModel, isEmbedModel, prefix, DEFAULT_URL, SUGGESTED, KEEP_ALIVE, LOAD_MS };

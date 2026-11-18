@@ -182,8 +182,12 @@ Notes for the CHANGELOG entry (the version and the wording are decided at integr
 **Privacy**
 - Snippets of the agents' text (at most 320–480 characters per piece) are kept in memory only and go only to a local model; the cache in `~/.platypus/embed-cache/` holds only vectors and sha1 hashes (5000 in memory, at most 50 MB per source on disk).
 
+**Measured**
+- Six local Ollama embedding models beat TF-IDF on the labelled set and have their own thresholds (on synonyms AUC 0.92–0.99 against 0.547; every simulated drift caught with no false alarm). The recommended one for Italian is `qwen3-embedding:0.6b`, now the first choice and the one proposed when no model is present. `nomic-embed-text:v1.5` does not beat TF-IDF and stays "not calibrated".
+- A model that is not loaded yet gets up to 60 s for its first request and is kept loaded for 10 minutes; then the 5 s limit applies.
+
 **Not verified yet**
-- No real neural model has been measured: starting Ollama (several embedding models are already on this computer) or installing the ONNX model needs Max's permission. Until a model beats TF-IDF on the set, TF-IDF stays the default.
+- The ONNX model has not been installed or measured (it needs `npm run embed:onnx:install`, about 320 MB). The default engine is still TF-IDF: switching it to `auto` is Max's decision.
 
 ## Journal
 
@@ -339,10 +343,10 @@ This is on paper: E5 measures it only if the real model is installed.
 >
 > The context bubble and the north star in the map of reality measure what an agent is talking about. By default they compare words (lexical, TF-IDF): "fix the login" and "repair the authentication" look far apart. A neural model also understands synonyms. Choose it in **Options → Meaning engine**; everything stays on your computer.
 >
-> - **Ollama** (if you already use it): start Ollama and download an embedding model, for example `ollama pull bge-m3` (about 1.2 GB, multilingual). Platypus talks to it only at `http://127.0.0.1:11434` (or another address of this computer: other hosts are refused) and never downloads models itself; the options show the command if a model is missing.
+> - **Ollama** (if you already use it): start Ollama and download an embedding model, for example `ollama pull qwen3-embedding:0.6b` (about 0.6 GB, multilingual, the best one measured on Italian and English). Platypus talks to it only at `http://127.0.0.1:11434` (or another address of this computer: other hosts are refused) and never downloads models itself; the options show the command if a model is missing.
 > - **ONNX model** (without Ollama): `npm run embed:onnx:install` installs the npm packages of `optional/embed-onnx` (about 200 MB) and downloads `Xenova/multilingual-e5-small` (about 118 MB) into `~/.platypus/models/`. It tells you the sizes and asks before downloading. This download, from registry.npmjs.org and huggingface.co, is the only network call of this feature; after that the model runs locally in a background thread.
 > - **What stays local:** snippets of the agents' text go only to the local model and are never written to disk; the cache (`~/.platypus/embed-cache/`, at most 50 MB per model, can be cleared from the options) holds only vectors and hashes.
-> - A neural model is used for the drift judgement only once it has been calibrated (`node scripts/embed-eval.js --source ollama --model <name>`); until then the north star says "not measurable" rather than guessing.
+> - A neural model is used for the drift judgement only once it has been calibrated (`node scripts/embed-eval.js --source ollama --model <name>`); six Ollama models are calibrated already (qwen3-embedding 0.6b and 4b, embeddinggemma-2, snowflake-arctic-embed2, nomic-embed-text-v2-moe, bge-m3). For any other model the north star says "not measurable" rather than guessing.
 
 **Draft for `docs/INSTALLAZIONE.md`** (nuova sezione dopo "Modalità browser"):
 
@@ -350,10 +354,10 @@ This is on paper: E5 measures it only if the real model is installed.
 >
 > La bolla del contesto e la stella polare nella mappa della realtà misurano di che cosa parla un agente. Di base confrontano le parole (lessicale, TF-IDF): "aggiusta il login" e "correggi l'autenticazione" sembrano lontane. Un modello neurale capisce anche i sinonimi. Si sceglie in **Opzioni → Motore del significato**; tutto resta sul tuo computer.
 >
-> - **Ollama** (se lo usi già): avvia Ollama e scarica un modello di embedding, per esempio `ollama pull bge-m3` (circa 1,2 GB, multilingue). Platypus gli parla solo su `http://127.0.0.1:11434` (o un altro indirizzo di questo computer: gli altri host vengono rifiutati) e non scarica mai modelli da solo; se manca un modello le opzioni mostrano il comando.
+> - **Ollama** (se lo usi già): avvia Ollama e scarica un modello di embedding, per esempio `ollama pull qwen3-embedding:0.6b` (circa 0,6 GB, multilingue, il migliore misurato su italiano e inglese). Platypus gli parla solo su `http://127.0.0.1:11434` (o un altro indirizzo di questo computer: gli altri host vengono rifiutati) e non scarica mai modelli da solo; se manca un modello le opzioni mostrano il comando.
 > - **Modello ONNX** (senza Ollama): `npm run embed:onnx:install` installa i pacchetti npm di `optional/embed-onnx` (circa 200 MB) e scarica `Xenova/multilingual-e5-small` (circa 118 MB) in `~/.platypus/models/`. Dice quanto pesa e chiede conferma prima di scaricare. Questo scaricamento, da registry.npmjs.org e huggingface.co, è l'unica chiamata di rete della funzione; poi il modello gira in locale, in un thread a parte.
 > - **Cosa resta in locale:** gli estratti del testo degli agenti vanno solo al modello locale e non finiscono mai su disco; la cache (`~/.platypus/embed-cache/`, al massimo 50 MB per modello, si svuota dalle opzioni) tiene solo vettori e hash.
-> - Un modello neurale giudica la deriva solo dopo essere stato calibrato (`node scripts/embed-eval.js --source ollama --model <nome>`); fino ad allora la stella polare dice "non misurabile" invece di tirare a indovinare.
+> - Un modello neurale giudica la deriva solo dopo essere stato calibrato (`node scripts/embed-eval.js --source ollama --model <nome>`); sei modelli di Ollama lo sono già (qwen3-embedding 0.6b e 4b, embeddinggemma-2, snowflake-arctic-embed2, nomic-embed-text-v2-moe, bge-m3). Per gli altri la stella polare dice "non misurabile" invece di tirare a indovinare.
 
 **Draft for the README privacy line** — `README.md`, append to the "Privacy" paragraph:
 
@@ -364,3 +368,33 @@ This is on paper: E5 measures it only if the real model is installed.
 > Il significato neurale facoltativo (Opzioni → Motore del significato) usa solo un modello sul tuo computer: un Ollama locale, oppure un modello ONNX che `npm run embed:onnx:install` scarica una volta, dopo aver chiesto.
 
 **Checks.** The two architecture documents have the same structure (same tables, same new section). `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing.
+
+### 2026-11-18 · E5 (2/2) · Real models measured with Ollama
+
+**Permission.** Max said yes to starting Ollama. I started `ollama serve` (0.40.14) on `127.0.0.1:11434` only, after checking it was not already running, and stopped it by its PID at the end (no Ollama process left). Nothing was pulled: the seven embedding models were already in `D:\ollama\models`.
+
+**Measured** with `scripts/embed-eval.js --source ollama --model <m>` (details in `docs/plans/embedding-calibration.md`):
+
+| Model | AUC | Synonyms | Worst task | Drift (proposed `rel`) |
+|---|---|---|---|---|
+| qwen3-embedding:0.6b | 0.989 | 0.979 | 0.938 | 0.62: 100% caught, 0 false |
+| qwen3-embedding:4b | 0.995 | 0.989 | 0.885 | 0.62: 100% / 0 |
+| embeddinggemma-2:570m | 0.975 | 0.940 | 0.781 | 0.68: 100% / 0 |
+| snowflake-arctic-embed2 | 0.971 | 0.954 | 0.708 | 0.62: 100% / 0 |
+| nomic-embed-text-v2-moe | 0.960 | 0.928 | 0.729 | 0.78: 100% / 0 |
+| bge-m3 | 0.950 | 0.922 | 0.750 | 0.66: 100% / 0 |
+| nomic-embed-text:v1.5 | 0.761 | 0.579 | 0 | does not beat TF-IDF |
+| (TF-IDF) | 0.785 | 0.547 | 0.302 | 0.35: 80% / 0, 11.7% unjudged |
+
+**Done.**
+- Six rows in the table of `src/core/drift-rule.js`, one per model that beats TF-IDF; `nomic-embed-text:v1.5` has none, so it stays "not calibrated".
+- Model choice in `src/core/embed/ollama.js`: the measured models first, best first (`qwen3-embedding:0.6b`, then 4b, embeddinggemma, snowflake-arctic-embed2, nomic-embed-text-v2-moe, bge-m3); `SUGGESTED` (the `ollama pull` hint) is now `qwen3-embedding:0.6b`. This replaces the unverified bge-m3 recommendation of E3.
+- **Bug found by the real check and fixed.** In the real engine (web mode, demo, `embedEngine = ollama`) the source went to "error · timeout 5000 ms": the first request loads the model, which took more than 5 s; cutting the request made Ollama cancel the load ("client connection closed before llama-server finished loading"), and after three tries the source was suspended. Fix: providers can say how long the next request may take (`timeoutFor()`) and how long `ready()` may take (`readyTimeoutMs`); the queue and the chain use them. Ollama: up to 60 s while the model is cold, `keep_alive: '10m'` on every request, then 5 s while it is warm (9 minutes). ONNX had the same problem (its worker allowed 60 s for the first load, but the queue cut it at 5 s) and now reports its own cold timeout too. The plan's 5 s per request still applies to every warm request; a cold load never blocks the office, it only delays the vectors while TF-IDF is shown.
+- Docs: `docs/plans/embedding-calibration.md` (all rows, recommendation, caveats, the end-to-end check, the bug), `docs/ARCHITECTURE.md` and `docs/ARCHITETTURA.md` (cold loads, model order), the drafts for the install guides in E8 (now `qwen3-embedding:0.6b`, about 0.6 GB) and the "For the CHANGELOG" notes.
+
+**Checks.**
+- New tests: the Ollama provider, with a fake server whose first `/api/embed` is slow (a cold load), becomes ready within the load time, sends `keep_alive`, uses the short timeout while warm and the long one again after 10 minutes (fake clock); the queue gives a cold provider its `readyTimeoutMs` / `timeoutFor()` instead of suspending it; the six measured rows are in the table, are sane and are found with `:latest`; the suggested model has its row; `nomic-embed-text:v1.5` is uncalibrated. The E3 test on model choice now expects `qwen3-embedding:0.6b` first.
+- End to end with the real Ollama, after the fix: the engine picked `qwen3-embedding:0.6b` on its own (1024 dimensions) and the bubble switched to it in about 1 s. The "synonyms" scene: TF-IDF "drifting for 10 actions" → Ollama "leaving · 72%", not drifting; the Plan subagent that really wanders into `src/ui/components`: still "drifting for 13 actions". Seen in the built-in browser ("meaning: Ollama · qwen3-embedding:0.6b"). Settings put back to `tfidf`, engine and Ollama stopped by their PIDs, temporary home deleted.
+- `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing.
+
+**Decision for Max.** The measured models beat TF-IDF, so by the plan the default engine could become `auto`. I left it on `tfidf`: with `auto`, a Platypus on a computer where Ollama runs would start sending snippets of the agents' text to that local Ollama and keep a model loaded (about 0.6–1.2 GB of memory) without being asked. It is a one-line change in `DEFAULT_SETTINGS` if you want it. The ONNX model is still unmeasured (it needs `npm run embed:onnx:install`).

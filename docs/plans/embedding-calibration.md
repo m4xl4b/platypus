@@ -19,7 +19,13 @@ Measured on 2026-11-18.
 |---|---|---|---|---|---|---|---|---|---|
 | `tfidf` | 0.785 | 0.547 | 0.302 | 0.011 (0 used) | 0 | 0.64 (0.867 / 0) | 0.64, none reaches 90% | 0.35: 0.80 / 0 / 0.117 | 0.03 (0.031) |
 | `fake:synonyms` (demo only) | 0.941 | 0.917 | 0.604 | 0.621 | 0.381 | 0.87 (1.0 / 0) | **0.53** (0.933 / 0) | 0.53: 0.933 / 0 / 0 | **0.309** |
-| `ollama:*` | not measured | | | | | | | | |
+| `ollama:qwen3-embedding:0.6b` (0.64 GB) | **0.989** | **0.979** | **0.938** | 0.348 | 0.277 | 0.70 (1.0 / 0) | **0.62** (1.0 / 0) | | **0.299** |
+| `ollama:qwen3-embedding:4b` (2.5 GB) | 0.995 | 0.989 | 0.885 | 0.404 | 0.34 | 0.65 (1.0 / 0) | **0.62** (1.0 / 0) | | **0.325** |
+| `ollama:embeddinggemma-2:570m` (0.92 GB) | 0.975 | 0.940 | 0.781 | 0.620 | 0.167 | 0.74 (1.0 / 0) | **0.68** (1.0 / 0) | | **0.278** |
+| `ollama:snowflake-arctic-embed2` (1.16 GB) | 0.971 | 0.954 | 0.708 | 0.240 | 0.174 | 0.72 (1.0 / 0) | **0.62** (1.0 / 0) | | **0.222** |
+| `ollama:nomic-embed-text-v2-moe` (0.96 GB) | 0.960 | 0.928 | 0.729 | 0.218 | 0.04 | 0.81 (1.0 / 0) | **0.78** (1.0 / 0) | | **0.227** |
+| `ollama:bge-m3` (1.16 GB) | 0.950 | 0.922 | 0.750 | 0.399 | 0.14 | 0.70 (1.0 / 0) | **0.66** (1.0 / 0) | | **0.186** |
+| `ollama:nomic-embed-text:v1.5` (0.27 GB) | 0.761 | 0.579 | 0 | 0.509 | 0 | 0.86 (0.8 / 0) | 0.86, none reaches 90% | | 0.03 — **does not beat TF-IDF, no row** |
 | `onnx:Xenova/multilingual-e5-small` | not measured | | | | | | | | |
 
 The table of `drift-rule.js` has two rows: `tfidf` (`rel` 0.35, `run` 6, `weak` 0.031, `warn` 0.6, `floor` 0.03, `zero` 0, `widen` 0) and `fake:synonyms` (`rel` 0.53, `run` 6, `weak` 0.309, `warn` 0.78, `floor` 0.03, `zero` 0.621, `widen` 0.381). `warn` (the yellow band) is `rel` + 0.25. A test recomputes the `fake:synonyms` row from the measure and fails if the table and the measure disagree.
@@ -32,18 +38,27 @@ What the TF-IDF numbers say:
 
 About `fake:synonyms`: it is the hidden provider of the demo (`src/core/embed/fake.js`, `embedEngine = 'fake'`, demo sessions only). It is **not a model**: a small dictionary that maps synonyms in Italian and English to the same concept, with a constant component that imitates the background similarity of neural models. Its dictionary was written knowing the areas of the test set, so its numbers are not evidence about neural models; they show that the whole chain (rescaling from the background, widening, thresholds per source, map and engine agreeing) works with a source that is not TF-IDF, and they drive the "synonyms" scene of the demo.
 
-## Neural sources: not measured yet
+## Real models (Ollama), measured on 2026-11-18
 
-Measuring a real model needs Max's permission: starting Ollama (the models `bge-m3`, `snowflake-arctic-embed2`, `embeddinggemma`, `qwen3-embedding` and `nomic-embed-text` are already in its folder) or installing the ONNX model (`npm run embed:onnx:install`, about 320 MB). The commands are:
+With Max's permission Ollama 0.40.14 was started on this computer (loopback only) and the seven embedding models already in its folder were measured; nothing was downloaded. The rows of the table above with a bold proposed `rel` are now in `drift-rule.js` (the "in use" column is the same as the proposed one).
+
+- **Six of seven beat TF-IDF clearly**: on synonyms the AUC goes from 0.547 to 0.92–0.99; every drift of the simulated sessions is caught, with no false alarm and no session left unjudged (TF-IDF: 80%, and 11.7% unjudged).
+- **`nomic-embed-text:v1.5` does not** (AUC 0.761, synonyms 0.579): it is mostly an English model. It has no row, so with it the drift rule says "not measurable".
+- **Recommended for Italian: `qwen3-embedding:0.6b`**: the best AUC overall together with the 4b one, by far the best worst task (0.938), and the smallest of the good ones (0.64 GB). It is now the first choice when `embedModel` is empty and the model proposed with `ollama pull` when there is none. Then `qwen3-embedding:4b`, `embeddinggemma`, `snowflake-arctic-embed2`, `nomic-embed-text-v2-moe`, `bge-m3`.
+- Caveats: `widen` is tight for `bge-m3` (0.141 against 0.139) and `embeddinggemma` (0.173 against 0.162), so with them a task that cannot be measured may occasionally look measurable. The set is small (30 tasks) and written for the purpose; real sessions may need the thresholds revisited.
+- End-to-end check with the real engine (web mode, demo, `embedEngine = ollama`, model chosen automatically): `qwen3-embedding:0.6b`, 1024 dimensions, the bubble switched to it after about 1 s. The "synonyms" scene went from "drifting for 10 actions" (TF-IDF) to "leaving · 72%", not drifting; the Plan subagent that really drifts into the UI components stayed "drifting for 13 actions".
+- That check found a real bug that the fake Ollama could not show: loading a model the first time takes more than 5 s; the request was cut at 5 s, which made Ollama cancel the load, and after three tries the source was suspended. Now a "cold" model gets up to 60 s (for `ready()` and the first batch), Ollama is asked to keep it loaded for 10 minutes (`keep_alive`), and while it is warm the 5 s limit applies again. The ONNX provider had the same problem in the queue and is fixed the same way.
+
+The commands, to measure again or to measure the ONNX model:
 
 ```
-node scripts/embed-eval.js --source ollama --model bge-m3
+node scripts/embed-eval.js --source ollama --model qwen3-embedding:0.6b
 node scripts/embed-eval.js --source onnx
 ```
 
 The script measures the background and `widen`, uses them as the engine would, and prints the row for `drift-rule.js` (`zero`, `widen`, the proposed `rel`, `warn`, the suggested `weak`). The row goes into the table **only if the source beats TF-IDF** on AUC and on the drift test.
 
-Until then:
+Still true:
 
-- a neural source without a row in the table is "not calibrated": the bubble and the north star show its geometry, but the drift rule says "not measurable" (engine, feedback and map alike) instead of guessing;
-- **the default engine is `tfidf`** (`embedEngine` in `DEFAULT_SETTINGS`): the plan says to leave TF-IDF as the default when the neural source does not beat it, and so far nothing has been shown to beat it.
+- a neural source without a row in the table (the ONNX model, `nomic-embed-text:v1.5`, any other model) is "not calibrated": the bubble and the north star show its geometry, but the drift rule says "not measurable" (engine, feedback and map alike) instead of guessing;
+- **the default engine is still `tfidf`** (`embedEngine` in `DEFAULT_SETTINGS`). The measured models do beat it, so by the plan the default could become `auto`; that is left to Max, because with `auto` a Platypus on a computer where Ollama runs starts sending snippets of the agents' text to that local Ollama and keeps a model loaded.

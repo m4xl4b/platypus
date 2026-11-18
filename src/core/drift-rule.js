@@ -23,6 +23,14 @@
     tfidf: TFIDF,
     // il provider finto della demo (embed/fake.js): un dizionario di sinonimi, non un modello; misurato il 2026-11-18
     'fake:synonyms': Object.freeze({ rel: 0.53, run: 6, weak: 0.309, warn: 0.78, floor: 0.03, zero: 0.621, widen: 0.381, calibrated: true }),
+    // modelli veri di Ollama, misurati il 2026-11-18 con scripts/embed-eval.js (docs/plans/embedding-calibration.md);
+    // nomic-embed-text:v1.5 non batte il TF-IDF e resta senza riga (non calibrato)
+    'ollama:qwen3-embedding:0.6b': Object.freeze({ rel: 0.62, run: 6, weak: 0.299, warn: 0.87, floor: 0.03, zero: 0.348, widen: 0.277, calibrated: true }),
+    'ollama:qwen3-embedding:4b': Object.freeze({ rel: 0.62, run: 6, weak: 0.325, warn: 0.87, floor: 0.03, zero: 0.404, widen: 0.34, calibrated: true }),
+    'ollama:embeddinggemma-2:570m': Object.freeze({ rel: 0.68, run: 6, weak: 0.278, warn: 0.93, floor: 0.03, zero: 0.62, widen: 0.167, calibrated: true }),
+    'ollama:snowflake-arctic-embed2': Object.freeze({ rel: 0.62, run: 6, weak: 0.222, warn: 0.87, floor: 0.03, zero: 0.24, widen: 0.174, calibrated: true }),
+    'ollama:nomic-embed-text-v2-moe': Object.freeze({ rel: 0.78, run: 6, weak: 0.227, warn: 0.95, floor: 0.03, zero: 0.218, widen: 0.04, calibrated: true }),
+    'ollama:bge-m3': Object.freeze({ rel: 0.66, run: 6, weak: 0.186, warn: 0.91, floor: 0.03, zero: 0.399, widen: 0.14, calibrated: true }),
   });
   const UNCALIBRATED = Object.freeze({ ...TFIDF, calibrated: false });
 
