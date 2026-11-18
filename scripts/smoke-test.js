@@ -535,6 +535,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   fs.mkdirSync(path.join(tmp, 'a%PATH%b'), { recursive: true });
   ok(osint.cmdArgs('code', path.join(tmp, 'a%PATH%b')) === null, 'cartella con «%»: cmd.exe la espanderebbe, quindi non si usa');
 
+  // Node 24 stampa l'avviso DEP0190 se si passano argomenti a un processo con shell: l'avvio non deve farlo
+  const launchSrc = fs.readFileSync(path.join(__dirname, 'launch.js'), 'utf8');
+  ok(!/spawnSync\([^;]*\[[^\]]*\][^;]*shell:\s*(IS_WIN|true)/.test(launchSrc), 'avvio: nessun argomento separato con shell (avviso DEP0190 di Node 24)');
+
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(failed ? `\n${failed} controlli falliti` : '\nTutto a posto.');
   process.exit(failed ? 1 : 0);
