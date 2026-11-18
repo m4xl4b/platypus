@@ -57,7 +57,7 @@ The `[win]` tasks run on the development computer, next to Max's own Platypus, w
 
 ## W · Windows
 
-### W1 · Install from scratch  [ ] [win]
+### W1 · Install from scratch  [x] [win]
 
 - Note down:
   - the Windows version;
@@ -205,6 +205,7 @@ Like W3 and W4, with the Linux terminals (GNOME Terminal, Konsole, the one in VS
 
 | # | System | Problem | Commit | Automatic test |
 |---|---|---|---|---|
+| 1 | Windows | With Node 24 the launcher printed the `DEP0190` deprecation warning ("Passing args to a child process with shell option true") every time it ran `npm ci` | `7b8ac9f` | `scripts/smoke-test.js`: "avvio: nessun argomento separato con shell" |
 
 ### X2 · Documents  [ ]
 
@@ -219,5 +220,23 @@ Like W3 and W4, with the Linux terminals (GNOME Terminal, Konsole, the one in VS
 (to fill in at the end)
 
 ## Journal (Windows)
+
+Conventions of this loop (Windows PC, Max's own computer, port 47850): every run goes through a small wrapper that sets `PLATYPUS_PORT=47850`, `PLATYPUS_DATA_DIR=C:\Platypus Tests\.platypus-dev` and a fresh temporary home (`USERPROFILE`, `HOME`, `APPDATA`, `LOCALAPPDATA`, `CLAUDE_CONFIG_DIR`); processes are stopped by the PID found under `C:\Platypus Tests` (never by name). Test clones live in `C:\Platypus Tests\` (outside the repository).
+
+### 2026-11-18 · W1 · Install from scratch
+
+- **Machine:** Windows 11 Pro 10.0.26200 (build 26200), x64 (`AMD64`), Node 24.13.0, npm 11.6.2, Git 2.56.0.windows.4, `curl.exe` is `C:\Windows\system32\curl.exe`. The user folder is `C:\Users\massi` (no space, no accent, not inside OneDrive; OneDrive exists next to it).
+- **Path of a new user:** clone of the repository into `C:\Platypus Tests\platypus` (a space in the name), then `.\start.cmd` with the temporary home (so the npm cache and the Electron cache were empty, as for a new user).
+  - `npm ci` + Electron download: about 4 minutes on this connection. `node_modules` is 381 MB; the Electron zip is 158 MB (the "~120 MB" in the launcher message is a bit low; harmless).
+  - The Electron window opened ("Platypus", 1245x786), the engine listened on 47850 only, `/api/state` answered 200 with zero sessions (so the empty temporary home was honoured: Max's real sessions were not read). Screenshot looked at: the lobby with "INSERT COIN", top bar, floors.
+  - The data of the run went into `C:\Platypus Tests\.platypus-dev` (`launch.log`, `electron\...`), nothing in `~\.platypus`.
+  - The terminal is freed: with `--background` the second start returned in 5.4 s with exit 0 and the line "Platypus è partito. Puoi chiudere questo terminale.". `launch.log` stays empty when all is well.
+- **Second start:** with the same `package-lock.json` it does not run `npm ci` (marker `node_modules\.platypus-deps` matches).
+- **Simulated `git pull`:** on a test branch of the clone, `package-lock.json` changed and committed: the next `start.cmd` ran `npm ci` again (1 s, from cache) and started. Done twice (the second time with the fix below).
+- **Without Electron:** in a second clone with no `node_modules` at all, `npm run web -- --no-open` printed "Platypus listening on http://127.0.0.1:47850/", `/api/state` answered 200 and the page was served; no `node_modules` was created. (`--no-open` is only to avoid opening Max's browser.)
+- **Bug found and fixed** (X1 row 1): the launcher ran `npm ci` with `spawnSync(npm, [args], { shell: true })` and Node 24 printed `DeprecationWarning: [DEP0190]` to the user at every install. Now on Windows it passes one command line; there is a source check in `npm test`.
+- **Not a bug, noted:** in this harness `cmd /c start.cmd` says "'start.cmd' is not recognized" because `NoDefaultCurrentDirectoryInExePath=1` is set in the process environment (cmd then does not look in the current folder). Double-click and `.\start.cmd` work. The install guides could say `.\start.cmd` for PowerShell users (see X2).
+- **Incident, no damage:** my first `start.cmd` attempt ran without the wrapper's environment (the shell does not keep variables between commands). The launcher reached `startElectron` with Max's real environment, so it **emptied `~\.platypus\launch.log`** (it opens it with `w`) and its Electron exited at once because of the single-instance lock. Max's Platypus (PID 56192, port 47800) kept running; his `settings.json` and data were not touched (timestamps checked). The log held only launcher messages. From then on every command sets the environment itself.
+- **State before the system tests (for W2):** `HKCU\...\Run` has `OneDrive`, `OpenVPN-GUI`, `Adobe Acrobat Synchronizer` and `Docker Desktop`; **no Platypus / Agent Office key**. Start menu: Max already has `Programs\Platypus.lnk`. Desktop: no `Platypus.lnk`. A system test that writes the Start menu entry **would overwrite Max's `Platypus.lnk`** (same name): W2 must be done with `APPDATA` on the temporary home, or ask Max.
 
 ## Journal (Linux)
