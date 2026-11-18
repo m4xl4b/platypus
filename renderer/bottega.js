@@ -16,6 +16,8 @@
     sessionLessons: tr('Lezioni a inizio sessione'), elder: tr('Il Nonno'), loop: tr('Giro in tondo'),
     stale: tr('File cambiato da un altro'), claims: tr('Affermazioni senza prove'), drift: tr('Ritorno al compito'),
   };
+  // gli esiti (vedi src/core/outcomes.js): etichette oneste, sono indizi
+  const OUTCOME = { helped: tr('PROBABILMENTE UTILE'), ignored: tr('IGNORATO'), unclear: tr('NON SI PUÒ DIRE') };
   // perché la sezione non si può scrivere nel CLAUDE.md (allora resta solo "Copia")
   const WHY_NOT = {
     demo: tr('È la demo: il progetto non esiste davvero.'), cowork: tr('Sessione Cowork: i suoi file non sono su questo computer.'),
@@ -69,9 +71,26 @@
         `<div class="lt"><b class="${cls}">${esc(lab)}</b> <span class="w">${esc(when(e.t))}</span> <span class="ag">${esc(e.name || (e.agent === 'main' ? 'CLAUDE' : e.agent))}</span> ${esc(FEATURE[e.feature] || e.feature)}</div>` +
         `<div class="ftx">${esc(e.text)}</div>` +
         (e.sent ? `<div class="ld" title="${esc(tr('Il testo arrivato all\'agente: i messaggi partono sempre in inglese.'))}">${esc(tr('In inglese: {text}', { text: e.sent }))}</div>` : '') +
-        (late ? `<div class="ld">${esc(tr('La risposta è arrivata oltre il tempo massimo: non è stata mandata.'))}</div>` : e.outcome ? `<div class="ld">${esc(tr('Esito: {outcome}', { outcome: e.outcome }))}</div>` : '') +
+        (late ? `<div class="ld">${esc(tr('La risposta è arrivata oltre il tempo massimo: non è stata mandata.'))}</div>`
+          : `<div class="oc ${esc(e.outcome || 'wait')}"><b>${esc(OUTCOME[e.outcome] || tr('IN ATTESA'))}</b> ${esc(e.why || (e.outcome ? '' : tr('si decide dai prossimi passi dell\'agente')))}</div>`) +
         '</div>';
     }).join('');
+  }
+  // per ogni funzione: i mandati accanto a quelli in ombra, che sono il termine di paragone
+  function feedbackSummary() {
+    const by = new Map();
+    for (const e of B.fb || []) {
+      if (e.outcome === 'late') continue;
+      const f = by.get(e.feature) || { on: [0, 0, 0], shadow: [0, 0, 0] }; // [in tutto, giudicati, probabilmente utili]
+      const c = e.mode === 'on' ? f.on : f.shadow;
+      c[0]++; if (e.outcome === 'helped' || e.outcome === 'ignored') { c[1]++; if (e.outcome === 'helped') c[2]++; }
+      by.set(e.feature, f);
+    }
+    if (!by.size) return '';
+    const part = (c, sent) => !c[0] ? '' : (sent ? trn('{n} mandato', '{n} mandati', c[0]) : trn('{n} in ombra', '{n} in ombra', c[0])) +
+      (c[1] ? ' · ' + tr('probabilmente utili {h} su {j}', { h: c[2], j: c[1] }) : '');
+    return `<div class="fbsum">${[...by].map(([f, x]) => `<div><b>${esc(FEATURE[f] || f)}</b> ${esc([part(x.on, true), part(x.shadow, false)].filter(Boolean).join('  |  '))}</div>`).join('')}` +
+      `<p class="dim">${esc(tr('Esiti dedotti dai passi successivi dell\'agente: indizi, non prove. Quelli in ombra dicono che cosa fanno gli agenti quando nessuno li avvisa: è il termine di paragone.'))}</p></div>`;
   }
   async function post(path, body) {
     try { return await (await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...B.q, ...body }) })).json(); } catch { return { ok: false }; }
@@ -115,7 +134,7 @@
       (fbTab ? '' : `<div class="bar">${isDemo ? `<span class="dim">${esc(tr('Libro della demo: lezioni finte.'))}</span>` : learn}<span class="dim">${esc(trn('{n} sessione letta dall\'archivio', '{n} sessioni lette dall\'archivio', d.learnedSessions || 0))}</span>` +
       `<button data-do="md" title="${esc(tr('Prepara una sezione per il CLAUDE.md del progetto con le lezioni fissate e le più forti'))}">${esc(tr('PROPONI PER CLAUDE.MD'))}</button></div>`) +
       (isDemo ? '' : `<label class="mute" title="${esc(tr('Vale per le funzioni di feedback delle opzioni: con questa spunta Platypus non manda né registra messaggi per gli agenti di questo progetto.'))}"><input type="checkbox" data-do="mute" ${d.mute ? 'checked' : ''}> ${esc(tr('Non parlare agli agenti di questo progetto'))}</label>`) +
-      (fbTab ? `<div class="list">${feedbackHtml()}</div>` : '') +
+      (fbTab ? `<div class="list">${feedbackSummary()}${feedbackHtml()}</div>` : '') +
       (fbTab ? '' : (B.md ? `<div class="md"><div class="mh">${esc(tr('ANTEPRIMA'))} <span class="dim">${esc(B.md.path)}</span></div>` +
         (B.md.markdown ? `<pre>${esc(B.md.markdown)}</pre>` : `<p class="dim">${esc(WHY_NOT.empty)}</p>`) +
         `<div class="la"><button data-do="copy" ${B.md.markdown ? '' : 'disabled'}>${esc(tr('COPIA'))}</button>` +

@@ -41,7 +41,8 @@ function sessionLessons(input, ctx) {
 // stato dell'ufficio, che può essere indietro di qualche riga. Solo lezioni forti e non ignorate, una volta per agente.
 const BASH = new Set(['Bash', 'PowerShell']), EDITS = new Set(['Edit', 'Write', 'MultiEdit']);
 // quello che il Nonno direbbe nel fumetto, in inglese, più (dove serve) che cosa fare adesso
-const elderSay = (l, tests) => two(() => elderLine(l) + (tests ? ' ' + tr('Lancia i test adesso.') : ''), { lessonId: l.id });
+// about: di che cosa parla il messaggio (il comando, il file, lo schema dell'errore), per giudicare dopo che cosa è successo (C2)
+const elderSay = (l, tests, about = {}) => two(() => elderLine(l) + (tests ? ' ' + tr('Lancia i test adesso.') : ''), { lessonId: l.id, about: { kind: l.kind, ...about } });
 const strongest = (ls, ok) => ls.filter(ok).sort((x, y) => y.weight - x.weight)[0] || null;
 // Glob e Grep non falliscono quando non trovano niente: lo dice il risultato (se ha la forma che conosciamo)
 function foundNothing(r) {
@@ -69,33 +70,33 @@ function elder(input, ctx) {
     if (err) {
       const pat = errorPattern(((classifyFailure(err, cmd) || {}).excerpt) || errorExcerpt(err));
       const fix = pat && strongest(strong, l => l.kind === 'known-fix' && l.key.split(' → ')[0] === pat);
-      if (fix) return elderSay(fix);
+      if (fix) return elderSay(fix, false, { file: fix.key.split(' → ')[1] || '' });
     }
     if (cmd) {
       const l = strongest(strong, l => (l.kind === 'flaky-command' || l.kind === 'loop-trap') && sameCmd(l.key, cmd));
-      if (l) return elderSay(l);
+      if (l) return elderSay(l, false, { cmd, pat: err ? errorPattern(excerptOf(err, cmd)) : '' });
     }
     if (tool === 'Read') {
       const k = key(ti.file_path);
       const l = k && strongest(strong, l => l.kind === 'ghost-path' && l.key === k);
-      if (l) return elderSay(l);
+      if (l) return elderSay(l, false, { file: l.key });
     }
     return null;
   }
   if (EDITS.has(tool)) {
     const k = key(ti.file_path);
     const l = k && strongest(strong, l => l.kind === 'fragile-file' && l.key === k);
-    return l ? elderSay(l, true) : null;
+    return l ? elderSay(l, true, { file: k }) : null;
   }
   if ((tool === 'Glob' || tool === 'Grep') && foundNothing(input.tool_response)) {
     const g = tool === 'Glob' ? globTarget(ti.pattern) : '';
     const k = tool === 'Grep' ? key(ti.path) : null;
     const l = strongest(strong, l => l.kind === 'ghost-path' && (k ? l.key === k : !!g && (l.key === g || l.key.endsWith('/' + g))));
-    return l ? elderSay(l) : null;
+    return l ? elderSay(l, false, { file: l.key }) : null;
   }
   if (BASH.has(tool) && ti.command) {
     const l = strongest(strong, l => l.kind === 'slow-step' && sameCmd(l.key, String(ti.command)));
-    return l ? elderSay(l) : null;
+    return l ? elderSay(l, false, { cmd: String(ti.command) }) : null;
   }
   return null;
 }
@@ -139,7 +140,7 @@ function loop(input, ctx) {
   if (n < 2) return null;
   const error = excerpt.length > 120 ? excerpt.slice(0, 119) + '…' : excerpt;
   return two(() => tr('questo comando è fallito {n} volte di fila con lo stesso errore («{error}») e senza modifiche in mezzo. Cambia qualcosa prima di rilanciarlo, oppure fermati e di\' che cosa ti blocca.', { n, error }),
-    { once: 'loop|' + sig + '|' + pat });
+    { once: 'loop|' + sig + '|' + pat, about: { kind: 'loop', cmd, pat } });
 }
 
 // ---- B4 · memoria non aggiornata: l'agente ha appena modificato un file che un altro agente aveva cambiato dopo la
@@ -177,7 +178,7 @@ function stale(input, ctx) {
     return tool === 'Write'
       ? tr('hai appena riscritto {file}, ma {who} l\'aveva cambiato alle {time}, dopo la tua ultima lettura. Controlla di non aver annullato quella modifica.', p)
       : tr('{who} ha cambiato {file} alle {time}, dopo la tua ultima lettura, e tu l\'hai appena modificato senza rileggerlo. Rileggilo e controlla che la tua modifica regga ancora.', p);
-  }, { once: 'stale|' + key + '|' + by.t });
+  }, { once: 'stale|' + key + '|' + by.t, about: { file: key } });
 }
 
 // ---- B5 · affermazioni senza prove a fine turno: l'agente sta per fermarsi dicendo «i test passano» o «ho verificato»,
@@ -222,7 +223,7 @@ function claims(input, ctx) {
     return last.err
       ? tr('hai detto «{claim}», ma dopo la tua ultima modifica non è partito nessun test (ultimo lancio: fallito alle {time}). Lanciali, oppure di\' che non è verificato.', { claim, time: hhmm(last.t) })
       : tr('hai detto «{claim}», ma dopo la tua ultima modifica non è partito nessun test (ultimo lancio: passato alle {time}). Lanciali, oppure di\' che non è verificato.', { claim, time: hhmm(last.t) });
-  }, { block: true, once: 'claims|' + (input.agent_id || 'main') + '|' + from, tag: c.kind + '/' + j.status });
+  }, { block: true, once: 'claims|' + (input.agent_id || 'main') + '|' + from, tag: c.kind + '/' + j.status, about: { kind: c.kind } });
 }
 
 // ---- B6 · ritorno al compito (sperimentale): la stella polare dice che l'agente è alla deriva, con la stessa regola

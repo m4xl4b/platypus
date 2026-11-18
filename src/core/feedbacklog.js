@@ -3,7 +3,7 @@
 // Solo aggiunte in coda: una riga per messaggio, e una riga per l'esito quando si viene a sapere che cosa è successo dopo.
 // L'interfaccia è piccola apposta (append, recent, setOutcome): lo storage della 2.12 la sostituirà senza toccare chi la usa.
 //   messaggio   { id, t, sid, agent, feature, mode, event, lessonId, text }
-//   esito       { id, outcome, at }
+//   esito       { id, outcome, at, why? }   (outcome: helped | ignored | unclear | late, vedi outcomes.js)
 
 const fs = require('fs');
 const path = require('path');
@@ -34,9 +34,9 @@ class FeedbackLog {
     return e;
   }
   // che cosa è successo dopo quel messaggio (lo decide chi guarda i fatti: vedi C2 nel piano)
-  setOutcome(cwd, id, outcome) {
+  setOutcome(cwd, id, outcome, why) {
     if (!id || !outcome) return false;
-    this.write(cwd, { id, outcome: String(outcome), at: Date.now() });
+    this.write(cwd, { id, outcome: String(outcome), at: Date.now(), ...(why ? { why: String(why).slice(0, 200) } : {}) });
     return true;
   }
   // gli ultimi messaggi del progetto, dal più recente, ognuno con il suo esito se c'è
@@ -48,7 +48,7 @@ class FeedbackLog {
       for (const l of text.split('\n')) { if (!l) continue; try { rows.push(JSON.parse(l)); } catch {} }
     }
     const outcomes = new Map();
-    for (const r of rows) if (r.outcome && r.id) outcomes.set(r.id, { outcome: r.outcome, at: r.at });
+    for (const r of rows) if (r.outcome && r.id) outcomes.set(r.id, { outcome: r.outcome, at: r.at, ...(r.why ? { why: r.why } : {}) });
     return rows.filter(r => r.text).map(r => ({ ...r, ...(outcomes.get(r.id) || {}) })).sort((a, b) => b.t - a.t).slice(0, n);
   }
   // quanti messaggi per funzione da un certo momento in poi, in tutti i progetti: { funzione: { on, shadow } }.

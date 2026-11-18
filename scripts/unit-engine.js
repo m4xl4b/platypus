@@ -968,7 +968,82 @@ function feedbackShownTests(ok, fb, inp, rules) {
     fl.setOutcome('/p/app', fl.recent('/p/app')[1].id, 'helped');
     const c = fl.counts(now - 7 * 86400000);
     ok(c.elder.on === 2 && c.elder.shadow === 1 && c.claims.shadow === 1 && c.claims.on === 0 && !c.loop, `conteggi degli ultimi 7 giorni: ${JSON.stringify(c)} (non contano i vecchi né le risposte in ritardo)`);
+    fl.setOutcome('/p/app', late.id, 'helped', 'ha lanciato i test');
+    ok(fl.recent('/p/app').find(r => r.id === late.id).why === 'ha lanciato i test', 'registro: l\'esito porta con sé il perché');
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  outcomeTests(ok, fb, inp, rules);
+}
+
+// C2 · esiti: dopo un messaggio, che cosa ha fatto l'agente nei passi successivi (sessioni finte, passi veri di AgentWorld)
+function outcomeTests(ok, fb, inp, rules) {
+  const { judge, WINDOW_MS, GIVE_UP_MS } = require(path.join(ROOT, 'src', 'core', 'outcomes'));
+  const { AgentWorld } = require(path.join(ROOT, 'src', 'core', 'worldmap'));
+  const i18n = require(path.join(ROOT, 'src', 'i18n'));
+  const lang = i18n.getLang();
+  i18n.setLang('en'); // i perché si leggono in inglese nei test
+  try {
+    const T = Date.parse('2026-11-18T10:00:00Z');
+    const FAIL = 'Exit code 1\nFAIL src/cart.test.ts\n    TypeError: Cannot read properties of undefined (reading \'total\')';
+    const pat = 'TypeError: Cannot read properties of undefined (reading <…>)';
+    // l'hook è arrivato a T, sul passo «tu0»; dopo, i passi della lista [strumento, input, esito (null = in corso), errore?]
+    const after = (list, { goals = [], replies = [] } = {}) => {
+      const w = new AgentWorld();
+      w.start('tu0', 'Bash', { command: 'npm test' }, T - 2000, '/p', 0);
+      w.end('tu0', true, { content: FAIL }, null, T - 1000, '/p');
+      let t = T, k = 0;
+      for (const [name, input, out, isErr] of list) {
+        const id = 'tu' + (++k);
+        w.start(id, name, input, t += 1000, '/p', 0);
+        if (out !== null) w.end(id, !!isErr, { content: out }, null, t += 1000, '/p');
+      }
+      return { steps: w.steps, goals, replies };
+    };
+    const run = (cmd, out = 'PASS', err = false) => ['Bash', { command: cmd }, out, err];
+    const edit = (f = '/p/src/cart.ts') => ['Edit', { file_path: f, old_string: 'a', new_string: 'b' }, 'ok'];
+    const read = (f = '/p/src/cart.ts') => ['Read', { file_path: f }, 'x'];
+    const E = (feature, about, extra = {}) => ({ id: 'e1', t: T, agent: 'main', feature, mode: 'on', about, toolUseId: 'tu0', ...extra });
+    const loopE = E('loop', { kind: 'loop', cmd: 'npm test', pat });
+    const j = (e, ag, now = T + 60000) => judge(e, ag, now);
+    // B3 e il Nonno su un comando fallito
+    let r = j(loopE, after([edit(), run('npm test')]));
+    ok(r.outcome === 'helped' && r.why === 'changed something before running it again', 'esito, giro in tondo: una modifica prima di riprovare → probabilmente utile');
+    ok(j(loopE, after([run('cd /p && npm test 2>&1 | tail', 'Tests: 12 passed')])).why === 'the next run succeeded', 'esito, giro in tondo: la volta dopo è andata (anche scritto in un altro modo)');
+    r = j(loopE, after([run('npm test', FAIL, true)]));
+    ok(r.outcome === 'ignored' && /same error/.test(r.why), 'esito, giro in tondo: rilanciato senza cambiare niente, lo stesso errore → ignorato');
+    ok(j(loopE, after([run('npm test', 'Exit code 1\nReferenceError: x is not defined', true)])).outcome === 'unclear', 'esito: rilanciato con un altro errore → non si può dire');
+    ok(j(E('elder', { kind: 'flaky-command', cmd: 'npm test', pat }), after([run('npm test', FAIL, true)])).outcome === 'unclear', 'esito, comando instabile: il consiglio era rilanciarlo, se fallisce uguale non si può dire');
+    ok(j(loopE, after([read(), ['Grep', { pattern: 'total', path: '/p/src' }, 'x']])) === null, 'esito: finché la finestra è aperta e non ha riprovato, si aspetta');
+    ok(j(loopE, after([run('npm test', null)])) === null, 'esito: il comando di nuovo in corso → si aspetta il suo esito');
+    ok(j(loopE, after([read()], { goals: [{ t: T + 30000 }] })).why === 'stopped instead of trying again' && j(E('elder', { kind: 'loop-trap', cmd: 'npm test', pat }), after([], { goals: [{ t: T + 30000 }] })).outcome === 'unclear', 'esito: si è fermato (nuova richiesta) → per il giro in tondo probabilmente utile, per il Nonno non si può dire');
+    ok(j(loopE, after([read()]), T + WINDOW_MS + 1).why === 'did not run it again', 'esito: passata la finestra senza riprovarlo → non si può dire');
+    ok(j(loopE, after([read(), read(), read(), read(), read(), read(), read(), read()])).outcome === 'unclear', 'esito: otto passi senza riprovarlo chiudono la finestra');
+    // il passo dopo la nuova richiesta non conta
+    ok(j(loopE, after([run('npm test', FAIL, true)], { goals: [{ t: T + 500 }] })).why === 'stopped instead of trying again', 'esito: conta solo il turno in corso');
+    // senza l'identificativo dello strumento: i passi partiti dopo il messaggio
+    ok(j({ ...loopE, toolUseId: undefined }, after([edit()])).outcome === 'helped', 'esito: senza identificativo, i passi partiti dopo il messaggio');
+    // il Nonno sui file
+    ok(j(E('elder', { kind: 'known-fix', file: 'src/auth/refresh.ts' }), after([edit('/p/src/auth/refresh.ts')])).why === 'edited src/auth/refresh.ts' && j(E('elder', { kind: 'known-fix', file: 'src/auth/refresh.ts' }), after([edit('/p/src/other.ts')]), T + WINDOW_MS + 1).outcome === 'ignored', 'esito, errore già sistemato: ha modificato quel file → utile; non l\'ha toccato → ignorato');
+    ok(j(E('elder', { kind: 'fragile-file', file: 'src/db/pool.ts' }), after([run('npm test')])).why === 'ran the tests' && j(E('elder', { kind: 'fragile-file', file: 'src/db/pool.ts' }), after([read()]), T + WINDOW_MS + 1).outcome === 'ignored', 'esito, file fragile: «lancia i test» seguito o no');
+    ok(j(E('elder', { kind: 'ghost-path', file: 'src/old.ts' }), after([read('/p/src/old.ts')])).outcome === 'ignored' && j(E('elder', { kind: 'ghost-path', file: 'src/old.ts' }), after([read()]), T + WINDOW_MS + 1).outcome === 'helped', 'esito, percorso inventato: cercato di nuovo → ignorato; non più → utile');
+    ok(j(E('elder', { kind: 'slow-step', cmd: 'npm run build' }), after([])).outcome === 'unclear', 'esito, comando lento: i passi non dicono come l\'ha lanciato');
+    // B4
+    ok(j(E('stale', { file: 'src/cart.ts' }), after([read()])).why === 'read it again' && j(E('stale', { file: 'src/cart.ts' }), after([edit()])).outcome === 'ignored', 'esito, memoria non aggiornata: riletto → utile; modificato di nuovo alla cieca → ignorato');
+    // B5: prima della richiesta successiva, un controllo o l'affermazione ritirata
+    const cl = E('claims', { kind: 'tests' }, { toolUseId: undefined });
+    ok(j(cl, after([run('npm test')])).why === 'ran the tests' && j(cl, after([run('git status')]), T + WINDOW_MS + 1).outcome === 'ignored', 'esito, affermazioni: i test lanciati dopo → utile; un altro comando non basta');
+    ok(j(cl, after([], { replies: [{ t: T + 2000, text: 'Correction: I have not run the tests yet.' }] })).why === 'said it was not verified', 'esito, affermazioni: ritirata → utile');
+    ok(j(cl, after([run('npm test')], { goals: [{ t: T + 500 }] })).why === 'nothing before the next request' && j(cl, after([])) === null, 'esito, affermazioni: niente prima della richiesta successiva → ignorato; prima, si aspetta');
+    ok(j(E('claims', { kind: 'verified' }, { toolUseId: undefined }), after([run('node try.js')])).why === 'ran a check', 'esito, «verificato»: un comando lanciato dopo conta come controllo');
+    // B1, B6 e i casi di contorno
+    ok(j(E('sessionLessons', null), null).outcome === 'unclear' && j(E('drift', null), null).outcome === 'unclear', 'esito: lezioni a inizio sessione e ritorno al compito → non si può dire, subito');
+    ok(j(loopE, null) === null && j(loopE, null, T + GIVE_UP_MS + 1).why === 'the session is no longer visible' && judge(null, null) === null, 'esito: una sessione che non si vede più → si aspetta, poi «non si può dire»');
+    // la riga del registro porta con sé di che cosa parlava il messaggio e il passo da cui partire
+    const st = after([]);
+    const rr = fb.respond(inp('PostToolUseFailure', { tool_name: 'Bash', tool_input: { command: 'npm test' }, error: FAIL, tool_use_id: 'tu-now' }), { cwd: '/p', now: () => T, settings: { fbLoop: 'shadow' }, agent: () => st }, new fb.Gate({ now: () => T }), { PostToolUseFailure: [{ feature: 'loop', run: rules.loop }] });
+    ok(rr.entry && rr.entry.about && rr.entry.about.kind === 'loop' && rr.entry.about.cmd === 'npm test' && rr.entry.about.pat === pat && rr.entry.toolUseId === 'tu-now', 'registro: di che cosa parlava il messaggio, per giudicarlo dopo');
+    const m = fb.decide(inp('PostToolUse'), {}, { PostToolUse: [() => ({ text: 'x', about: { kind: 'k', cmd: 'c'.repeat(500), evil: { a: 1 }, file: 7 } })] });
+    ok(m.message.about.kind === 'k' && m.message.about.cmd.length === 200 && !('evil' in m.message.about) && !('file' in m.message.about), 'registro: di «about» solo i campi noti, solo testo corto');
+  } finally { i18n.setLang(lang); }
 }
 
 // feedback (2.11, A3): i tre modi di ogni funzione, i limiti di frequenza, il progetto zittito e il registro

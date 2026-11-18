@@ -367,6 +367,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(['stale', 'claims', 'drift', 'elder', 'sessionLessons'].every(f => fbBook.entries.some(e => e.feature === f)) && fbBook.entries.find(e => e.feature === 'claims').tag === 'tests/ungrounded' && (await get(port, '/api/feedback/log')).status === 404, 'Libro, scheda FEEDBACK: tutte le funzioni provate qui sopra, e niente senza un progetto');
   const fbCnt = JSON.parse((await get(port, '/api/feedback/counts')).body);
   ok(fbCnt.ok && fbCnt.days === 7 && fbCnt.counts.loop.on === 1 && fbCnt.counts.claims.shadow === 1 && fbCnt.counts.claims.on === 0 && fbCnt.counts.elder.on >= 2, 'opzioni: i conteggi degli ultimi 7 giorni per funzione → ' + JSON.stringify(fbCnt.counts));
+  // C2 · esiti: dopo il giro in tondo l'agente modifica un file e i test passano; dopo l'affermazione senza prove
+  // (in ombra) arriva una nuova richiesta senza che niente sia stato lanciato
+  const fbOcT = Date.now() + 1000;
+  const fbOcLine = (sid, k, role, content) => ({ type: role, timestamp: new Date(fbOcT + k * 1000).toISOString(), sessionId: sid, cwd: fakeCwd, message: role === 'assistant' ? { id: sid + 'oc' + k, role, content, usage: { input_tokens: 10, output_tokens: 10 } } : { role, content } });
+  core.state.applyTranscriptLine('bottega-smoke-0001', null, fbOcLine('bottega-smoke-0001', 0, 'assistant', [{ type: 'tool_use', id: 'oc1', name: 'Edit', input: { file_path: path.join(fakeCwd, 'src', 'a.ts'), old_string: 'a', new_string: 'b' } }]));
+  core.state.applyTranscriptLine('bottega-smoke-0001', null, fbOcLine('bottega-smoke-0001', 1, 'user', [{ type: 'tool_result', tool_use_id: 'oc1', content: 'The file has been updated.' }]));
+  core.state.applyTranscriptLine('fb-claims-0001', null, fbOcLine('fb-claims-0001', 2, 'user', 'Ora aggiungi lo sconto'));
+  const fbPend0 = core.feedbackPending.size;
+  const fbJudged = core.judgeFeedback(fbOcT + 5000);
+  const fbOc = JSON.parse((await get(port, '/api/feedback/log?cwd=' + encodeURIComponent(fakeCwd))).body).entries;
+  const fbOcL = fbOc.find(e => e.feature === 'loop'), fbOcC = fbOc.find(e => e.feature === 'claims'), fbOcS = fbOc.find(e => e.feature === 'sessionLessons' && e.mode === 'on');
+  ok(fbJudged >= 3 && core.feedbackPending.size === fbPend0 - fbJudged && fbOcL.outcome === 'helped' && fbOcL.why && fbOcC.outcome === 'ignored' && fbOcC.mode === 'shadow' && fbOcS.outcome === 'unclear', `esiti dai passi veri: giro in tondo → ${fbOcL.outcome} («${fbOcL.why}»), affermazione in ombra → ${fbOcC.outcome}, lezioni a inizio sessione → ${fbOcS.outcome} (${fbJudged} giudicati, ${core.feedbackPending.size} in attesa)`);
+  ok(!fbOc.some(e => e.sid === 'fb-slow' && e.outcome !== 'late') && [...core.feedbackPending.values()].every(p => p.entry.sid !== 'bottega-smoke-0001' || p.entry.feature !== 'loop'), 'esiti: la risposta arrivata tardi resta «in ritardo», e un messaggio giudicato non torna in attesa');
   const fb4 = await get(port, '/platypus-hook/feedback', 'POST', 'non è json {');
   ok(fb4.status === 204, 'feedback con un corpo che non è JSON: 204 → ' + fb4.status);
   // gli hook di feedback dal pannello delle opzioni: prima le righe da vedere, poi si scrive solo con la conferma

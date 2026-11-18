@@ -7,6 +7,7 @@
 //   once    una chiave per gli avvisi che non vengono dal Libro: lo stesso avviso non torna allo stesso agente
 //   tag     che cosa ha trovato la regola, in breve: finisce nel registro accanto al testo
 //   local   lo stesso testo nella lingua dell'ufficio (text è sempre in inglese): lo mostrano l'ufficio e il Libro
+//   about   di che cosa parla ({ kind?, cmd?, pat?, file? }): serve a giudicare dopo che cosa è successo (outcomes.js)
 // Le regole vere stanno in feedback-rules.js, che le aggiunge a RULES quando il motore parte.
 //   input   l'oggetto che Claude Code manda all'hook (hook_event_name, session_id, agent_id, cwd, tool_name, tool_input…)
 //   ctx     { now(), deadline, session, cwd, lessons(cwd), agent(input), settings } : solo stato già in memoria, niente letture lente
@@ -42,6 +43,13 @@ function modeOf(settings, feature) {
 
 const MAX_LONG = 1500;         // il tetto per i pochi messaggi lunghi (l'elenco delle lezioni a inizio sessione)
 const cut = (s, n) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s);
+// solo i campi noti, solo testo corto: finisce nel registro così com'è
+function cleanAbout(a) {
+  if (!a || typeof a !== 'object') return null;
+  const out = {};
+  for (const k of ['kind', 'cmd', 'pat', 'file']) if (typeof a[k] === 'string' && a[k]) out[k] = a[k].slice(0, 200);
+  return Object.keys(out).length ? out : null;
+}
 // il testo come arriva all'agente: firmato, entro il limite, su una riga sola (o su più righe pulite, se la regola
 // lo chiede con lines: true; con max può chiedere più spazio, fino a MAX_LONG)
 function say(text, { max = MAX_TEXT, lines = false } = {}) {
@@ -79,7 +87,7 @@ function decide(input, ctx = {}, rules = RULES) {
       if (STOP_EVENTS.has(ev) && !block) continue; // a fine turno si può solo chiedere di continuare
       // lo stesso messaggio nella lingua dell'ufficio, per chi lo rilegge (l'agente riceve sempre text)
       const local = m.local ? say(m.local, { max: m.max, lines: m.lines }) : '';
-      const message = { feature: String(m.feature || rule.feature || ''), text, local: local && local !== text ? local : null, lessonId: m.lessonId || null, once: m.once ? String(m.once).slice(0, 400) : null, tag: m.tag ? String(m.tag).slice(0, 60) : null, block };
+      const message = { feature: String(m.feature || rule.feature || ''), text, local: local && local !== text ? local : null, lessonId: m.lessonId || null, once: m.once ? String(m.once).slice(0, 400) : null, tag: m.tag ? String(m.tag).slice(0, 60) : null, about: cleanAbout(m.about), block };
       let ok = true;
       try { if (ctx.allow) ok = !!ctx.allow(message, rule); } catch { ok = false; }
       if (!ok) continue;
@@ -162,6 +170,8 @@ function respond(input, ctx = {}, gate, rules = RULES) {
     let entry = { t: now(), sid: input.session_id, agent: input.agent_id || 'main', feature: r.message.feature, mode, event: input.hook_event_name, lessonId: r.message.lessonId, text: r.message.text };
     if (r.message.tag) entry.tag = r.message.tag; // che cosa ha trovato la regola, in breve (es. «tests/ungrounded»)
     if (r.message.local) entry.local = r.message.local;
+    if (r.message.about) entry.about = r.message.about;
+    if (typeof input.tool_use_id === 'string' && input.tool_use_id) entry.toolUseId = input.tool_use_id.slice(0, 80); // il passo da cui partire per l'esito
     try { const name = ctx.agentName && ctx.agentName(input); if (name) entry.name = String(name).slice(0, 60); } catch {} // come si chiama in ufficio
     try { if (ctx.log) entry = ctx.log.append(cwd, entry) || entry; } catch {}
     return { out: mode === 'on' ? answer(input.hook_event_name, r.message) : null, entry };

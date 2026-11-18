@@ -657,6 +657,15 @@ body.tiny .balloon .ung { display: none; }
 #bottega .fbrow .ftx { color: var(--ink); margin: 3px 0 0; overflow-wrap: anywhere; white-space: pre-line; }
 #bottega .fbrow.sh .ftx { color: #c2c3c7; font-style: italic; }
 #bottega .fbrow .ld { overflow-wrap: anywhere; white-space: pre-line; }
+/* esito di un messaggio (C2) e riepilogo per funzione */
+#bottega .fbrow .oc { font-size: 15px; color: var(--dim); margin-top: 3px; overflow-wrap: anywhere; }
+#bottega .fbrow .oc b { font-family: 'PS2P'; font-size: 7px; font-weight: normal; padding: 2px 4px; margin-right: 4px; background: #2a2440; color: var(--dim); }
+#bottega .fbrow .oc.helped b { background: var(--green); color: #000; }
+#bottega .fbrow .oc.ignored b { background: var(--orange); color: #000; }
+#bottega .fbrow .oc.unclear b { background: #5f574f; color: #fff; }
+#bottega .fbsum { border: 2px solid #2a2440; padding: 6px 8px; margin-bottom: 8px; font-size: 15px; }
+#bottega .fbsum b { color: var(--yellow); font-weight: normal; margin-right: 6px; }
+#bottega .fbsum p { margin: 4px 0 0; font-size: 14px; }
 /* feedback agli agenti in ufficio: l'ultimo messaggio di Platypus nel fumetto di chi l'ha ricevuto (in ombra: tratteggiato) */
 .balloon .fbk { color: #1d2b53; border-top: 1px solid #1d2b53; margin-top: 2px; padding-top: 1px;
   white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.05; } /* due righe, il resto al passaggio del mouse */

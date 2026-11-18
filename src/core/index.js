@@ -50,6 +50,7 @@ const { Stats } = require('./stats');
 const hooks = require('./hooks');
 const feedback = require('./feedback');
 const { FeedbackLog } = require('./feedbacklog');
+const outcomes = require('./outcomes');
 require('./feedback-rules'); // aggiunge le regole a feedback.RULES
 
 const DEFAULT_PORT = Number(process.env.PLATYPUS_PORT) || 47800;
@@ -260,13 +261,37 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       feedbackSaid.push({ id: entry.id || '', sid: entry.sid, agent: entry.agent, feature: entry.feature, mode: entry.mode, text: entry.local || entry.text, t: entry.t });
       if (feedbackSaid.length > 60) feedbackSaid.shift();
       try { state.touch(); } catch {}
+      // e aspetta il suo esito (mandato o in ombra, mai quello arrivato tardi): lo decidono i passi dopo dell'agente
+      if (entry.id && feedbackPending.size < 500) feedbackPending.set(entry.id, { entry, cwd });
     }
   }
+  // ---- C2 · esiti: i messaggi in attesa si giudicano con i passi successivi dell'agente (outcomes.js), ogni 15 secondi.
+  // In memoria: se Platypus si chiude prima, quei messaggi restano senza esito nel registro.
+  const feedbackPending = new Map(); // id -> { entry, cwd }
+  function judgeFeedback(now = Date.now()) {
+    let n = 0;
+    for (const [id, { entry, cwd }] of feedbackPending) {
+      let r = null;
+      try {
+        const s = state.sessions.get(entry.sid);
+        const a = s && (entry.agent === 'main' ? s.main : s.subs.get(entry.agent));
+        const ag = a && a.world ? { steps: a.world.steps, goals: (a.mind && a.mind.goals) || [], replies: a.world.replies || [] } : null;
+        r = outcomes.judge(entry, ag, now);
+      } catch { r = { outcome: 'unclear', why: '' }; }
+      if (!r) continue;
+      try { feedbackLog.setOutcome(cwd, id, r.outcome, r.why); } catch {}
+      feedbackPending.delete(id);
+      n++;
+    }
+    return n;
+  }
+  const judgeTimer = setInterval(() => judgeFeedback(), 15000);
+  judgeTimer.unref && judgeTimer.unref();
   // i messaggi degli ultimi secondi, per i fumetti dell'ufficio (il registro completo sta nel Libro)
   const SAID_MS = 45000;
   let feedbackSaid = [];
   // una riga del registro come la mostrano l'ufficio e il Libro: nella lingua dell'ufficio, con l'inglese accanto se è diverso
-  const feedbackRow = e => ({ id: e.id, t: e.t, sid: e.sid, agent: e.agent, name: e.name || '', feature: e.feature, mode: e.mode, event: e.event, tag: e.tag || '', text: e.local || e.text, sent: e.local ? e.text : '', outcome: e.outcome || '' });
+  const feedbackRow = e => ({ id: e.id, t: e.t, sid: e.sid, agent: e.agent, name: e.name || '', feature: e.feature, mode: e.mode, event: e.event, tag: e.tag || '', text: e.local || e.text, sent: e.local ? e.text : '', outcome: e.outcome || '', why: e.why || '' });
 
   let hooksCache = { t: 0, v: false, f: false };
   function hooksInstalled() {
@@ -637,14 +662,14 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     for (const id of [...approvals.keys()]) finishApproval(id, null);
     if (replay) replay.stop();
     stats.stop();
-    clearInterval(learnTimer); clearTimeout(learnSoon);
+    clearInterval(learnTimer); clearTimeout(learnSoon); clearInterval(judgeTimer);
     bottega.stop();
     state.stop();
     for (const c of clients) try { c.end(); } catch {}
     server.close();
   }
 
-  return { state, stats, bottega, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
+  return { state, stats, bottega, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
     install: () => hooks.install({ port, base }),
     uninstall: () => hooks.uninstall({ base }),
     status: () => hooks.status({ base }),
