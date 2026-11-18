@@ -158,9 +158,7 @@ Like W3 and W4, with the Linux terminals (GNOME Terminal, Konsole, the one in VS
   - `Platypus.app` created with `sips` and `iconutil` has a valid `Info.plist` (`plutil -lint`) and the icon;
   - `start.command` is executable.
 
-### M2 · A richer macOS job  [!] [ci]
-
-Blocked: the workflow is written and its steps were checked on Windows, but following the run needs the branch pushed to GitHub, which needs Max's permission (see the Journal (Windows)).
+### M2 · A richer macOS job  [x] [ci]
 
 - **`.github/workflows/ci.yml`** (it already has the "Engine" and "Window" jobs on the three systems, macOS on `macos-15-intel`):
   - runs `platform-test.js` on all three systems;
@@ -280,6 +278,10 @@ How it was run: the window was started from the test clone with the temporary ho
   - new macOS-only step "Mini mode": `PLATYPUS_SNAPSHOT_JS="document.getElementById('btn-mini').click()"` with `PLATYPUS_DEBUG=1`; the log line that `src/main.js` prints before the screenshot (`[snapshot] bounds {...} onTop true`) is checked by the new `scripts/check-mini-log.js` (strip at most 420x200 and always on top, else the job fails), and the screenshot `snapshot-mini-macOS.png` is saved;
   - new macOS-only step "Reality map screenshot": the snapshot JS takes the first demo session and calls `window.openWorldMap(id, 'main')`; the screenshot is `snapshot-map-macOS.png`. Both new PNGs go out with the existing `snapshot-*.png` artifact upload.
 - **Checked on Windows** (same Electron variables, temporary home, port 47850): the mini step gives `{"width":382,"height":151} onTop true` and `check-mini-log.js` says ok; the map step gives a screenshot of the "MAP OF REALITY" panel (territory treemap, trajectory cube, radar), which I looked at. The new checks in `npm test` cover `check-mini-log.js`.
-- **Not done:** the real run on GitHub and looking at the macOS screenshots. Following the run (`gh run watch`) needs the branch pushed. **Waiting for Max's permission to `git push origin <this branch>`** (never main). I did not touch the YAML pins of the actions.
+- **Real run on GitHub** (Max allowed the push of this branch, never main; run 44329407269 on commit `54d01de`): all 9 jobs green (Engine and Window on ubuntu, macos-15-intel, windows-latest).
+  - `platform-test.js` passed on all three. macOS (darwin 24.6.0, Node 22): all the macOS checks ok, including `plutil -lint` on `Info.plist` and on the LaunchAgent, and the `icon.icns` made by `sips` + `iconutil`. Linux (Azure kernel 7.0): shortcut, autostart and Cowork checks ok; tools `xdotool`/`wmctrl` absent, so `focusSession` answers "install xdotool or wmctrl" (well formed). Windows runner passed too.
+  - `focusSession` with `CI=true` on the macOS runner really activated Terminal (`{"ok":true,"how":"app","app":"Terminal"}`): harmless on a runner, which is why it is not run by default locally.
+  - Mini mode on macOS: `380x150`, always on top, `check-mini-log.js` ok. Screenshots looked at: `snapshot-mini-macOS.png` is the strip with the two alerts (F1 stuck test runner, F2 cost over budget); `snapshot-map-macOS.png` is the "MAP OF REALITY" panel (territory treemap, trajectory cube, 7-dimension radar), same as on Windows.
+  - Only annotation: GitHub says `ubuntu-latest` will move to Ubuntu 26 on 2026-10-19 (already past; no action). I did not touch the YAML pins of the actions.
 
 ## Journal (Linux)
