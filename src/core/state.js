@@ -84,6 +84,7 @@ const DEFAULT_SETTINGS = {
   fbSessionLessons: 'off', // le lezioni del progetto a inizio sessione
   fbElder: 'off',          // il Nonno parla all'agente dopo una trappola nota
   fbLoop: 'off',           // uscita dal giro in tondo
+  fbStale: 'off',          // file cambiato da un altro agente e modificato senza rileggerlo (nella 2.11 al massimo in ombra)
   fbClaims: 'off',         // affermazioni senza prove a fine turno (nella 2.11 al massimo in ombra)
   fbDrift: 'off',          // richiamo al compito (nella 2.11 al massimo in ombra)
   bottegaLearn: true,   // il Libro della bottega impara dalle sessioni (dal vivo e dall'archivio)

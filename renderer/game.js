@@ -3175,11 +3175,12 @@ function settingsStatus() {
 }
 // gli hook di feedback (2.11): si installano e si tolgono da qui, a parte da quelli che osservano,
 // e sempre dopo aver visto le righe esatte che finiscono nelle impostazioni di Claude Code
-// ogni funzione ha tre modi: spenta, ombra (registra che cosa direbbe, senza dirlo) e accesa; due nella 2.11 arrivano solo all'ombra
+// ogni funzione ha tre modi: spenta, ombra (registra che cosa direbbe, senza dirlo) e accesa; tre nella 2.11 arrivano solo all'ombra
 const FEEDBACK_FEATURES = [
   ['fbSessionLessons', tr('Lezioni del progetto a inizio sessione'), true],
   ['fbElder', tr('Il Nonno parla all\'agente dopo una trappola nota'), true],
   ['fbLoop', tr('Uscita dal giro in tondo (stesso errore due volte)'), true],
+  ['fbStale', tr('File cambiato da un altro agente e modificato senza rileggerlo'), false],
   ['fbClaims', tr('Affermazioni senza prove a fine turno'), false],
   ['fbDrift', tr('Richiamo al compito quando va alla deriva'), false],
 ];
@@ -3195,7 +3196,7 @@ function feedbackHooksHtml(st) {
   return `<fieldset class="fbhooks"><legend>${esc(tr('FEEDBACK AGLI AGENTI'))}</legend>` +
     `<p>${esc(tr('Platypus può dire all\'agente quello che vede (una lezione del Libro, un giro in tondo) attraverso gli hook di Claude Code. Servono hook a parte, che si installano solo da qui e solo dopo la tua conferma.'))}</p>` +
     FEEDBACK_FEATURES.map(row).join('') +
-    `<p class="dim">${esc(tr('«Ombra» registra che cosa avrebbe detto, senza dirlo: serve a vedere se aiuterebbe. I messaggi sono rari (uno ogni 2 minuti per agente, 6 all\'ora per sessione) e mai due volte la stessa lezione. Le ultime due funzioni per ora arrivano solo all\'ombra.'))}</p>` +
+    `<p class="dim">${esc(tr('«Ombra» registra che cosa avrebbe detto, senza dirlo: serve a vedere se aiuterebbe. I messaggi sono rari (uno ogni 2 minuti per agente, 6 all\'ora per sessione) e mai due volte la stessa lezione. Le ultime tre funzioni per ora arrivano solo all\'ombra.'))}</p>` +
     `<div class="fbstate">${feedbackStateHtml()}</div></fieldset>`;
 }
 function bindFeedbackHooks(box) {

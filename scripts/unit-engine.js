@@ -731,6 +731,65 @@ function loopRuleTests(ok, fb, inp, rules, flaky) {
   clock += fb.AGENT_GAP_MS + 1000;
   const b2 = both();
   ok(b1.entry && b1.entry.feature === 'elder' && b2.entry && b2.entry.feature === 'loop', `giro in tondo e Nonno insieme: prima la lezione (${b1.entry && b1.entry.feature}), al fallimento dopo l'avviso (${b2.entry && b2.entry.feature})`);
+  staleRuleTests(ok, fb, inp, rules, AgentWorld);
+}
+
+// B4 · memoria non aggiornata: una modifica riuscita su un file che un altro agente aveva cambiato dopo l'ultima lettura
+function staleRuleTests(ok, fb, inp, rules, AgentWorld) {
+  const now = Date.parse('2026-11-18T10:00:00Z');
+  const FILE = '/p/src/cart.ts';
+  // due agenti della stessa sessione; ogni mossa è [chi, strumento, input, esito (null = ancora in corso), errore?]
+  const scene = (moves, cwd = '/p') => {
+    const w = { main: new AgentWorld(), sub: new AgentWorld() };
+    let t = now - 60000, k = 0;
+    for (const [who, name, input, out, isErr] of moves) {
+      const id = who + (++k);
+      w[who].start(id, name, input, t += 1000, cwd, 0);
+      if (out !== null) w[who].end(id, !!isErr, { content: out }, null, t += 1000, cwd);
+    }
+    const team = [{ id: 'main', name: 'CLAUDE', nodes: w.main.nodes }, { id: 'sub-1', name: 'EXPLORE', nodes: w.sub.nodes }];
+    return { w, ctx: who => ({ cwd, now: () => now, team: () => team, agent: () => ({ id: who === 'sub' ? 'sub-1' : 'main', steps: w[who].steps, nodes: w[who].nodes, goals: [] }) }) };
+  };
+  const read = (who, f = FILE) => [who, 'Read', { file_path: f }, 'export const cart = {}'];
+  const edit = (who, out = 'ok', isErr = false, f = FILE) => [who, 'Edit', { file_path: f, old_string: 'a', new_string: 'b' }, out, isErr];
+  const hook = (sc, tool = 'Write', extra = {}, who = 'main') => rules.stale(inp('PostToolUse', { tool_name: tool, tool_input: { file_path: FILE }, tool_response: {}, tool_use_id: 'tu-now', ...extra }), sc.ctx(who));
+  // letto da me, cambiato da un altro, riscritto da me
+  let sc = scene([read('main'), edit('sub')]);
+  let m = hook(sc);
+  ok(m && /^you just rewrote `src\/cart\.ts`, but EXPLORE changed it at \d\d:\d\d, after you last read it\. Check that you did not undo that change\.$/.test(m.text) && m.once && !m.lessonId, 'memoria non aggiornata, Write sopra la modifica di un altro: «' + (m && m.text) + '»');
+  m = hook(sc, 'Edit');
+  ok(m && /^EXPLORE changed `src\/cart\.ts` at \d\d:\d\d, after you last read it, and you just edited it without reading it again\. Read it again/.test(m.text), 'memoria non aggiornata, Edit: chiede di rileggere');
+  ok(hook(sc, 'MultiEdit') && hook(sc, 'Read') === null && hook(sc, 'Bash') === null, 'memoria non aggiornata: vale per le modifiche, non per letture e comandi');
+  // cambiato dallo stesso agente, o da un altro ma prima dell'ultima lettura: niente
+  ok(hook(scene([read('main'), edit('main')])) === null, 'memoria non aggiornata: se l\'ha cambiato lo stesso agente, niente');
+  ok(hook(scene([edit('sub'), read('main')])) === null && hook(scene([read('main'), edit('sub'), read('main')])) === null, 'memoria non aggiornata: se l\'ha riletto dopo la modifica dell\'altro, niente');
+  ok(hook(scene([read('main'), edit('sub', 'String to replace not found in file.', true)])) === null, 'memoria non aggiornata: una modifica rifiutata dell\'altro non conta');
+  ok(hook(scene([edit('sub')])) === null && hook(scene([read('main'), edit('sub', 'ok', false, '/p/src/other.ts')])) === null, 'memoria non aggiornata: un file mai letto da lui, o un altro file → niente');
+  // la mia modifica può essere già tra i passi dell'ufficio: con l'identificativo si riconosce, senza si tace
+  sc = scene([read('main'), edit('sub'), ['main', 'Write', { file_path: FILE, content: 'x' }, 'ok']]);
+  const mine = sc.w.main.steps[sc.w.main.steps.length - 1].id;
+  ok(hook(sc, 'Write', { tool_use_id: mine }) && hook(sc, 'Write', { tool_use_id: undefined }) === null, 'memoria non aggiornata: la modifica già registrata si riconosce dall\'identificativo; senza, si tace');
+  sc = scene([read('main'), edit('sub'), ['main', 'Write', { file_path: FILE, content: 'x' }, null]]);
+  ok(hook(sc, 'Write', { tool_use_id: sc.w.main.steps[sc.w.main.steps.length - 1].id }), 'memoria non aggiornata: anche se l\'ufficio l\'ha vista partire ma non finire');
+  // anche al contrario (il sottoagente sopra il principale), con i percorsi di Windows, e mai fuori dal progetto
+  m = hook(scene([read('sub'), edit('main')]), 'Write', {}, 'sub');
+  ok(m && /but CLAUDE changed it/.test(m.text), 'memoria non aggiornata: vale anche per un sottoagente sopra il principale');
+  sc = scene([['main', 'Read', { file_path: 'C:\\p\\src\\cart.ts' }, 'x'], ['sub', 'Edit', { file_path: 'C:\\p\\src\\cart.ts', old_string: 'a', new_string: 'b' }, 'ok']], 'C:\\p');
+  ok(hook(sc, 'Write', { tool_input: { file_path: 'C:\\p\\src\\cart.ts' } }), 'memoria non aggiornata: anche con i percorsi di Windows');
+  sc = scene([read('main'), edit('sub')]);
+  ok(hook(sc, 'Write', { tool_input: { file_path: '/altrove/x.ts' } }) === null && hook(sc, 'Write', { tool_input: {} }) === null && rules.stale(inp('PostToolUse', { tool_name: 'Write', tool_input: { file_path: FILE } }), { cwd: '/p' }) === null && rules.stale(inp('PostToolUse', { tool_name: 'Write', tool_input: { file_path: FILE } }), { cwd: '/p', team: () => [], agent: () => null }) === null, 'memoria non aggiornata: file fuori dal progetto, hook senza file o agente sconosciuto → niente');
+  // nel giro completo: nella 2.11 al massimo in ombra, prima del Nonno, una volta sola per quel cambiamento
+  ok(fb.modeOf({ fbStale: 'on' }, 'stale') === 'shadow' && fb.modeOf({}, 'stale') === 'off' && fb.SHADOW_ONLY.has('stale'), 'memoria non aggiornata: spenta di base, e nella 2.11 mai oltre l\'ombra');
+  const post = fb.RULES.PostToolUse.filter(r => r.run === rules.stale || r.run === rules.elder);
+  ok(post.length === 2 && post[0].run === rules.stale && post[0].feature === 'stale', 'memoria non aggiornata: registrata prima del Nonno, per le modifiche riuscite');
+  let clock = now;
+  const gate = new fb.Gate({ now: () => clock });
+  const go = settings => fb.respond(inp('PostToolUse', { tool_name: 'Write', tool_input: { file_path: FILE }, tool_response: {}, tool_use_id: 'tu-now' }), { ...sc.ctx('main'), now: () => clock, settings, lessons: () => [] }, gate, { PostToolUse: post });
+  ok(go({ fbStale: 'off' }).entry === null, 'memoria non aggiornata: spenta, niente');
+  const r1 = go({ fbStale: 'on' });
+  ok(!r1.out && r1.entry && r1.entry.mode === 'shadow' && r1.entry.feature === 'stale' && /^Platypus: you just rewrote/.test(r1.entry.text), 'memoria non aggiornata: anche «accesa» resta in ombra, con la riga nel registro');
+  clock += fb.AGENT_GAP_MS + 1000;
+  ok(go({ fbStale: 'shadow' }).entry === null, 'memoria non aggiornata: lo stesso cambiamento non torna allo stesso agente');
 }
 
 // feedback (2.11, A3): i tre modi di ogni funzione, i limiti di frequenza, il progetto zittito e il registro

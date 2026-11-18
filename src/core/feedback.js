@@ -24,9 +24,9 @@ const EVENTS = new Set([...CONTEXT_EVENTS, ...STOP_EVENTS]);
 const RULES = { SessionStart: [], PostToolUse: [], PostToolUseFailure: [], Stop: [], SubagentStop: [] };
 
 // ---- le funzioni e i loro modi
-const FEATURES = { sessionLessons: 'fbSessionLessons', elder: 'fbElder', loop: 'fbLoop', claims: 'fbClaims', drift: 'fbDrift' };
+const FEATURES = { sessionLessons: 'fbSessionLessons', elder: 'fbElder', loop: 'fbLoop', stale: 'fbStale', claims: 'fbClaims', drift: 'fbDrift' };
 const MODES = ['off', 'shadow', 'on'];
-const SHADOW_ONLY = new Set(['claims', 'drift']); // nella 2.11 queste due registrano soltanto: prima si guardano i dati
+const SHADOW_ONLY = new Set(['stale', 'claims', 'drift']); // nella 2.11 queste tre registrano soltanto: prima si guardano i dati
 const featureOfSetting = k => Object.keys(FEATURES).find(f => FEATURES[f] === k) || null;
 // il valore di un'opzione fb*, ripulito: un modo valido, e mai "acceso" per le funzioni solo in ombra
 function cleanMode(setting, v) {

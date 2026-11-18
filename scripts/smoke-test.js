@@ -275,6 +275,23 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(core.feedbackLog.recent(fakeCwd).some(e => e.sid === 'bottega-smoke-0001' && e.feature === 'loop' && e.mode === 'on' && e.event === 'PostToolUseFailure'), 'giro in tondo: il messaggio resta nel registro del progetto');
   ok((await fbLoopIn({ tool_use_id: 't6' })).status === 204, 'giro in tondo: lo stesso avviso non torna allo stesso agente');
   core.state.setSettings({ fbLoop: 'off' });
+  // B4 · memoria non aggiornata: il principale legge un file, un sottoagente lo modifica, il principale lo riscrive.
+  // Nella 2.11 resta in ombra: niente all'agente, la riga nel registro.
+  const fbStSid = 'fb-stale-0001', fbStFile = path.join(fakeCwd, 'src', 'carrello.ts'), fbStT0 = Date.now() - 20000;
+  const fbStLine = (k, role, content) => ({ type: role, timestamp: new Date(fbStT0 + k * 1000).toISOString(), sessionId: fbStSid, cwd: fakeCwd, message: role === 'assistant' ? { id: 'fbst' + k, role, content, usage: { input_tokens: 10, output_tokens: 10 } } : { role, content } });
+  core.state.applyTranscriptLine(fbStSid, null, fbStLine(1, 'assistant', [{ type: 'tool_use', id: 'st1', name: 'Read', input: { file_path: fbStFile } }]));
+  core.state.applyTranscriptLine(fbStSid, null, fbStLine(2, 'user', [{ type: 'tool_result', tool_use_id: 'st1', content: 'export const carrello = {}' }]));
+  core.state.applyTranscriptLine(fbStSid, 'sub-stale', fbStLine(3, 'assistant', [{ type: 'tool_use', id: 'st2', name: 'Edit', input: { file_path: fbStFile, old_string: 'a', new_string: 'b' } }]), { meta: { agentType: 'Explore' } });
+  core.state.applyTranscriptLine(fbStSid, 'sub-stale', fbStLine(4, 'user', [{ type: 'tool_result', tool_use_id: 'st2', content: 'The file has been updated.' }]), { meta: { agentType: 'Explore' } });
+  const fbStIn = (extra = {}) => get(port, '/platypus-hook/feedback', 'POST', JSON.stringify({ session_id: fbStSid, hook_event_name: 'PostToolUse', cwd: fakeCwd, tool_name: 'Write', tool_input: { file_path: fbStFile, content: 'x' }, tool_response: {}, tool_use_id: 'st3', ...extra }));
+  const fbStOff = await fbStIn();
+  ok(fbStOff.status === 204 && !core.feedbackLog.recent(fakeCwd).some(e => e.feature === 'stale'), 'memoria non aggiornata: spenta di base, niente nemmeno nel registro');
+  core.state.setSettings({ fbStale: 'on' });
+  const fbStOwn = await fbStIn({ agent_id: 'sub-stale' });
+  const fbSt = await fbStIn();
+  const fbStE = core.feedbackLog.recent(fakeCwd).find(e => e.sid === fbStSid && e.feature === 'stale');
+  ok(core.state.settings.fbStale === 'shadow' && fbStOwn.status === 204 && fbSt.status === 204 && fbStE && fbStE.mode === 'shadow' && fbStE.agent === 'main' && /^Platypus: you just rewrote `src\/carrello\.ts`, but EXPLORE changed it at \d\d:\d\d/.test(fbStE.text), 'memoria non aggiornata: chi l\'ha cambiato viene dallo stato dell\'ufficio, e resta in ombra → ' + fbSt.status + ' «' + (fbStE ? fbStE.text.slice(0, 70) : '-') + '…»');
+  core.state.setSettings({ fbStale: 'off' });
   const fb4 = await get(port, '/platypus-hook/feedback', 'POST', 'non è json {');
   ok(fb4.status === 204, 'feedback con un corpo che non è JSON: 204 → ' + fb4.status);
   // gli hook di feedback dal pannello delle opzioni: prima le righe da vedere, poi si scrive solo con la conferma

@@ -28,12 +28,13 @@
   "Lezioni del progetto a inizio sessione": "Project lessons at session start",
   "Il Nonno parla all'agente dopo una trappola nota": "Grandpa talks to the agent after a known trap",
   "Uscita dal giro in tondo (stesso errore due volte)": "Out of the loop (same error twice)",
+  "File cambiato da un altro agente e modificato senza rileggerlo": "A file changed by another agent and edited without reading it again",
   "Affermazioni senza prove a fine turno": "Claims without evidence at the end of a turn",
   "Richiamo al compito quando va alla deriva": "Back to the task when it drifts",
   "spenta": "off",
   "ombra": "shadow",
   "accesa": "on",
-  "«Ombra» registra che cosa avrebbe detto, senza dirlo: serve a vedere se aiuterebbe. I messaggi sono rari (uno ogni 2 minuti per agente, 6 all'ora per sessione) e mai due volte la stessa lezione. Le ultime due funzioni per ora arrivano solo all'ombra.": "\"Shadow\" records what it would have said, without saying it: it shows whether it would help. Messages are rare (one every 2 minutes per agent, 6 an hour per session) and never the same lesson twice. The last two features go no further than shadow for now.",
+  "«Ombra» registra che cosa avrebbe detto, senza dirlo: serve a vedere se aiuterebbe. I messaggi sono rari (uno ogni 2 minuti per agente, 6 all'ora per sessione) e mai due volte la stessa lezione. Le ultime tre funzioni per ora arrivano solo all'ombra.": "\"Shadow\" records what it would have said, without saying it: it shows whether it would help. Messages are rare (one every 2 minutes per agent, 6 an hour per session) and never the same lesson twice. The last three features go no further than shadow for now.",
   "✓ Detto anche a {name}.": "✓ {name} was told too.",
   "lui": "the agent"
 }

@@ -4,13 +4,14 @@
 // I testi sono sempre in inglese (li legge il modello), qualunque sia la lingua dell'ufficio.
 //   ctx.lessons(cwd)      le lezioni del Libro della bottega per quel progetto
 //   ctx.hasSection(cwd)   il CLAUDE.md del progetto ha già la sezione di Platypus
-//   ctx.agent(input)      i passi e le richieste dell'agente che ha mandato l'hook: { steps, goals } (null se non lo conosciamo)
+//   ctx.agent(input)      l'agente che ha mandato l'hook, come lo vede l'ufficio: { id, steps, nodes, goals } (null se non lo conosciamo)
+//   ctx.team()            tutti gli agenti della sessione: [{ id, name, nodes }]
 
 const i18n = require('../i18n');
 const feedback = require('./feedback');
 const { lessonLines, elderLine, sameCmd, errorPattern } = require('./bottega');
 const { classifyFailure, errorExcerpt } = require('./surprise');
-const { relKey } = require('./worldmap');
+const { relKey, isProjectFile } = require('./worldmap');
 
 const en = fn => i18n.withLang('en', fn);
 
@@ -137,13 +138,52 @@ function loop(input, ctx) {
   };
 }
 
+// ---- B4 · memoria non aggiornata: l'agente ha appena modificato un file che un altro agente aveva cambiato dopo la
+// sua ultima lettura. Claude Code di solito rifiuta queste modifiche (e allora l'hook è quello del fallimento, e glielo
+// dice già lui): qui arrivano solo quelle che gli sfuggono. Per questo nella 2.11 la funzione resta in ombra: prima si
+// guarda se di casi così ce ne sono. Arriva dopo lo strumento; la variante «prima» aspetta la prova su una sessione vera.
+const hhmm = t => { const d = new Date(t), p = n => String(n).padStart(2, '0'); return p(d.getHours()) + ':' + p(d.getMinutes()); };
+function stale(input, ctx) {
+  const tool = input.tool_name;
+  if (!EDITS.has(tool) || !ctx.agent || !ctx.team) return null;
+  const cwd = ctx.cwd || input.cwd || '';
+  const key = relKey(String((input.tool_input || {}).file_path || ''), cwd);
+  if (!cwd || !isProjectFile(key)) return null;
+  const me = ctx.agent(input);
+  if (!me || !me.nodes) return null;
+  // l'ultimo contatto col file prima di questa modifica: lo sa il passo, se l'ufficio l'ha già visto partire;
+  // altrimenti il file stesso (se questa modifica è già stata registrata, dopo non c'è niente: si tace)
+  const id = input.tool_use_id || null;
+  let step = null;
+  if (id) for (let i = (me.steps || []).length - 1; i >= 0 && !step; i--) if (me.steps[i].id === id) step = me.steps[i];
+  const nd = me.nodes.get(key);
+  const from = step ? step.prevSync : nd ? nd.lastSync : 0;
+  if (!from) return null; // mai letto né modificato da lui: non c'è una memoria da dire vecchia
+  const to = step ? step.t : ctx.now ? ctx.now() : Date.now();
+  let by = null;
+  for (const a of en(() => ctx.team()) || []) {
+    if (a.id === me.id || !a.nodes) continue;
+    const o = a.nodes.get(key);
+    for (const t of (o && o.edits) || []) if (t > from && t <= to && (!by || t > by.t)) by = { t, name: a.name };
+  }
+  if (!by) return null;
+  const file = '`' + key + '`', who = by.name || 'another agent';
+  return {
+    text: tool === 'Write'
+      ? `you just rewrote ${file}, but ${who} changed it at ${hhmm(by.t)}, after you last read it. Check that you did not undo that change.`
+      : `${who} changed ${file} at ${hhmm(by.t)}, after you last read it, and you just edited it without reading it again. Read it again and check that your edit still fits.`,
+    once: 'stale|' + key + '|' + by.t,
+  };
+}
+
 // le regole entrano in RULES una volta sola, nell'ordine in cui devono parlare. Dopo un fallimento il Nonno viene prima:
 // quello che il progetto ha già imparato (dove l'errore è stato sistemato, che il comando è instabile) è più preciso
-// dell'avviso generico; se poi l'agente insiste, al fallimento dopo tocca al giro in tondo.
+// dell'avviso generico; se poi l'agente insiste, al fallimento dopo tocca al giro in tondo. Dopo una modifica riuscita
+// viene prima la memoria non aggiornata: riguarda quella modifica, la lezione sul file fragile può aspettare la prossima.
 const ALL = [
   ['SessionStart', 'sessionLessons', sessionLessons],
   ['PostToolUseFailure', 'elder', elder], ['PostToolUseFailure', 'loop', loop],
-  ['PostToolUse', 'elder', elder],
+  ['PostToolUse', 'stale', stale], ['PostToolUse', 'elder', elder],
 ];
 function register(rules = feedback.RULES) {
   for (const [ev, feature, run] of ALL) if (!rules[ev].some(r => r.run === run)) rules[ev].push({ feature, run });
@@ -151,4 +191,4 @@ function register(rules = feedback.RULES) {
 }
 register();
 
-module.exports = { register, sessionLessons, elder, loop, MAX_START };
+module.exports = { register, sessionLessons, elder, loop, stale, MAX_START };
