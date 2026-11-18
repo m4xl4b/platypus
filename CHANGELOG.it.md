@@ -4,6 +4,17 @@ Le versioni di Platypus (fino alla 2.7 si chiamava Agent Office), dalla più rec
 
 *English version: [CHANGELOG.md](CHANGELOG.md).*
 
+## 2.12.1: correzioni
+
+- **Nomi dei modelli**:
+  - un modello con `[1m]` in fondo al nome (per esempio `claude-opus-4-8[1m]`, come lo scrive l'app Claude) ora vale come contesto da 1M token, sia nella bolla del contesto sia nella stima di quanto è pieno il contesto; prima valeva 200k finché il contesto non li superava. La scheda dell'agente dice «· 1M»;
+  - l'età del personaggio si misura rispetto al modello più recente della stessa famiglia: `claude-fable-5` è giovane (prima sembrava «maturo», confrontato con Opus 5.5), e una famiglia che Platypus non conosce ancora è giovane se la versione è recente e vecchia se non lo è (`claude-instant-1-2`). Le regole stanno in un posto solo, `src/core/models.js`, lo stesso per il motore e la pagina.
+- **Cowork**: dei metadati di una sessione Cowork Platypus tiene solo una lista esplicita di campi (titolo, identificativi della sessione, nome del processo, modello, effort, date, archiviata, completata), ognuno con il suo tipo. Il primo messaggio, il prompt di sistema, il nome dell'account e l'indirizzo e-mail non vengono mai letti in memoria, e nemmeno i campi che l'app aggiungerà in futuro.
+- **launch.log**: il lanciatore non lo svuota più a ogni avvio: il registro di prima diventa `launch.log.1` (se Windows non lascia rinominare il file, si scrive in coda).
+- **Prove**: si rifiutano di partire se `PLATYPUS_DATA_DIR` non punta dentro una cartella temporanea, così non possono mai scrivere nel tuo `~/.platypus` vero. Il comando è in CONTRIBUTING.
+- **Embedding neurali**: una prova controlla che le soglie nel codice siano quelle misurate, modello per modello; `qwen3-embedding:0.6b` resta il modello consigliato e il primo scelto in automatico.
+- **Il modello ONNX facoltativo ora è Qwen3-Embedding** (`onnx-community/Qwen3-Embedding-0.6B-ONNX`, circa 585 MB): misurato sullo stesso insieme dei modelli di Ollama, batte il motore lessicale (sui sinonimi 0,867 contro 0,547; il 96,7% delle derive riconosciute, senza falsi allarmi), quindi ha le sue soglie e in automatico si usa quando Ollama non è acceso. Il modello di prima, e5-small, non batteva il lessicale e non si usa più: se l'avevi installato con la 2.12, rilancia `npm run embed:onnx:install`.
+
 ## 2.12: significato con gli embedding neurali, un guscio Tauri sperimentale
 
 La bolla del contesto e la stella polare nella mappa della realtà confrontavano le parole: "aggiusta il login" e "correggi l'autenticazione" sembravano due compiti diversi. Ora, se c'è un Ollama locale acceso con un modello di embedding, confrontano i significati, e il giudizio sulla deriva non scambia più i sinonimi per una deviazione.

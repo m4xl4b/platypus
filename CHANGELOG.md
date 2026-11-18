@@ -4,6 +4,17 @@ Platypus releases (up to 2.7 it was called Agent Office), newest first.
 
 *Versione italiana: [CHANGELOG.it.md](CHANGELOG.it.md).*
 
+## 2.12.1: fixes
+
+- **Model names**:
+  - a model whose name ends in `[1m]` (for example `claude-opus-4-8[1m]`, as the Claude app writes it) now counts as a 1M-token context, both in the context bubble and in the engine's estimate of how full the context is; before, it counted as 200k until the context went past that. The agent's card says "· 1M";
+  - a character's age is measured against the newest model of the same family: `claude-fable-5` is young (it used to look "mature", compared with Opus 5.5), and a family Platypus does not know yet is young when its version is recent and old when it is not (`claude-instant-1-2`). The rules live in one place, `src/core/models.js`, shared by the engine and the page.
+- **Cowork**: from the metadata of a Cowork session Platypus keeps only an explicit list of fields (title, session ids, process name, model, effort, dates, archived, completed), each with its type. The first message, the system prompt, the account name and the e-mail address are never read into memory, nor is any field the app adds in the future.
+- **launch.log**: the launcher no longer empties it at every start: the previous log becomes `launch.log.1` (if Windows won't let it rename the file, it appends instead).
+- **Tests**: they refuse to start unless `PLATYPUS_DATA_DIR` points into a temporary folder, so they can never write into your real `~/.platypus`. See CONTRIBUTING for the command.
+- **Neural embeddings**: a test now checks that the thresholds in the code are the measured ones, model by model; `qwen3-embedding:0.6b` stays the recommended model and the first one picked in automatic mode.
+- **The optional ONNX model is now Qwen3-Embedding** (`onnx-community/Qwen3-Embedding-0.6B-ONNX`, about 585 MB): measured on the same set as the Ollama models, it beats the lexical engine (on synonyms 0.867 against 0.547; 96.7% of the drifts caught, with no false alarm), so it gets its own thresholds and automatic mode uses it when Ollama is not running. The previous model, e5-small, did not beat the lexical engine and is no longer used: if you installed it with 2.12, run `npm run embed:onnx:install` again.
+
 ## 2.12: meaning with neural embeddings, an experimental Tauri shell
 
 The context bubble and the north star in the map of reality used to compare words: "fix the login" and "repair the authentication" looked like two different tasks. Now, if a local Ollama with an embedding model is running, they compare meanings, and the drift judgement no longer mistakes synonyms for a detour.
