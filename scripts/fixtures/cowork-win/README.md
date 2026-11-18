@@ -4,6 +4,8 @@ The shape of `%APPDATA%\Claude\local-agent-mode-sessions` as described in `docs/
 Every `_claude` folder stands for the session's `.claude` config folder: `.claude/` is ignored by git, so the tests copy this tree
 to a temporary folder and rename `_claude` to `.claude` (see "Cowork su un albero finto di Windows" in `scripts/smoke-test.js`).
 
-- `local_1111...` is an active session with a title in its metadata (and a different one in the transcript);
-- `local_2222...` is archived;
+- `local_1` is an active session with a title in its metadata (and a different one in the transcript);
+- `local_2` is archived;
 - `skills-plugin/` is a decoy that is not a session.
+
+The names are short on purpose: Windows refuses paths longer than 260 characters, and a long fixture name made `git checkout` fail on the Windows runner of the Actions.

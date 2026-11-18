@@ -476,9 +476,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const { findCoworkBases, readCoworkMeta } = require(path.join(ROOT, 'src', 'core', 'sources'));
     const r = findCoworkBases(cwRoot).bases.filter(b => b.path.startsWith(cwRoot));
     const act = r.find(b => b.meta && b.meta.title === 'Prova Cowork dal metadato'), arc = r.find(b => b.meta && b.meta.isArchived === true);
-    ok(r.length === 2 && act && arc && act.files === 1 && act.path.endsWith(path.join('local_11111111-0000-4000-8000-000000000001', '.claude')), `Cowork: il percorso noto trova le due sessioni e non il decoy delle abilità (${r.map(b => path.basename(path.dirname(b.path))).join(', ')})`);
-    ok(act && act.meta.cliSessionId === 'cccccccc-0000-4000-8000-00000000c001' && act.meta.model === 'claude-opus-4-8' && act.meta.isArchived === false, 'Cowork: dai metadati titolo, id del transcript, modello e stato');
-    const meta = readCoworkMeta(path.join(cwRoot, 'local-agent-mode-sessions', 'aaaaaaaa-0000-4000-8000-0000000000a1', 'bbbbbbbb-0000-4000-8000-0000000000b1', 'local_11111111-0000-4000-8000-000000000001.json'));
+    ok(r.length === 2 && act && arc && act.files === 1 && act.path.endsWith(path.join('local_1', '.claude')), `Cowork: il percorso noto trova le due sessioni e non il decoy delle abilità (${r.map(b => path.basename(path.dirname(b.path))).join(', ')})`);
+    ok(act && act.meta.cliSessionId === 'c1' && act.meta.model === 'claude-opus-4-8' && act.meta.isArchived === false, 'Cowork: dai metadati titolo, id del transcript, modello e stato');
+    const meta = readCoworkMeta(path.join(cwRoot, 'local-agent-mode-sessions', 'a', 'b', 'local_1.json'));
     ok(meta && !('emailAddress' in meta) && !('accountName' in meta) && !('systemPrompt' in meta) && !('initialMessage' in meta) && !JSON.stringify(meta).includes('example.invalid'), 'Cowork: dei metadati si tengono solo i campi che servono (niente e-mail, nome, prompt)');
     // una radice senza il percorso noto (cartella indicata a mano, struttura cambiata): resta la ricerca larga
     const odd = path.join(tmp, 'cowork-odd');
@@ -589,6 +589,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const { check } = require('./check-mini-log');
     ok(check('x\n[snapshot] bounds {"x":1,"y":2,"width":382,"height":151} onTop true\n').ok, 'modalità mini: striscia piccola e in primo piano → bene');
     ok(!check('[snapshot] bounds {"x":1,"y":2,"width":980,"height":620} onTop true').ok && !check('[snapshot] bounds {"x":1,"y":2,"width":380,"height":150} onTop false').ok && !check('niente').ok, 'modalità mini: finestra grande, non in primo piano o senza riga → errore');
+  }
+
+  // Windows rifiuta i percorsi sopra i 260 caratteri: un file del repository troppo "lungo" fa fallire il checkout nelle Actions
+  {
+    const ls = spawnSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8' });
+    if (ls.status === 0) {
+      const longest = ls.stdout.split('\n').filter(Boolean).sort((a, b) => b.length - a.length)[0] || '';
+      ok(longest.length <= 150, `repository: il percorso più lungo di un file ha ${longest.length} caratteri (max 150, per stare sotto i 260 di Windows con una cartella di lavoro lunga): ${longest.slice(0, 60)}`);
+    } else ok(true, 'git non disponibile: lunghezza dei percorsi non controllata');
   }
 
   // Node 24 stampa l'avviso DEP0190 se si passano argomenti a un processo con shell: l'avvio non deve farlo
