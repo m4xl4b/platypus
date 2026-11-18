@@ -211,6 +211,7 @@ Like W3 and W4, with the Linux terminals (GNOME Terminal, Konsole, the one in VS
 |---|---|---|---|---|
 | 1 | Windows | With Node 24 the launcher printed the `DEP0190` deprecation warning ("Passing args to a child process with shell option true") every time it ran `npm ci` | `7b8ac9f` | `scripts/smoke-test.js`: "avvio: nessun argomento separato con shell" |
 | 2 | Windows | Turning "Start when I log in" on or off never removed the start-up value that Agent Office wrote before the rename (`com.agentoffice.desktop` in `HKCU\...\Run`); only the macOS and Linux old entries were cleaned | `39f1831` | `scripts/smoke-test.js`: "Windows: la vecchia voce di avvio «com.agentoffice.desktop» viene tolta" |
+| 3 | Windows (found by the Actions) | The K2 fixture had file names so long (over 260 characters with the runner's work folder) that `git checkout` failed on Windows: every Windows job of run 44345868261 stopped at the checkout step. A long file name in the repository would break the clone for any Windows user with a long folder path | `9d3ff4f` | `scripts/smoke-test.js`: "repository: il percorso più lungo di un file ha N caratteri" (max 150) |
 
 ### X2 · Documents  [x]
 
@@ -382,5 +383,11 @@ How it was run: the window was started from the test clone with the temporary ho
 - **X1:** the table has the two Windows bugs found, each with its own commit and an automatic test; nothing else broke. (The Linux loop adds its own rows.)
 - **X2:** `docs/INSTALL.md` and `docs/INSTALLAZIONE.md`: new "Tested on" / "Testato su" section (Windows 11 by hand; macOS and Linux only by the Actions, said plainly), two rows in the frequent problems, and the Cowork line updated. "For the CHANGELOG" is filled for the Windows side. README, CHANGELOG and the version were not touched.
 - **Open:** W3 is partial (see its entry); the Linux tasks (L1-L3) belong to the Linux loop; the hands-on checks of macOS depend on Max.
+
+### 2026-11-18 · CI on the K2/K3/X commits · a bug of mine, found by the Actions
+
+- Max allowed the second push (`54d01de..4b1fdaa`). Run 44345868261: all three Windows jobs failed **at the checkout**, before any test: `error: unable to create file ... Filename too long`. The K2 fixture used uuid-long folder and file names, which with the runner's work folder (`D:\a\platypus\platypus\`) go over Windows' 260-character limit. It would have broken `git clone` for any Windows user with a long folder path. Ubuntu jobs passed; macOS jobs were still queued when I looked.
+- Fix (`9d3ff4f`, X1 row 3): the fixture now uses short names (`a/b/local_1/_claude/projects/-sessions-calm-test-curie/c1.jsonl`, 119 characters from the repository root); `npm test` now fails if any tracked path is longer than 150 characters. Tests green on Windows 11. The fix is committed locally; the CI has not run on it yet (needs another push, which waits for Max's yes).
+- Lesson: my local Windows tests passed because the clone sits in a short path; long paths need a check of their own.
 
 ## Journal (Linux)
