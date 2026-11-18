@@ -132,7 +132,7 @@ Il guscio predefinito resta Electron. Accanto si sta costruendo un secondo gusci
 - Su Linux l'icona nella barra non ha l'evento del clic né il suggerimento: tutto sta nel suo menu.
 - Su Wayland WebKitGTK ha gli stessi limiti di Electron (niente primo piano, niente posizione della finestra).
 
-**Misure:** saranno in `plans/tauri-measurements.md`, con il metodo per ripeterle.
+**Misure** ([`plans/tauri-measurements.md`](plans/tauri-measurements.md), in inglese, con il metodo per ripeterle): su Windows il guscio Tauri occupa circa 5 MB sul disco invece di circa 370, mentre la memoria (circa 600 MB con la demo, quasi tutta del Chromium che disegna l'ufficio in tutti e due) e il tempo di avvio (circa 1 s) sono gli stessi. Linux è ancora da misurare.
 
 ## Dati sul disco
 

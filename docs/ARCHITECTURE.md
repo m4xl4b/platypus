@@ -132,7 +132,7 @@ Electron stays the default. A second shell in Tauri 2 is being built next to it,
 - On Linux the tray icon has no click event and no tooltip: everything is in its menu.
 - On Wayland, WebKitGTK has the same limits as Electron (no always on top, no window position).
 
-**Measurements:** they will be in `plans/tauri-measurements.md`, with the method to repeat them.
+**Measurements** ([`plans/tauri-measurements.md`](plans/tauri-measurements.md), with the method to repeat them): on Windows the Tauri shell is about 5 MB on disk instead of about 370 MB, while memory (about 600 MB with the demo, mostly the Chromium that draws the office in both) and start-up time (about 1 s) are the same. Linux is still to be measured.
 
 ## Data on disk
 

@@ -68,7 +68,9 @@ pub enum Probe {
 /// Who answers on 127.0.0.1:<port>? A plain HTTP/1.0 request, no dependencies.
 pub fn probe(port: u16) -> Probe {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let mut s = match TcpStream::connect_timeout(&addr, Duration::from_millis(400)) {
+    // a local server that listens accepts at once; a closed port is not refused at once on Windows (the system
+    // retries), so a long timeout would only slow down the start (measured in T7)
+    let mut s = match TcpStream::connect_timeout(&addr, Duration::from_millis(100)) {
         Ok(s) => s,
         Err(_) => return Probe::Free,
     };
@@ -152,7 +154,7 @@ impl Engine {
             if t0.elapsed() > timeout {
                 return Err(WaitError::Timeout);
             }
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(50));
         }
     }
 

@@ -118,7 +118,7 @@ Today it is Electron that decides when to send a notification, by listening to t
 - Scripts `npm run tauri:dev` and `npm run tauri:build` in the main `package.json`: only commands, no dependencies.
 - **`[win]`:** check that notifications appear also when starting from source. If a Start menu shortcut with the AppUserModelID is needed, create it as Electron does (`ensureStartMenuShortcut`).
 
-## T7 · Measurements  [ ]
+## T7 · Measurements  [x]
 
 On `[win]` and on `[linux]`, Electron against Tauri, with the demo on:
 
@@ -352,3 +352,12 @@ The commands `npm run tauri:build` and `--shell tauri` come with T3 and T6: chec
   - toasts with the test ID `com.platypus.desktop.loop-test`: a permission posted to the engine is shown, and Windows lists the toast in that ID's notification history ("CLAUDE is waiting for you | Floor 1 · t4 | Needs your OK: Runs: ls"), with the registry key holding "Platypus" and the icon. I cleared that history and removed the test key; the real `com.platypus.desktop` key was not created.
   - `cargo build` without warnings; `npm test`: "Tutto a posto."; `npm run i18n:check`: 0 missing.
 - Not checked: a real click on a toast (it needs a person or UI automation); it is wired to `show_window` with the floor.
+
+### 2026-11-18 · T7 · Measurements
+
+- Done: `docs/plans/tauri-measurements.md` with the Windows table and the method, and `shells/tauri/scripts/measure-win.ps1` (one run per call: temporary home, port 47830, `PLATYPUS_DATA_DIR`, demo; start-up time, then the memory of the whole process tree after 2 minutes; it stops what it started by PID). The architecture docs (both languages) now link the results.
+- Results on `[win]` (medians of 3): size 4.8 MB (Tauri) against 369.3 MB (Electron); working set after 2 minutes 625.7 MB against 599.4 MB, private bytes 417.7 MB against 371.1 MB (WebView2 is about 510 MB of Tauri's, the Node engine about 80 MB); start-up to `/api/state` with the window visible 983 ms against 994 ms; first build debug 54 s, release 2 min 34 s.
+- A change found by measuring: the shell waited for the engine with a 400 ms connect timeout and 200 ms pauses, and on Windows a closed local port is not refused at once, so Tauri started in a median 1.77 s. With 100 ms and 50 ms (`engine.rs`) it starts like Electron. The memory runs were made before this change; it does not touch memory.
+- Doubts for Max: on Windows the numbers say that Tauri saves disk (and download) but not memory or time, because the office is drawn by Chromium in both shells. Linux (WebKitGTK) may tell a different story and is still to be measured on the Linux computer.
+- Checked: three alternating runs per shell for each number; every run left port 47830 free; the repository script was run once per shell with its defaults. `npm test`: "Tutto a posto."; `npm run i18n:check`: 0 missing.
+- **Open, for the Linux computer (`[linux]`)**: the same table on Linux.
