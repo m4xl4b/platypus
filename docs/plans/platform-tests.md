@@ -387,7 +387,7 @@ How it was run: the window was started from the test clone with the temporary ho
 ### 2026-11-18 · CI on the K2/K3/X commits · a bug of mine, found by the Actions
 
 - Max allowed the second push (`54d01de..4b1fdaa`). Run 44345868261: all three Windows jobs failed **at the checkout**, before any test: `error: unable to create file ... Filename too long`. The K2 fixture used uuid-long folder and file names, which with the runner's work folder (`D:\a\platypus\platypus\`) go over Windows' 260-character limit. It would have broken `git clone` for any Windows user with a long folder path. Ubuntu jobs passed; macOS jobs were still queued when I looked.
-- Fix (`9d3ff4f`, X1 row 3): the fixture now uses short names (`a/b/local_1/_claude/projects/-sessions-calm-test-curie/c1.jsonl`, 119 characters from the repository root); `npm test` now fails if any tracked path is longer than 150 characters. Tests green on Windows 11. The fix is committed locally; the CI has not run on it yet (needs another push, which waits for Max's yes).
+- Fix (`9d3ff4f`, X1 row 3): the fixture now uses short names (`a/b/local_1/_claude/projects/-sessions-calm-test-curie/c1.jsonl`, 119 characters from the repository root); `npm test` now fails if any tracked path is longer than 150 characters. Tests green on Windows 11. Max allowed the push (`4b1fdaa..731bee3`); run 44347519139: the Windows jobs (Engine Node 22 and 24, Window) and the Ubuntu jobs are green, so the checkout works. The macOS jobs were still queued (GitHub's Intel runner is congested) when I stopped waiting; the macOS result of this fix is not known yet.
 - Lesson: my local Windows tests passed because the clone sits in a short path; long paths need a check of their own.
 
 ## Journal (Linux)
