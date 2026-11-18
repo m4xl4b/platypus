@@ -26,6 +26,7 @@ tauri-plugin-single-instance = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-registry = "0.6"
+tauri-winrt-notification = "0.8"
 
 [profile.release]
 codegen-units = 1

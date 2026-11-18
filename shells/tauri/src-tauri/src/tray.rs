@@ -11,6 +11,7 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+#[cfg(not(windows))]
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -179,8 +180,9 @@ pub fn on_event(app: &AppHandle, ev: &str, data: Value) {
 }
 
 /// Show a notification decided by the engine, with Electron's rules: the shell's option, and no wait or alert
-/// toast while the window is already in front. A click on the toast cannot be intercepted on the desktop
-/// (tauri-plugin-notification): the floor is remembered and shown the next time the window is opened.
+/// toast while the window is already in front. On Windows a click on the toast opens the office on that floor
+/// (winnotify.rs). On macOS and Linux tauri-plugin-notification cannot report the click: the floor is
+/// remembered and shown the next time the window is opened.
 fn notify(app: &AppHandle, ev: &Value) {
     let shell = app.state::<Shell>();
     let kind = ev.get("kind").and_then(|v| v.as_str()).unwrap_or("");
@@ -208,7 +210,12 @@ fn notify(app: &AppHandle, ev: &Value) {
     if kind != "report" && !sid.is_empty() {
         *shell.pending_goto.lock().unwrap() = Some((sid.to_string(), Instant::now()));
     }
-    if let Err(e) = app.notification().builder().title(title).body(body).show() {
+    // Windows: our own toast, with our name and a click that works also from source (winnotify.rs)
+    #[cfg(windows)]
+    let shown = crate::winnotify::show(app, title, body, sid);
+    #[cfg(not(windows))]
+    let shown = app.notification().builder().title(title).body(body).show().map_err(|e| e.to_string());
+    if let Err(e) = shown {
         eprintln!("[platypus] notification: {e}");
     }
     if kind == "wait" {

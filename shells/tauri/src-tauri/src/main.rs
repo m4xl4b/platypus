@@ -6,6 +6,8 @@ mod engine;
 mod office;
 mod startup;
 mod tray;
+#[cfg(windows)]
+mod winnotify;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -61,6 +63,8 @@ fn main() {
                 if let Err(e) = tray::create(&handle) {
                     eprintln!("[platypus] tray: {e}");
                 }
+                #[cfg(windows)]
+                winnotify::register(engine::repo_root().as_deref());
                 tray::listen(&handle);
                 tray::snapshot_menu(&handle);
             });

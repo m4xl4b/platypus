@@ -110,7 +110,7 @@ Today it is Electron that decides when to send a notification, by listening to t
 - **Start at login** with the `autostart` plugin: the entry must have the same name as Electron's, or the two shells must recognise each other. There must never be two active. Check on `[win]` (the `Run` registry key) and on `[linux]` (`~/.config/autostart`).
 - **Wayland (`[linux]`):** see whether the always-on-top and the window position work in WebKitGTK on Wayland; if not, say so in the options and in the Journal, as Electron does.
 
-## T6 · Launcher  [ ]
+## T6 · Launcher  [x]
 
 - `node scripts/launch.js --shell tauri`:
   - if it finds the compiled program in `shells/tauri/src-tauri/target/release`, it starts it;
@@ -335,3 +335,20 @@ The commands `npm run tauri:build` and `--shell tauri` come with T3 and T6: chec
   - start at login with the test name `com.platypus.desktop.loop-test`, starting from an Electron-like value (`"C:\fake\electron.exe" "D:\fake\platypus"`): the item shows off (not ours), choosing it writes our program's path, choosing it again removes the value. `auto-launch` leaves its `StartupApproved\Run` value behind; I removed both test values. Before the test the real Run key had no Platypus entry, and it was not touched.
   - `cargo test`: 4 tests; `npm test`: "Tutto a posto."; `npm run i18n:check`: 0 missing.
 - **Open, for the Linux computer (`[linux]`)**: the `~/.config/autostart/platypus.desktop` entry, and whether always on top and the position work in WebKitGTK on Wayland and in XWayland (`GDK_BACKEND=x11`); if XWayland works, the PIN could offer it as Electron does. Not possible on this PC.
+
+### 2026-11-18 · T6 · Launcher
+
+- Done:
+  - `scripts/launch.js`: `--shell tauri` (or `--shell=tauri`). If `shells/tauri/src-tauri/target/release/platypus(.exe)` exists, it starts it with the other options (`--demo` …), also with `--background`. If it does not exist, it says (in Italian and English) that Rust is needed, points to the Tauri section of the architecture docs and to `npm run tauri:build`, and then follows the normal Electron path. `--shell` and its value are never passed on. An unknown shell name falls back to Electron with a message.
+  - `package.json` (main): only two scripts, no dependency: `tauri:dev` and `tauri:build` (`npm --prefix shells/tauri install`, then `run dev` / `run build`).
+  - `[win]` notifications from source: `tauri-plugin-notification` sets the app's ID only for an installed program, so from `target\release` the toasts said "Windows PowerShell" (seen in T4) and a click did nothing. New `winnotify.rs`: on Windows the shell shows its toasts with `tauri-winrt-notification` (already a dependency of the plugin) and the ID `com.platypus.desktop` (the same as Electron), registered at start under `HKCU\Software\Classes\AppUserModelId\com.platypus.desktop` with `DisplayName` "Platypus" and `IconUri` `build/icon.png`. A click on the toast now opens the office on the notification's floor, as in Electron. macOS and Linux keep the plugin.
+- Decisions:
+  - No Start menu shortcut for Tauri. The registry registration of the ID is what Windows needs for a program that is not installed, it leaves Electron's `Platypus.lnk` alone (Electron rewrites it at every start with its own target), and the two shells share the ID, so their toasts look the same.
+  - `PLATYPUS_AUMID` overrides the ID, only for the checks: the registration is in the real registry, so the checks use a test ID and remove it.
+- Checked:
+  - the missing build: `launch.js --shell tauri --demo` with `child_process` replaced by stubs (nothing installed, nothing started), before the first release build: the two messages, then the Electron path (`npm ci` attempted, then the browser mode as usual when npm fails), and the engine got only `--demo`.
+  - first release build with `npm run tauri:build` from the repository: 2 min 34 s on this PC (crates already downloaded by the debug build), `platypus.exe` 5,063,680 bytes.
+  - `node scripts/launch.js --shell tauri --demo` (temporary home, port 47830, snapshot mode): the release program starts, the engine starts with the demo, the menu and counters arrive, it quits and port 47830 is free. With `--shell=tauri --background` the launcher returns after 94 ms, the engine answers while the shell runs, and the port is free after the shell quits.
+  - toasts with the test ID `com.platypus.desktop.loop-test`: a permission posted to the engine is shown, and Windows lists the toast in that ID's notification history ("CLAUDE is waiting for you | Floor 1 · t4 | Needs your OK: Runs: ls"), with the registry key holding "Platypus" and the icon. I cleared that history and removed the test key; the real `com.platypus.desktop` key was not created.
+  - `cargo build` without warnings; `npm test`: "Tutto a posto."; `npm run i18n:check`: 0 missing.
+- Not checked: a real click on a toast (it needs a person or UI automation); it is wired to `show_window` with the floor.

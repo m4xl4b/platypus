@@ -7,6 +7,7 @@
 //   node scripts/launch.js --background avvia e restituisce subito il terminale
 //   node scripts/launch.js --setup      installa le dipendenze e basta
 //   node scripts/launch.js --shortcut   crea il collegamento sul desktop / nel menu delle app
+//   node scripts/launch.js --shell tauri  il guscio Tauri sperimentale, se è compilato (altrimenti Electron)
 // Alla prima esecuzione (e dopo ogni "git pull" che cambia le dipendenze) installa da solo
 // quello che serve con npm. Se la finestra desktop non può partire, apre l'ufficio nel browser.
 
@@ -21,7 +22,11 @@ const ROOT = path.join(__dirname, '..');
 const DATA_DIR = require(path.join(ROOT, 'src', 'paths')).dataDir();
 const args = process.argv.slice(2);
 const has = f => args.includes(f);
-const passThrough = args.filter(a => !['--web', '--background', '--setup', '--shortcut', '--electron'].includes(a));
+// --shell tauri (o --shell=tauri): quale guscio desktop; senza, Electron
+const shellAt = args.indexOf('--shell');
+const SHELL = ((args.find(a => a.startsWith('--shell=')) || '').slice(8) || (shellAt >= 0 ? args[shellAt + 1] || '' : '')).toLowerCase();
+const passThrough = args.filter((a, i) => !['--web', '--background', '--setup', '--shortcut', '--electron'].includes(a) &&
+  !a.startsWith('--shell=') && !(shellAt >= 0 && (i === shellAt || i === shellAt + 1)));
 const IS_WIN = process.platform === 'win32';
 const LOG_DIR = DATA_DIR;
 const LOG = path.join(LOG_DIR, 'launch.log');
@@ -144,6 +149,29 @@ async function runDesktop() {
   if (r.child) r.child.on('exit', code => process.exit(code || 0));
 }
 
+// ---------------------------------------------------------------- guscio Tauri (sperimentale, docs/plans/tauri-shell.md)
+// Il programma compilato con "npm run tauri:build"; il motore lo avvia lui (node src/standalone.js).
+function tauriExe() {
+  const p = path.join(ROOT, 'shells', 'tauri', 'src-tauri', 'target', 'release', IS_WIN ? 'platypus.exe' : 'platypus');
+  return fs.existsSync(p) ? p : null;
+}
+function runTauri() {
+  const exe = tauriExe();
+  if (!exe) {
+    say('Il guscio Tauri non è compilato. Serve Rust (vedi la sezione Tauri di docs/ARCHITETTURA.md), poi: npm run tauri:build');
+    say('The Tauri shell is not built. It needs Rust (see the Tauri section of docs/ARCHITECTURE.md), then: npm run tauri:build');
+    say('Intanto apro Electron · opening Electron meanwhile');
+    return runDesktop();
+  }
+  const background = has('--background');
+  const child = spawn(exe, passThrough, { cwd: ROOT, detached: background, stdio: background ? 'ignore' : 'inherit', windowsHide: false });
+  child.on('error', e => { say('Il guscio Tauri non si avvia (' + e.message + '): apro Electron.'); runDesktop(); });
+  child.on('spawn', () => {
+    if (background) { child.unref(); say('Platypus (Tauri) è partito. Puoi chiudere questo terminale.'); process.exit(0); }
+  });
+  if (!background) child.on('exit', code => process.exit(code || 0));
+}
+
 // ---------------------------------------------------------------- main
 (async () => {
   if ((has('--setup') || has('--shortcut')) && !nodeForWindow) process.exit(1); // Electron non si installa: il motivo è già scritto sopra
@@ -155,5 +183,7 @@ async function runDesktop() {
     return;
   }
   if (has('--web')) return runWeb();
+  if (SHELL === 'tauri') return runTauri();
+  if (SHELL && SHELL !== 'electron') say(`Guscio sconosciuto «${SHELL}»: uso Electron · unknown shell, using Electron`);
   return runDesktop();
 })();
