@@ -7,6 +7,7 @@
 // Due testi sono vicini se usano le stesse parole importanti. Non capisce i sinonimi come un modello
 // neurale, ma è immediato, non scarica nulla e non manda niente fuori dal computer.
 
+const rule = require('./drift-rule');
 const DIM = 256; // solo per il TF-IDF: il resto del modulo prende la lunghezza dai vettori (v.length)
 const MAX_PIECES = 900;
 const MAX_TERMS = 48;
@@ -245,7 +246,8 @@ function kmeans(vecs, k, weights) {
 // Una riga per azione: [t, punteggio, media delle ultime 6, base (le prime 8 del compito), indice del compito, etichetta, errore]
 // space: lo spazio di significato (di base il TF-IDF del corpus); le azioni senza vettore in quello spazio non contano.
 function alignment(mind, corpus, space = tfidfSpace(corpus)) {
-  const align = [];
+  const align = [], th = space.th || rule.thresholdsFor(space.src), z = th.zero || 0; // space.th: solo per la calibrazione
+  const score = c => (z ? Math.max(0, (c - z) / (1 - z)) : Math.max(0, c)); // riscalato dalla somiglianza "di fondo" della fonte
   const acts = [];
   for (const p of mind.pieces) if (p.kind === 'action') { const v = space.piece(p); if (v) acts.push({ p, v }); }
   const gv = mind.goals.map((g, gi) => {
@@ -265,29 +267,29 @@ function alignment(mind, corpus, space = tfidfSpace(corpus)) {
   for (const { p, v } of acts) {
     while (gi + 1 < gv.length && gv[gi + 1].t <= p.t) { gi++; win = []; base = []; }
     if (gi < 0 || !gv[gi].v) continue;
-    const s = Math.max(0, cosine(v, gv[gi].v));
+    const s = score(cosine(v, gv[gi].v));
     win.push(s); if (win.length > 6) win.shift();
     if (base.length < 8) base.push(s);
     const avg = win.reduce((a, x) => a + x, 0) / win.length;
-    const b = Math.max(0.03, base.reduce((a, x) => a + x, 0) / base.length);
+    const b = Math.max(th.floor, base.reduce((a, x) => a + x, 0) / base.length);
     align.push([p.t, +s.toFixed(3), +avg.toFixed(3), +b.toFixed(3), gi, p.label, p.err ? 1 : 0]);
   }
   return align;
 }
-// Alla deriva: la stessa regola della mappa (worldmap.js). L'allineamento (media su base) resta sotto DRIFT_REL per
+// Alla deriva: la stessa regola della mappa (drift-rule.js, che usa anche worldmap.js). L'allineamento (media su base) resta sotto DRIFT_REL per
 // DRIFT_RUN azioni di fila, tutte del compito in corso. Con una base minima le parole del compito non compaiono mai nel
 // lavoro, e non si può giudicare (weak).
-const DRIFT_REL = 0.35, DRIFT_RUN = 6, WEAK_BASE = 0.031;
+// Le soglie dipendono dalla fonte dei vettori (la tabella è in drift-rule.js): DRIFT_REL e DRIFT_RUN sono quelle del TF-IDF.
+const DRIFT_REL = rule.TFIDF.rel, DRIFT_RUN = rule.TFIDF.run;
 function drift(mind, corpus, space) {
   if (!mind || !corpus || !mind.goals || !mind.goals.length) return null;
-  const al = alignment(mind, corpus, space || tfidfSpace(corpus));
+  const sp = space || tfidfSpace(corpus);
+  const al = alignment(mind, corpus, sp);
   if (!al.length) return null;
-  const last = al[al.length - 1], gi = last[4];
+  const gi = al[al.length - 1][4];
   if (gi !== mind.goals.length - 1) return null; // c'è una richiesta più nuova, ancora senza azioni
-  let run = 0;
-  for (let i = al.length - 1; i >= 0 && al[i][4] === gi && al[i][2] / al[i][3] < DRIFT_REL; i--) run++;
-  const weak = last[3] <= WEAK_BASE, g = mind.goals[gi];
-  return { goal: { t: g.t, label: g.label }, run, rel: +(last[2] / last[3]).toFixed(3), weak, drifting: !weak && run >= DRIFT_RUN };
+  const j = rule.judge(al, rule.thresholdsFor(sp.src)), g = mind.goals[gi];
+  return { goal: { t: g.t, label: g.label }, run: j.run, rel: j.rel, weak: j.weak, drifting: j.drifting, src: sp.src, uncalibrated: j.uncalibrated };
 }
 
 // ---------------------------------------------------------------- vista per la pagina
@@ -326,7 +328,7 @@ function snapshotMinds(minds, corpus, key, ctxLimitHint, space = tfidfSpace(corp
   });
   const goals = goalsAll.map(x => { const c = P ? P.project(x.v) : [0, 0, 0]; return [x.g.t, x.g.label, +c[0].toFixed(3), +c[1].toFixed(3), +c[2].toFixed(3), x.owner]; });
   const ctx = minds.map(({ id, mind }) => ({ id, hist: mind.ctxHist.slice(-400), compactions: mind.compactions, gen: mind.gen }));
-  const v = { engine: space.src === 'tfidf' ? 'lexical' : 'neural', src: space.src, pending, pieces, goals, clusters, align, ctx, limitHint: ctxLimitHint || 0 };
+  const v = { engine: space.src === 'tfidf' ? 'lexical' : 'neural', src: space.src, th: rule.thresholdsFor(space.src), pending, pieces, goals, clusters, align, ctx, limitHint: ctxLimitHint || 0 };
   cache.set(key, { sig, v, src: space.src, axes: P ? P.axes : null });
   if (cache.size > 80) cache.delete(cache.keys().next().value);
   return v;

@@ -131,7 +131,7 @@ function defaultFactory(kind) {
 }
 const FACTORIES = { ollama: defaultFactory('ollama'), onnx: defaultFactory('onnx') };
 
-function cleanEngine(v) { return ENGINES.includes(v) ? v : 'auto'; }
+function cleanEngine(v) { return ENGINES.includes(v) ? v : 'tfidf'; } // un valore sconosciuto resta lessicale
 // le opzioni del significato, ripulite (state.setSettings): un indirizzo di Ollama che non è di loopback si rifiuta
 const SETTINGS = ['embedEngine', 'embedModel', 'ollamaUrl'];
 function cleanSetting(k, v, prev) {

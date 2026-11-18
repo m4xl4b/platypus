@@ -105,7 +105,7 @@ Everything in `docs/plans/parallel.md` still applies. In addition:
 - **Loading:** the engine looks for it with `require` inside `try`. If it is missing, the provider shows as "not installed" and the chain moves on.
 - **Tests:** the automatic ones do **not** download the model. The provider is tested with a fake module. The real test is done once, by hand and with Max's permission, and is written down.
 
-## E5 · Calibration  [ ]
+## E5 · Calibration  [x]
 
 Today's thresholds are valid for TF-IDF, not for neural vectors, which have much higher baseline similarities:
 
@@ -246,3 +246,30 @@ This is on paper: E5 measures it only if the real model is installed.
 **Checks.** Automatic tests never download anything: a fake `transformers.js` written to a temporary folder (deterministic 12-dimension vectors; it refuses to run if remote models are not off) goes through the real `optional/embed-onnx` and its worker. Covered: module / packages / model missing → `not-installed` with the command; with the marker the provider is ready, runs in a worker thread, adds the e5 prefixes; a model error comes back as an error and the worker stays up; in `auto` with Ollama off the chain takes ONNX; in this worktree, without installation, the real provider says `not-installed`; the install script answered "n" exits with code 1, shows the 118 MB, and creates neither `node_modules` nor the models folder. `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing.
 
 **Not done, needs Max's permission.** The real test: `npm run embed:onnx:install` (about 320 MB of downloads), then one run with the real model. Also, there is no `package-lock.json` in `optional/embed-onnx/` yet: generating it needs the npm registry, so the first install uses `npm install` with the `~3.7.0` range. The packaged Electron app does not include `optional/`, so there ONNX shows as "not installed" (Ollama still works).
+
+### 2026-11-18 · E5 · Calibration
+
+**Done.**
+- **Test set** `scripts/embed-eval-set.js`: 30 tasks written for the purpose (16 Italian, 14 English, 12 areas), six on-topic actions each; off-topic actions are those of a task from another area; 11 tasks use synonyms or the other language; 4 tasks that cannot be measured. No real data.
+- **`scripts/embed-eval.js`**: AUC on/off topic (overall, on synonyms, worst task), the background similarity, 60 simulated sessions through the real `alignment()` and drift rule with the best `rel` (Youden) and the one in use, and the `weak` threshold. `--source tfidf|ollama|onnx`, `--json`. For neural sources it makes two passes (measure the background, then rescale from it).
+- **One rule, three places.** New `src/core/drift-rule.js`, a UMD file usable with `require` and as a page script (`window.PlatypusDrift`): the per-source table (`rel`, `run`, `weak`, `warn`, `floor`, `zero`, `calibrated`), `thresholdsFor(src)` and `judge(rows, th)`.
+  - engine: `alignment()` takes `zero` (rescaling) and `floor` (the old `Math.max(0.03, …)`) from the table; `drift()` calls `judge()` and now also returns `src` and `uncalibrated`;
+  - feedback: `driftBack` passes the agent's space to `drift()` (one argument; the thresholds come through `drift()`), and `index.js` gives the hook's agent the space picked for that mind (priority 1);
+  - map: `renderer/worldmap.js` no longer has 0.35 / 6 / 0.031 / 0.6 written in it; it uses `PlatypusDrift.judge(al, m.th)` and draws the bands from `th`. `/api/agentmind` sends `th`, the thresholds of the source the rows were computed with. The server serves `/drift-rule.js` from `src/core` (one line in `index.js`); `renderer/index.html` loads it before `worldmap.js`.
+  - The map's old rule did not stop counting at a change of task; now it does, like the engine.
+- **Uncalibrated neural sources** (no row in the table): rows and cloud are computed, but `judge()` says `weak` with `uncalibrated: true`, so the engine, the feedback and the map all say "not measurable" (new string in `src/i18n/locales/en/embed.json`: "this meaning source is not calibrated yet").
+- **The default engine is now `tfidf`** (was `auto` in E3; unknown values also give `tfidf`).
+- Results in `docs/plans/embedding-calibration.md`.
+
+**Results (TF-IDF).** AUC 0.785, on synonyms 0.547 (close to chance), worst task 0.302, background 0.011. Drift with 0.35: 80% of the drifts caught, no false alarms, 11.7% of the sessions not judgeable (all synonym tasks: the base sits on the floor). The best threshold would be 0.64 (86.7%, no false alarms), but I left the TF-IDF thresholds as they are: the 2.11 tests must pass unchanged and 30 tasks are few. `weak` 0.031 is confirmed (right above the floor 0.03).
+
+**Requirement "the neural source must beat TF-IDF": not measured.** No neural source could be measured without Max's permission (start Ollama, or install the ONNX model). So, as the plan says, TF-IDF stays the default; the table has the TF-IDF row only.
+
+**Checks.**
+- Unit tests: the evaluation on TF-IDF (AUC > 0.7, synonyms worse, 0.35 catches ≥ 75% with ≤ 5% false alarms); on a 64-dimension test source with a background; the table; the engine and `drift-rule.js` loaded as a page script in a `vm` give the same answer on the same rows; the snapshot's `th`; `worldmap.js` has no hard-coded thresholds and `index.html` loads the rule first; an uncalibrated source gives "not measurable" in the engine, the map and `driftBack`; `driftBack` with TF-IDF unchanged; rescaling and floor.
+- Smoke test: `/drift-rule.js` is served, equals the engine's file, and on the 2.11 drift session the page rule and the engine agree (drifting for 10 actions).
+- The 2.11 checks in `scripts/unit-engine.js` pass unchanged; the E1 fixture still matches (it now ignores added fields such as `src` and `th`, the numbers are compared as before).
+- Interface: engine in web mode with a temporary home on port 47840 and the demo, map of the Plan subagent opened in the built-in browser: green/yellow/red bands in place, "DRIFTING for 13 actions · alignment 0%", no console errors. The engine was stopped by its PID.
+- `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing.
+
+**Decision for Max.** To measure a real model: permission to start Ollama (the models are already on disk) and run `node scripts/embed-eval.js --source ollama --model bge-m3` (and the others), or to install the ONNX model. If one beats TF-IDF, its row goes into `drift-rule.js` and the default can become `auto`.

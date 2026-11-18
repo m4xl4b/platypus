@@ -233,7 +233,7 @@ function driftBack(input, ctx) {
   if (!ctx.agent) return null;
   const me = ctx.agent(input);
   if (!me || !me.mind || !me.corpus) return null;
-  const d = semanticDrift(me.mind, me.corpus);
+  const d = semanticDrift(me.mind, me.corpus, me.space); // lo spazio (e quindi le soglie) della fonte dei vettori
   if (!d || !d.drifting || !d.goal.label) return null;
   return two(() => tr('le tue ultime {n} azioni sembrano lontane dal compito che hai ricevuto: «{task}». Se questa deviazione serve, continua; altrimenti torna al compito.', { n: d.run, task: clip(d.goal.label, 160) }),
     { once: 'drift|' + (input.agent_id || 'main') + '|' + d.goal.t, tag: 'run=' + d.run });

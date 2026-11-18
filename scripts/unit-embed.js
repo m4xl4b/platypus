@@ -73,7 +73,9 @@ function pinnedTests(ok) {
   const { st, s, got } = i18n.withLang('it', () => { const x = demoScenario(); return { ...x, got: numbersOf(sem, x.s, 'unit-embed-pin:') }; });
   if (process.env.PLATYPUS_WRITE_FIXTURE) { fs.mkdirSync(path.dirname(FIXTURE), { recursive: true }); fs.writeFileSync(FIXTURE, JSON.stringify(got, null, 1) + '\n'); }
   const want = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
-  for (const k of Object.keys(want)) ok(JSON.stringify(got[k]) === JSON.stringify(want[k]), `embedding E1: con il solo TF-IDF i numeri di /api/agentmind (${k}) restano identici`);
+  // i numeri fissati devono restare identici; i campi aggiunti dopo (es. src, th) non contano
+  const pick = (g, w) => (w && typeof w === 'object' && !Array.isArray(w) && g && typeof g === 'object' ? Object.fromEntries(Object.keys(w).map(k => [k, pick(g[k], w[k])])) : g);
+  for (const k of Object.keys(want)) ok(JSON.stringify(pick(got[k], want[k])) === JSON.stringify(want[k]), `embedding E1: con il solo TF-IDF i numeri di /api/agentmind (${k}) restano identici`);
   ok(got.drift.plan1 && got.drift.plan1.drifting && got.main.align.length === 10, `embedding E1: scenario della demo (Plan alla deriva dopo ${got.drift.plan1 && got.drift.plan1.run} azioni, ${got.main.align.length} azioni di CLAUDE)`);
   st.stop && st.stop();
 }
@@ -154,7 +156,7 @@ async function providerTests(ok) {
   const r2 = await chain('auto', down(), onnx()), r3 = await chain('auto', down(), gone), r4 = await chain('auto', hangReady, onnx());
   ok(r.provider.id === 'ollama:fake' && r2.provider.id === 'onnx:fake' && r3.provider.id === 'tfidf' && !r3.fallback && r4.provider.id === 'onnx:fake', 'embedding E2: in automatico Ollama se risponde, poi ONNX se c\'è, altrimenti TF-IDF (anche se Ollama non risponde in tempo)');
   const f1 = await chain('ollama', down(), onnx()), f2 = await chain('onnx', up(), gone), f3 = await chain('tfidf', up(), onnx()), f4 = await chain('qualcosa', up(), onnx());
-  ok(f1.provider.id === 'tfidf' && f1.fallback && f1.fallback.source === 'ollama' && f1.fallback.state === 'not-found' && f2.provider.id === 'tfidf' && f2.fallback.state === 'not-installed' && f3.provider.id === 'tfidf' && !f3.fallback && f4.provider.id === 'ollama:fake', 'embedding E2: con una fonte scelta che non va si torna al TF-IDF e si dice perché; «tfidf» resta lessicale');
+  ok(f1.provider.id === 'tfidf' && f1.fallback && f1.fallback.source === 'ollama' && f1.fallback.state === 'not-found' && f2.provider.id === 'tfidf' && f2.fallback.state === 'not-installed' && f3.provider.id === 'tfidf' && !f3.fallback && f4.provider.id === 'tfidf', 'embedding E2: con una fonte scelta che non va si torna al TF-IDF e si dice perché; «tfidf» resta lessicale');
   const gp = embed.getProvider({ embedEngine: 'auto' }, { factories: facts({ ollama: down(), onnx: onnx() }) });
   const gpOk = await gp.ready();
   const v = await gp.embed(['ciao'], 'query');
@@ -251,7 +253,7 @@ async function providerTests(ok) {
     // cambiare le opzioni rifà la catena e riparte da zero
     ok(emb.configure({ embedEngine: 'tfidf' }) === true && emb.configure({ embedEngine: 'tfidf' }) === false && emb.space(1) === null, 'embedding E2: cambiare motore rifà la catena (e lo stesso valore non fa niente)');
     await settle(emb);
-    ok(emb.status().active === 'tfidf' && embed.cleanEngine('xyz') === 'auto', 'embedding E2: «solo lessicale» resta TF-IDF');
+    ok(emb.status().active === 'tfidf' && embed.cleanEngine('xyz') === 'tfidf', 'embedding E2: «solo lessicale» resta TF-IDF');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -338,7 +340,7 @@ async function ollamaTests(ok) {
   const st = new OfficeState({ settings: {} });
   st.setSettings({ ollamaUrl: 'http://localhost:11500' });
   st.setSettings({ ollamaUrl: 'http://example.com:11434', embedEngine: 'boh', embedModel: 'bge-m3 ; rm -rf' });
-  ok(st.settings.ollamaUrl === 'http://localhost:11500' && st.settings.embedEngine === 'auto' && st.settings.embedModel === 'bge-m3rm-rf', `embedding E3: le opzioni rifiutano un host esterno (resta ${st.settings.ollamaUrl}) e ripuliscono motore e modello`);
+  ok(st.settings.ollamaUrl === 'http://localhost:11500' && st.settings.embedEngine === 'tfidf' && st.settings.embedModel === 'bge-m3rm-rf', `embedding E3: le opzioni rifiutano un host esterno (resta ${st.settings.ollamaUrl}) e ripuliscono motore e modello`);
   st.stop && st.stop();
 }
 
@@ -413,6 +415,55 @@ async function onnxTests(ok) {
   }
 }
 
+// ---------------------------------------------------------------- E5 · calibrazione, una regola in tre posti
+// la regola come la vede la pagina: drift-rule.js caricato come script in un contesto senza module
+function ruleAsInPage() {
+  const vm = require('vm');
+  const sandbox = { self: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(ROOT, 'src', 'core', 'drift-rule.js'), 'utf8'), sandbox);
+  return sandbox.self.PlatypusDrift;
+}
+
+function calibrationTests(ok) {
+  const sem = require(path.join(ROOT, 'src', 'core', 'semantic'));
+  const rule = require(path.join(ROOT, 'src', 'core', 'drift-rule'));
+  const ev = require('./embed-eval');
+  // la calibrazione gira sul TF-IDF e dice quello che sappiamo: buono sulle parole, cieco sui sinonimi
+  const r = ev.evaluate('tfidf', x => sem.tfidfSpace(x.corpus));
+  ok(r.tasks >= 30 && r.auc > 0.7 && r.aucSyn < r.auc && r.current.rel === 0.35 && r.current.tpr >= 0.75 && r.current.fpr <= 0.05 && r.weak.current === 0.031, `embedding E5: calibrazione TF-IDF su ${r.tasks} compiti → AUC ${r.auc} (sinonimi ${r.aucSyn}), deriva con 0,35: veri ${r.current.tpr}, falsi ${r.current.fpr}`);
+  // una fonte di prova (parole sparse in 64 dimensioni): la stessa misura funziona con vettori di altra lunghezza e con il fondo
+  const word = ev.evaluate('test:word64', x => fakeSpace('test:word64', 64), { base: { ...rule.TFIDF, zero: 0.05 } });
+  ok(Number.isFinite(word.auc) && Number.isFinite(word.relAuc) && word.best.rel > 0 && word.zero >= 0, `embedding E5: la misura funziona con qualsiasi fonte (prova a 64 dimensioni: AUC ${word.auc}, soglia migliore ${word.best.rel})`);
+  // la tabella: il TF-IDF con i numeri di sempre; una fonte neurale senza misure non giudica
+  const un = rule.thresholdsFor('ollama:bge-m3:latest');
+  ok(rule.thresholdsFor('tfidf') === rule.TFIDF && rule.TFIDF.rel === 0.35 && rule.TFIDF.run === 6 && rule.TFIDF.weak === 0.031 && rule.TFIDF.floor === 0.03 && un.calibrated === false, 'embedding E5: soglie per fonte: TF-IDF 0,35 · 6 · 0,031 · 0,03; una fonte neurale non misurata è «non calibrata»');
+  // una regola in tre posti: motore, feedback e mappa danno la stessa risposta sulle stesse righe
+  const { st, s } = require(path.join(ROOT, 'src', 'i18n')).withLang('it', demoScenario);
+  const plan = s.subs.get('plan1').mind, page = ruleAsInPage();
+  const al = sem.alignment(plan, s.corpus), d = sem.drift(plan, s.corpus), pj = page.judge(al, page.thresholdsFor('tfidf'));
+  ok(d.drifting && pj.drifting && pj.run === d.run && pj.rel === d.rel && pj.weak === d.weak && pj.state === 'drifting', `embedding E5: motore e mappa (drift-rule.js come script della pagina) danno la stessa risposta: alla deriva da ${pj.run} azioni`);
+  const snap = sem.snapshotMinds([{ id: 'plan1', name: 'PLAN', mind: plan }], s.corpus, 'unit-embed-e5');
+  ok(JSON.stringify(snap.th) === JSON.stringify(rule.TFIDF) && JSON.stringify(page.judge(snap.align, snap.th)) === JSON.stringify(rule.judge(al, rule.TFIDF)), 'embedding E5: /api/agentmind dice alla mappa con quali soglie sono calcolate le righe (th)');
+  // la mappa non ha più i numeri scritti dentro, e carica la regola prima di sé
+  const wm = fs.readFileSync(path.join(ROOT, 'renderer', 'worldmap.js'), 'utf8'), html = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
+  const star = wm.slice(wm.indexOf('function drawStar'), wm.indexOf('function drawComposition'));
+  ok(!/0\.35|0\.031|run >= 6/.test(star) && /RULE\.judge\(al, th\)/.test(star) && html.indexOf('drift-rule.js') > 0 && html.indexOf('drift-rule.js') < html.indexOf('worldmap.js'), 'embedding E5: la mappa usa drift-rule.js e le soglie della fonte, non 0,35 / 6 / 0,031 scritti a mano');
+  // fonte neurale non calibrata: righe e nuvola sì, giudizio no (né la mappa né il feedback)
+  const neural = fakeSpace('ollama:fake', 16);
+  const dn = sem.drift(plan, s.corpus, neural), sn = sem.snapshotMinds([{ id: 'plan1', name: 'PLAN', mind: plan }], s.corpus, 'unit-embed-e5n', 0, neural);
+  const pn = page.judge(sn.align, sn.th);
+  ok(dn && dn.weak && dn.uncalibrated && !dn.drifting && dn.src === 'ollama:fake' && pn.weak && pn.uncalibrated && sn.th.calibrated === false, 'embedding E5: con una fonte non calibrata motore e mappa dicono «non misurabile», mai una deriva inventata');
+  const rules = require(path.join(ROOT, 'src', 'core', 'feedback-rules'));
+  const inp = { hook_event_name: 'PostToolUse', session_id: 's', tool_name: 'Read', tool_input: {}, tool_response: {} };
+  const me = sp => ({ id: 'plan1', steps: [], nodes: new Map(), goals: plan.goals, mind: plan, corpus: s.corpus, space: sp });
+  ok(rules.driftBack(inp, { agent: () => me(null) }) && rules.driftBack(inp, { agent: () => me(sem.tfidfSpace(s.corpus)) }) && rules.driftBack(inp, { agent: () => me(neural) }) === null, 'embedding E5: il feedback «ritorno al compito» passa da drift(): TF-IDF come prima, fonte non calibrata → niente');
+  // il fondo (zero) e il minimo della base vengono dalla tabella della fonte
+  const th = { ...rule.TFIDF, zero: 0.5, floor: 0.2 };
+  const raw = sem.alignment(plan, s.corpus, neural), resc = sem.alignment(plan, s.corpus, { ...neural, th });
+  ok(resc.every((row, i) => Math.abs(row[1] - Math.max(0, (raw[i][1] - 0.5) / 0.5)) < 0.002 && row[3] >= 0.2), 'embedding E5: i punteggi si riscalano dal fondo della fonte, e la base non scende sotto il suo minimo');
+  st.stop && st.stop();
+}
+
 async function run(ok) {
   console.log('significato (embedding)');
   pinnedTests(ok);
@@ -420,6 +471,7 @@ async function run(ok) {
   await providerTests(ok);
   await ollamaTests(ok);
   await onnxTests(ok);
+  calibrationTests(ok);
 }
 
 module.exports = { run, demoScenario, fakeOllama, wordVec };

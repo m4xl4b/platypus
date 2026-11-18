@@ -256,7 +256,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         // i progetti della demo sono finti: anche se una cartella con quel nome esiste sul computer, non la guardiamo
         hasSection: cwd => (s && s.demo ? false : claudemd.hasSection(cwd)),
         // i passi già visti dell'agente che ha mandato l'hook (il principale, o il sottoagente con quell'identificativo)
-        agent: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a && a.world ? { id: a.id, steps: a.world.steps, nodes: a.world.nodes, goals: (a.mind && a.mind.goals) || [], mind: a.mind || null, corpus: s.corpus || null } : null; },
+        agent: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a && a.world ? { id: a.id, steps: a.world.steps, nodes: a.world.nodes, goals: (a.mind && a.mind.goals) || [], mind: a.mind || null, corpus: s.corpus || null, space: a.mind && s.corpus ? semantic.pickSpace([a.mind], s.corpus, [embedder.space(1)]) : null } : null; },
         waiting: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return !!(a && state.userPending(s, a, i.agent_id || null)); },
         agentName: i => { const a = s && (i.agent_id ? s.subs.get(i.agent_id) : s.main); return a ? displayName(a) : ''; },
         // tutti gli agenti della sessione, con il nome che hanno in ufficio (serve a dire chi ha cambiato un file)
@@ -601,6 +601,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
       return res.end('window.AO_I18N=' + JSON.stringify({ lang, locale: i18n.localeTag(lang), dict: i18n.dict(lang), langs: i18n.LANGS }) + ';');
     }
+    if (url.pathname === '/drift-rule.js') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' }); return res.end(fs.readFileSync(path.join(__dirname, 'drift-rule.js'))); } // la regola della deriva, la stessa del motore
     if (url.pathname === '/api/settings') return json(res, 200, state.settings);
     if (url.pathname === '/api/cowork-scan') return json(res, 200, state.coworkScan || {});
     if (url.pathname === '/api/agentmap') return json(res, 200, agentMap(url.searchParams));

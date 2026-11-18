@@ -91,8 +91,9 @@ const DEFAULT_SETTINGS = {
   coworkDirs: '',       // cartelle extra dove cercare le sessioni Cowork (separate da ;)
   claudeDirs: '',       // altre cartelle di configurazione di Claude Code (es. dentro WSL), separate da ;
   lang: 'auto',         // lingua: auto (quella del sistema), it, en
-  // significato con gli embedding (vedi embed/): auto | ollama | onnx | tfidf; Ollama solo su loopback
-  embedEngine: 'auto',
+  // significato con gli embedding (vedi embed/): auto | ollama | onnx | tfidf; Ollama solo su loopback.
+  // Di base lessicale: una fonte neurale diventa la scelta di base solo quando batte il TF-IDF (scripts/embed-eval.js)
+  embedEngine: 'tfidf',
   embedModel: '',       // vuoto = il primo modello di embedding presente, preferendo i multilingue
   ollamaUrl: 'http://127.0.0.1:11434',
 };

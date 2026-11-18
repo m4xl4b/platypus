@@ -906,12 +906,9 @@
     for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.45 : r; const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
     ctx.closePath(); ctx.fill();
   }
-  // allineamento relativo: 1 = parla del compito come all'inizio; sotto 0,35 per 6 azioni di fila = deriva
-  function driftOf(al) {
-    let run = 0;
-    for (let i = al.length - 1; i >= 0; i--) { if (al[i][2] / al[i][3] < 0.35) run++; else break; }
-    return run;
-  }
+  // allineamento relativo: 1 = parla del compito come all'inizio. La regola e le soglie (per fonte dei vettori) sono
+  // quelle del motore: drift-rule.js, con le soglie che arrivano da /api/agentmind (th)
+  const RULE = window.PlatypusDrift;
   function drawStar() {
     const e = el();
     const cv = e.querySelector('.wm-star canvas');
@@ -928,10 +925,11 @@
     const pad = 4, x = t => pad + ((t - a) / (b - a)) * (w - 2 * pad);
     const y = v => h - 6 - Math.min(1.3, v) / 1.3 * (h - 14);
     // fasce: sulla rotta, incerto, alla deriva
+    const th = m.th || RULE.TFIDF;
     ctx.globalAlpha = 0.12;
-    ctx.fillStyle = '#00E436'; ctx.fillRect(0, y(1.3), w, y(0.6) - y(1.3));
-    ctx.fillStyle = '#FFEC27'; ctx.fillRect(0, y(0.6), w, y(0.35) - y(0.6));
-    ctx.fillStyle = '#FF004D'; ctx.fillRect(0, y(0.35), w, y(0) - y(0.35));
+    ctx.fillStyle = '#00E436'; ctx.fillRect(0, y(1.3), w, y(th.warn) - y(1.3));
+    ctx.fillStyle = '#FFEC27'; ctx.fillRect(0, y(th.warn), w, y(th.rel) - y(th.warn));
+    ctx.fillStyle = '#FF004D'; ctx.fillRect(0, y(th.rel), w, y(0) - y(th.rel));
     ctx.globalAlpha = 1;
     // cambi di compito
     ctx.font = '13px VT, monospace';
@@ -942,12 +940,12 @@
     al.forEach((p, i) => { const px = x(p[0]), py = y(p[2] / p[3]); i && al[i - 1][4] === p[4] ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }); // la linea riparte a ogni nuovo compito
     ctx.stroke(); ctx.lineWidth = 1;
     const last = al[al.length - 1], rel = last[2] / last[3];
-    const run = driftOf(al);
+    const j = RULE.judge(al, th), run = j.run;
     const goal = m.goals.filter(g => g[0] <= T).pop();
     const since = al.filter(p => p[4] === last[4]);
     const near = since.slice().sort((p, q) => q[1] - p[1]).slice(0, 2), far = since.slice(-12).sort((p, q) => p[1] - q[1]).slice(0, 2);
-    const weak = last[3] <= 0.031; // le parole del compito non compaiono mai nel lavoro: non si può giudicare
-    const state = weak ? `<b class="mid">${esc(tr('NON MISURABILE'))}</b> ${esc(tr('le parole del compito non compaiono nel suo lavoro'))}` : run >= 6 ? `<b class="bad">${esc(tr('ALLA DERIVA'))}</b> ${esc(trn('da {n} azione', 'da {n} azioni', run))}` : rel < 0.6 ? `<b class="mid">${esc(tr('SI ALLONTANA'))}</b>` : `<b class="ok">${esc(tr('SULLA ROTTA'))}</b>`;
+    // non misurabile: le parole del compito non compaiono mai nel lavoro, o la fonte dei vettori non è ancora calibrata
+    const state = j.uncalibrated ? `<b class="mid">${esc(tr('NON MISURABILE'))}</b> ${esc(tr('questa fonte del significato non è ancora calibrata'))}` : j.state === 'weak' ? `<b class="mid">${esc(tr('NON MISURABILE'))}</b> ${esc(tr('le parole del compito non compaiono nel suo lavoro'))}` : j.state === 'drifting' ? `<b class="bad">${esc(tr('ALLA DERIVA'))}</b> ${esc(trn('da {n} azione', 'da {n} azioni', run))}` : j.state === 'leaving' ? `<b class="mid">${esc(tr('SI ALLONTANA'))}</b>` : `<b class="ok">${esc(tr('SULLA ROTTA'))}</b>`;
     setInfo(`<div>${state} · ${esc(tr('allineamento {p}%', { p: Math.round(Math.min(1.3, rel) * 100) }))}</div>` +
       (goal ? `<div class="g">★ ${esc(goal[1])}</div>` : '') +
       `<div><span class="dim">${esc(tr('più vicine al compito:'))}</span> ${near.map(p => esc(p[5])).join(' · ') || '—'}</div>` +

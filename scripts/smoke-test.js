@@ -398,6 +398,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const fbDrLast = fbDrMind.align && fbDrMind.align[fbDrMind.align.length - 1];
   ok(core.state.settings.fbDrift === 'shadow' && fbDr.status === 204 && fbDrE && fbDrE.mode === 'shadow' && /^Platypus: your last \d+ actions look far from the task you were given: «Fix the login token refresh/.test(fbDrE.text), 'ritorno al compito: la deriva viene dalla stella polare dell\'ufficio, e resta in ombra → ' + fbDr.status + ' «' + (fbDrE ? fbDrE.text.slice(0, 60) : '-') + '…»');
   ok(fbDrLast && fbDrLast[2] / fbDrLast[3] < 0.35, `ritorno al compito: è la stessa serie che la mappa disegna (allineamento ${fbDrLast ? Math.round(100 * fbDrLast[2] / fbDrLast[3]) : '-'}%)`);
+  // E5 · la mappa riceve la regola della deriva dal server: è la stessa del motore e dà la stessa risposta
+  const ruleJs = await get(port, '/drift-rule.js');
+  const ruleBox = { self: {} };
+  try { require('vm').runInNewContext(ruleJs.body, ruleBox); } catch {}
+  const pageRule = ruleBox.self.PlatypusDrift, fbDrS = core.state.sessions.get(fbDrSid);
+  const engineDr = require(path.join(ROOT, 'src', 'core', 'semantic')).drift(fbDrS.main.mind, fbDrS.corpus);
+  const pageDr = pageRule && pageRule.judge(fbDrMind.align, fbDrMind.th);
+  ok(ruleJs.status === 200 && ruleJs.body === fs.readFileSync(path.join(ROOT, 'src', 'core', 'drift-rule.js'), 'utf8') && pageDr && engineDr && pageDr.drifting === engineDr.drifting && pageDr.run === engineDr.run && pageDr.rel === engineDr.rel, `significato: /drift-rule.js è la regola del motore, e sulla stessa serie la mappa dice lo stesso (deriva da ${pageDr && pageDr.run} azioni)`);
   core.state.setSettings({ fbDrift: 'off' });
   // C1 · quello che l'ufficio e il Libro mostrano: gli ultimi messaggi nello stato, il registro del progetto, i conteggi
   const fbSaid = core.feedbackSaid();
