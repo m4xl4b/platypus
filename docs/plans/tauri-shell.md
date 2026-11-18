@@ -103,7 +103,7 @@ Today it is Electron that decides when to send a notification, by listening to t
   - If a click on the notification cannot be intercepted on some system, at least bring the window to the front. Note the limit.
 - **Icon and counters:** the icon changes with the waiting count and the window flashes (`request_user_attention`).
 
-## T5 · Mini mode, window and start-up  [ ]
+## T5 · Mini mode, window and start-up  [x]
 
 - **Mini mode:** a small window in the bottom-right corner of the active screen, always on top; on exit it goes back as before.
 - **Window:** a single instance; a second start brings the first to the front. Position and size are remembered.
@@ -315,3 +315,23 @@ The commands `npm run tauri:build` and `--shell tauri` come with T3 and T6: chec
   - `cargo test`: the waiting icon has the red dot in the corner and the rest is unchanged;
   - `npm test`: "Tutto a posto.", with two new checks on the `menu` event and on the counters' texts; `npm run i18n:check`: 0 missing.
 - Not checked: really installing or removing the hooks (not in the tests, by the plan's rule); Linux and macOS.
+
+### 2026-11-18 · T5 · Mini mode, window and start-up
+
+- Done (`shells/tauri/src-tauri/src/office.rs`, `startup.rs`, `main.rs`, `tray.rs`):
+  - Mini mode was already complete in T3 (a 380×150 strip in the bottom-right corner of the work area of the screen the window is on, always on top, back to the previous position and size on exit; maximize from mini goes back to normal first).
+  - Single instance: `tauri-plugin-single-instance`, registered first; a second start brings the first window to the front (`show_window`, which also goes to the floor of a recent notification).
+  - Position and size remembered in the shell's `config.json` (`bounds`, physical pixels), saved 400 ms after the last move or resize, never for the mini strip, maximized or minimised. At start the saved place is used only if it passes the same check as `fitBounds` in `src/bounds.js` (the top of the window at least 120×40 px inside a connected screen; the size never larger than the main screen), with three Rust tests for it.
+  - Start at login: `tauri-plugin-autostart` with **the same entry name as Electron** on each system: Windows `com.platypus.desktop` in `HKCU\…\Run` (Electron's default name is its AppUserModelID), macOS `~/Library/LaunchAgents/com.platypus.desktop.plist`, Linux `~/.config/autostart/platypus.desktop`. One name means there can never be two entries. Each shell shows "Start at login" as on only if the entry starts its own program, so turning it off in one shell never removes the other's entry, and turning it on replaces it. The tray item is back in the menu.
+  - Wayland (Linux): like Electron, on native Wayland (`WAYLAND_DISPLAY` set and `GDK_BACKEND` not `x11`) the PIN is reported off and cannot be turned on, the saved position is not applied and x/y are not overwritten with Wayland's zeros. `GDK_BACKEND=x11` would run it in XWayland.
+  - `config.json` is also read when saved with a UTF-8 BOM (Windows PowerShell 5.1 writes one; found during the check).
+- Decisions:
+  - Position memory is our own code instead of `tauri-plugin-window-state`: it keeps Electron's exact rule for disconnected screens and stores the data in the shell's own folder (so `PLATYPUS_DATA_DIR` keeps it apart in the checks).
+  - `PLATYPUS_AUTOSTART_NAME` overrides the entry name, only for the checks: on Windows the Run key is in the real registry (a temporary home does not move it), and the checks must never touch a real entry.
+  - The single-instance lock is per identifier, not per `PLATYPUS_DATA_DIR` as in Electron. That is enough today (Max does not run the Tauri shell), but two Tauri shells with different data folders cannot run at the same time.
+- Checked on `[win]` (temporary home, port 47830, `PLATYPUS_DATA_DIR`):
+  - saved place 300,200 1000×640 → the window opens exactly there, and it is saved again on exit; saved x = 9000 (a screen that is not there) → the size is kept and Windows chooses the position.
+  - a second start exits after 48 ms with code 0 and the first one gets the event (`[second-instance]`).
+  - start at login with the test name `com.platypus.desktop.loop-test`, starting from an Electron-like value (`"C:\fake\electron.exe" "D:\fake\platypus"`): the item shows off (not ours), choosing it writes our program's path, choosing it again removes the value. `auto-launch` leaves its `StartupApproved\Run` value behind; I removed both test values. Before the test the real Run key had no Platypus entry, and it was not touched.
+  - `cargo test`: 4 tests; `npm test`: "Tutto a posto."; `npm run i18n:check`: 0 missing.
+- **Open, for the Linux computer (`[linux]`)**: the `~/.config/autostart/platypus.desktop` entry, and whether always on top and the position work in WebKitGTK on Wayland and in XWayland (`GDK_BACKEND=x11`); if XWayland works, the PIN could offer it as Electron does. Not possible on this PC.

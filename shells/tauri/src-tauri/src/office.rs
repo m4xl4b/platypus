@@ -45,11 +45,56 @@ pub struct Config {
     pub show_cowork: bool,
     /// already asked once whether to connect to Claude Code
     pub asked_hooks: bool,
+    /// the window's last normal position and size (physical pixels), like Electron's `cfg.bounds`
+    pub bounds: Option<Bounds>,
 }
 impl Default for Config {
     fn default() -> Self {
-        Config { pin: true, notify: true, show_cowork: true, asked_hooks: false }
+        Config { pin: true, notify: true, show_cowork: true, asked_hooks: false, bounds: None }
     }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Area {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The saved position counts only if the top of the window (where you drag it) falls at least a bit inside a
+/// screen connected now; the size never exceeds the main screen. The same rule as `fitBounds` in src/bounds.js.
+/// `areas[0]` is the main screen's work area. Returns the size and, if usable, the position.
+pub fn fit_bounds(b: Bounds, areas: &[Area]) -> (u32, u32, Option<(i32, i32)>) {
+    const MIN_VISIBLE_W: i64 = 120;
+    const MIN_VISIBLE_H: i64 = 40;
+    let Some(main) = areas.first() else { return (b.width, b.height, Some((b.x, b.y))) };
+    let (w, h) = (b.width.min(main.width), b.height.min(main.height));
+    let visible = areas.iter().any(|a| {
+        let ix = (b.x as i64 + w as i64).min(a.x as i64 + a.width as i64) - (b.x as i64).max(a.x as i64);
+        let iy = (b.y as i64 + MIN_VISIBLE_H).min(a.y as i64 + a.height as i64) - (b.y as i64).max(a.y as i64);
+        ix >= MIN_VISIBLE_W && iy >= MIN_VISIBLE_H
+    });
+    (w, h, if visible { Some((b.x, b.y)) } else { None })
+}
+
+/// Native Wayland (Linux): no always on top and no window position, as in Electron (`WAYLAND` in src/main.js).
+/// `GDK_BACKEND=x11` runs the shell in XWayland, where both work.
+pub fn wayland() -> bool {
+    cfg!(target_os = "linux")
+        && std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var("GDK_BACKEND").map(|v| !v.contains("x11")).unwrap_or(true)
+}
+/// On native Wayland the PIN is off, whatever was saved (like `pinState()` in Electron).
+pub fn pin_state(cfg: &Config) -> bool {
+    !wayland() && cfg.pin
 }
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -69,6 +114,8 @@ pub struct Shell {
     widget: Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>>,
     maximized: AtomicBool,
     shown: AtomicBool,
+    /// increases at every move or resize: the position is saved 400 ms after the last one
+    moves: std::sync::atomic::AtomicU64,
     pub counts: Mutex<Counts>,
     /// the tray menu's state and texts, from the engine
     pub menu: Mutex<crate::tray::MenuState>,
@@ -83,7 +130,7 @@ impl Shell {
     pub fn new(data: PathBuf) -> Shell {
         let cfg = std::fs::read_to_string(data.join("config.json"))
             .ok()
-            .and_then(|s| serde_json::from_str::<Config>(&s).ok())
+            .and_then(|s| serde_json::from_str::<Config>(s.trim_start_matches('\u{feff}')).ok()) // also if saved with a BOM
             .unwrap_or_default();
         Shell {
             port: AtomicU16::new(0),
@@ -93,6 +140,7 @@ impl Shell {
             widget: Mutex::new(None),
             maximized: AtomicBool::new(false),
             shown: AtomicBool::new(false),
+            moves: std::sync::atomic::AtomicU64::new(0),
             counts: Mutex::new(Counts::default()),
             menu: Mutex::new(Default::default()),
             pending_goto: Mutex::new(None),
@@ -113,7 +161,7 @@ impl Shell {
         }
     }
     pub fn pin(&self) -> bool {
-        self.cfg.lock().unwrap().pin
+        pin_state(&self.cfg.lock().unwrap())
     }
     pub fn origin(&self) -> String {
         format!("http://127.0.0.1:{}", self.port())
@@ -252,10 +300,13 @@ pub fn open_window(app: &AppHandle) -> tauri::Result<()> {
         }
     }
     let win = b.build()?;
+    restore_bounds(&win, &shell);
     let w2 = win.clone();
     win.on_window_event(move |ev| match ev {
+        WindowEvent::Moved(_) => remember_bounds(&w2),
         // there is no "maximized" event: follow the real state on every resize, like Electron's maximize/unmaximize
         WindowEvent::Resized(_) => {
+            remember_bounds(&w2);
             let now = w2.is_maximized().unwrap_or(false);
             let shell = w2.state::<Shell>();
             if shell.maximized.swap(now, Ordering::SeqCst) != now {
@@ -269,6 +320,51 @@ pub fn open_window(app: &AppHandle) -> tauri::Result<()> {
     });
     crate::office::snapshot(app);
     Ok(())
+}
+
+/// Put the window where it was last time (still hidden), if that place is on a screen connected now.
+fn restore_bounds(win: &WebviewWindow, shell: &Shell) {
+    let Some(b) = shell.cfg.lock().unwrap().bounds else { return };
+    let mut areas: Vec<Area> = Vec::new();
+    let primary = win.primary_monitor().ok().flatten();
+    let all = win.available_monitors().unwrap_or_default();
+    for m in primary.iter().chain(all.iter()) {
+        let wa = m.work_area();
+        areas.push(Area { x: wa.position.x, y: wa.position.y, width: wa.size.width, height: wa.size.height });
+    }
+    let (w, h, pos) = fit_bounds(b, &areas);
+    let _ = win.set_size(PhysicalSize::new(w, h));
+    if let (Some((x, y)), false) = (pos, wayland()) {
+        let _ = win.set_position(PhysicalPosition::new(x, y));
+    }
+}
+
+/// After a move or a resize, save the normal position and size (not the mini strip, not maximized or minimised).
+fn remember_bounds(win: &WebviewWindow) {
+    let shell = win.state::<Shell>();
+    if shell.widget.lock().unwrap().is_some() || win.is_maximized().unwrap_or(false) || win.is_minimized().unwrap_or(false) {
+        return;
+    }
+    let (Ok(p), Ok(s)) = (win.outer_position(), win.inner_size()) else { return };
+    if s.width == 0 || s.height == 0 {
+        return;
+    }
+    {
+        let mut c = shell.cfg.lock().unwrap();
+        let prev = c.bounds;
+        // on Wayland x/y are always 0: keep the saved ones (they serve in XWayland)
+        let (x, y) = if wayland() { prev.map(|b| (b.x, b.y)).unwrap_or((0, 0)) } else { (p.x, p.y) };
+        c.bounds = Some(Bounds { x, y, width: s.width, height: s.height });
+    }
+    let n = shell.moves.fetch_add(1, Ordering::SeqCst) + 1;
+    let w = win.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        let shell = w.state::<Shell>();
+        if shell.moves.load(Ordering::SeqCst) == n {
+            shell.save_cfg();
+        }
+    });
 }
 
 // ---------------------------------------------------------------- commands from the page
@@ -308,6 +404,9 @@ pub fn toggle_pin(app: AppHandle, window: WebviewWindow, shell: State<'_, Shell>
 
 /// PIN from the page or from the tray menu: saved, and applied unless the window is the mini strip.
 pub fn toggle_pin_window(window: &WebviewWindow, shell: &Shell) -> bool {
+    if wayland() {
+        return false; // see `wayland()`: the PIN stays off there
+    }
     let on = {
         let mut c = shell.cfg.lock().unwrap();
         c.pin = !c.pin;
@@ -439,4 +538,38 @@ pub fn snapshot(app: &AppHandle) {
             app.exit(0);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fit_bounds, Area, Bounds};
+
+    const MAIN: Area = Area { x: 0, y: 0, width: 1920, height: 1040 };
+    const RIGHT: Area = Area { x: 1920, y: 0, width: 2560, height: 1400 };
+
+    #[test]
+    fn a_position_on_a_connected_screen_is_kept() {
+        let b = Bounds { x: 100, y: 80, width: 980, height: 620 };
+        assert_eq!(fit_bounds(b, &[MAIN, RIGHT]), (980, 620, Some((100, 80))));
+        let b2 = Bounds { x: 2200, y: 300, width: 980, height: 620 };
+        assert_eq!(fit_bounds(b2, &[MAIN, MAIN, RIGHT]), (980, 620, Some((2200, 300))));
+    }
+
+    #[test]
+    fn a_screen_that_is_gone_drops_the_position() {
+        // it was on the right screen, which is not connected any more
+        let b = Bounds { x: 2200, y: 300, width: 980, height: 620 };
+        assert_eq!(fit_bounds(b, &[MAIN]), (980, 620, None));
+        // only a few pixels of the title bar inside: not enough to grab it
+        let edge = Bounds { x: 1850, y: 10, width: 980, height: 620 };
+        assert_eq!(fit_bounds(edge, &[MAIN]).2, None);
+        let top = Bounds { x: 100, y: -630, width: 980, height: 620 };
+        assert_eq!(fit_bounds(top, &[MAIN]).2, None);
+    }
+
+    #[test]
+    fn the_size_never_exceeds_the_main_screen() {
+        let b = Bounds { x: 0, y: 0, width: 3000, height: 2000 };
+        assert_eq!(fit_bounds(b, &[MAIN]), (1920, 1040, Some((0, 0))));
+    }
 }

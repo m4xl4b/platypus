@@ -100,7 +100,7 @@ pub fn rebuild(app: &AppHandle) {
         let label = if m.label.is_empty() { "Platypus".to_string() } else { m.label.replace('&', "&&") };
         let counts = MenuItem::with_id(app, "counts", label, false, None::<&str>)?;
         let show = MenuItem::with_id(app, "show", text(&m, "show", "Show the office"), true, None::<&str>)?;
-        let pin = CheckMenuItem::with_id(app, "pin", text(&m, "pin", "Always on top"), true, cfg.pin, None::<&str>)?;
+        let pin = CheckMenuItem::with_id(app, "pin", text(&m, "pin", "Always on top"), true, crate::office::pin_state(&cfg), None::<&str>)?;
         let demo = CheckMenuItem::with_id(app, "demo", text(&m, "demo", "Demo mode"), true, m.demo, None::<&str>)?;
         let notify = CheckMenuItem::with_id(app, "notify", text(&m, "notify", "Notifications"), true, cfg.notify, None::<&str>)?;
         let cowork = CheckMenuItem::with_id(app, "cowork", text(&m, "cowork", "Show Cowork sessions"), true, m.cowork, None::<&str>)?;
@@ -114,9 +114,10 @@ pub fn rebuild(app: &AppHandle) {
         let report = MenuItem::with_id(app, "report", text(&m, "report", "Today's report"), true, None::<&str>)?;
         let browser = MenuItem::with_id(app, "browser", text(&m, "browser", "Open in the browser"), true, None::<&str>)?;
         let folder = MenuItem::with_id(app, "folder", text(&m, "folder", "Open the Claude Code folder"), !m.base.is_empty(), None::<&str>)?;
+        let login = CheckMenuItem::with_id(app, "login", text(&m, "login", "Start at login"), true, crate::startup::login_enabled(app), None::<&str>)?;
         let quit = MenuItem::with_id(app, "quit", text(&m, "quit", "Quit"), true, None::<&str>)?;
         let (s1, s2, s3) = (PredefinedMenuItem::separator(app)?, PredefinedMenuItem::separator(app)?, PredefinedMenuItem::separator(app)?);
-        Menu::with_items(app, &[&counts, &s1, &show, &pin, &demo, &notify, &cowork, &s2, &hooks, &report, &browser, &folder, &s3, &quit])
+        Menu::with_items(app, &[&counts, &s1, &show, &pin, &demo, &notify, &cowork, &s2, &hooks, &report, &browser, &folder, &s3, &login, &quit])
     };
     match build() {
         Ok(menu) => {
@@ -131,7 +132,7 @@ pub fn rebuild(app: &AppHandle) {
         println!(
             "[tray] {}",
             serde_json::json!({ "label": m.label, "tooltip": m.tooltip, "hooks": m.hooks, "demo": m.demo, "cowork": m.cowork,
-                "pin": cfg.pin, "notify": cfg.notify, "show": plain(&m, "show", ""), "quit": plain(&m, "quit", "") })
+                "pin": crate::office::pin_state(&cfg), "login": crate::startup::login_enabled(app), "notify": cfg.notify, "show": plain(&m, "show", ""), "quit": plain(&m, "quit", "") })
         );
     }
 }
@@ -264,6 +265,14 @@ pub fn on_menu(app: &AppHandle, id: &str) {
                 let _ = app.opener().open_path(base, None::<&str>);
             }
         }
+        "login" => {
+            let on = !crate::startup::login_enabled(app);
+            crate::startup::set_login(app, on);
+            if snapshot_mode() {
+                println!("[login] {}", crate::startup::login_enabled(app));
+            }
+            rebuild(app);
+        }
         "quit" => app.exit(0),
         _ => {}
     }
@@ -354,7 +363,7 @@ pub fn snapshot_menu(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(delay / 2));
-        for id in list.split(',').map(|s| s.trim()).filter(|s| !s.is_empty() && *s != "quit" && *s != "folder" && *s != "login") {
+        for id in list.split(',').map(|s| s.trim()).filter(|s| !s.is_empty() && *s != "quit" && *s != "folder") {
             println!("[menu] {id}");
             on_menu(&app, id);
             std::thread::sleep(Duration::from_millis(600));

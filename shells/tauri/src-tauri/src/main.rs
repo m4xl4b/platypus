@@ -4,6 +4,7 @@
 
 mod engine;
 mod office;
+mod startup;
 mod tray;
 
 use std::path::PathBuf;
@@ -18,6 +19,14 @@ use crate::office::Shell;
 fn main() {
     let demo = std::env::args().any(|a| a == "--demo");
     let app = tauri::Builder::default()
+        // a second start brings the first window to the front (this plugin must come first)
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if tray::snapshot_mode() {
+                println!("[second-instance]");
+            }
+            office::show_window(app);
+        }))
+        .plugin(startup::plugin())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
