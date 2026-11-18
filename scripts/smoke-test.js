@@ -546,6 +546,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     ok(calls.some(c => c.openAtLogin === false && c.name === 'com.agentoffice.desktop'), 'Windows: la vecchia voce di avvio «com.agentoffice.desktop» viene tolta');
   }
 
+  // il controllo del log della modalità mini (lo usano le Actions su macOS)
+  {
+    const { check } = require('./check-mini-log');
+    ok(check('x\n[snapshot] bounds {"x":1,"y":2,"width":382,"height":151} onTop true\n').ok, 'modalità mini: striscia piccola e in primo piano → bene');
+    ok(!check('[snapshot] bounds {"x":1,"y":2,"width":980,"height":620} onTop true').ok && !check('[snapshot] bounds {"x":1,"y":2,"width":380,"height":150} onTop false').ok && !check('niente').ok, 'modalità mini: finestra grande, non in primo piano o senza riga → errore');
+  }
+
   // Node 24 stampa l'avviso DEP0190 se si passano argomenti a un processo con shell: l'avvio non deve farlo
   const launchSrc = fs.readFileSync(path.join(__dirname, 'launch.js'), 'utf8');
   ok(!/spawnSync\([^;]*\[[^\]]*\][^;]*shell:\s*(IS_WIN|true)/.test(launchSrc), 'avvio: nessun argomento separato con shell (avviso DEP0190 di Node 24)');

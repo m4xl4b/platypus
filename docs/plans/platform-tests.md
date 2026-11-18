@@ -158,7 +158,9 @@ Like W3 and W4, with the Linux terminals (GNOME Terminal, Konsole, the one in VS
   - `Platypus.app` created with `sips` and `iconutil` has a valid `Info.plist` (`plutil -lint`) and the icon;
   - `start.command` is executable.
 
-### M2 · A richer macOS job  [ ] [ci]
+### M2 · A richer macOS job  [!] [ci]
+
+Blocked: the workflow is written and its steps were checked on Windows, but following the run needs the branch pushed to GitHub, which needs Max's permission (see the Journal (Windows)).
 
 - **`.github/workflows/ci.yml`** (it already has the "Engine" and "Window" jobs on the three systems, macOS on `macos-15-intel`):
   - runs `platform-test.js` on all three systems;
@@ -268,7 +270,16 @@ How it was run: the window was started from the test clone with the temporary ho
   - **Autostart** (`src/autostart.js`, with a fake Electron `app`): macOS LaunchAgent created, `plutil -lint`, removed, old Agent Office plist removed; Linux `autostart\platypus.desktop` created and removed, old `agent-office.desktop` removed; Windows the arguments given to `setLoginItemSettings` (Electron path, repository folder), the removal of the old `com.agentoffice.desktop` value, and a write/read/delete round trip with `reg.exe` on a test branch `HKCU\Software\PlatypusPlatformTest` (so the real Run key is never touched).
   - **osint** (`src/core/osint.js`): `cmdArgs` and `resumeWin` on a folder with spaces and with `%`, and which tools exist (printed as info: PowerShell/cmd/wt/code on Windows, osascript/ps/code on macOS, xdotool/wmctrl/ps/code on Linux) with the base ones required. `focusSession` on the real process is run only with `CI=true` or `--focus`, because on a real desktop it would raise a window.
   - **Cowork search** (`coworkRoots()` and `findCoworkBases()` in `src/core/sources.js`) on a fake tree under each system's root: the right roots are listed, only the folder with transcripts is found (decoys inside `Cache`, `vm_bundles`, and an empty `projects` are ignored), `exclude` works, an extra root with `~` and quotes works, a root that does not exist is reported; on Windows also the Microsoft Store `Packages\Claude_...\LocalCache\Roaming\Claude` path.
-- **Run on Windows 11 (this PC):** 24 checks ok, "Tutto a posto."; the temporary folder and the registry branch are gone afterwards.
+- **Run on Windows 11 (this PC):** 23 checks ok, "Tutto a posto."; the temporary folder and the registry branch are gone afterwards.
 - **Not run:** the macOS and Linux branches (no Mac here; WSL has a `rocky` distribution but no Node, and I did not install anything). They are written from the code and will be exercised by the Actions (M2) and by the Linux loop. `wt.exe` and `code` are not in the PATH on this PC (printed as info).
+
+### 2026-11-18 · M2 · A richer macOS job (taken by the Windows loop; blocked at the check)
+
+- `.github/workflows/ci.yml`, job "Window" (already on the three systems):
+  - new step on all three systems: `node scripts/platform-test.js` with `CI=true` (so `focusSession` is also tried on the runner), before the window is opened;
+  - new macOS-only step "Mini mode": `PLATYPUS_SNAPSHOT_JS="document.getElementById('btn-mini').click()"` with `PLATYPUS_DEBUG=1`; the log line that `src/main.js` prints before the screenshot (`[snapshot] bounds {...} onTop true`) is checked by the new `scripts/check-mini-log.js` (strip at most 420x200 and always on top, else the job fails), and the screenshot `snapshot-mini-macOS.png` is saved;
+  - new macOS-only step "Reality map screenshot": the snapshot JS takes the first demo session and calls `window.openWorldMap(id, 'main')`; the screenshot is `snapshot-map-macOS.png`. Both new PNGs go out with the existing `snapshot-*.png` artifact upload.
+- **Checked on Windows** (same Electron variables, temporary home, port 47850): the mini step gives `{"width":382,"height":151} onTop true` and `check-mini-log.js` says ok; the map step gives a screenshot of the "MAP OF REALITY" panel (territory treemap, trajectory cube, radar), which I looked at. The new checks in `npm test` cover `check-mini-log.js`.
+- **Not done:** the real run on GitHub and looking at the macOS screenshots. Following the run (`gh run watch`) needs the branch pushed. **Waiting for Max's permission to `git push origin <this branch>`** (never main). I did not touch the YAML pins of the actions.
 
 ## Journal (Linux)
