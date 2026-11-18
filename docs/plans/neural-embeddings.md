@@ -51,7 +51,7 @@ Everything in `docs/plans/parallel.md` still applies. In addition:
 
 ---
 
-## E1 · Vectors of any length  [ ]
+## E1 · Vectors of any length  [x]
 
 - Make `semantic.js` independent of `DIM`: PCA, kmeans, Rocchio (the widening of the goal in `alignment`) and cosine use `v.length`.
 - Every vector carries its source: `{v, src: 'tfidf'|'ollama:<model>'|'onnx:<model>'}`.
@@ -168,3 +168,23 @@ Today's thresholds are valid for TF-IDF, not for neural vectors, which have much
 ## Journal
 
 (Every step adds an entry: date, task, what was done, how it was verified, decisions and doubts.)
+
+### 2026-11-18 · E1 · Vectors of any length
+
+**Done.**
+- `src/core/semantic.js`: `pca3` and `kmeans` take the length from the vectors (`vecs[0].length`); `alignment`, `drift` and `snapshotMinds` take an optional **meaning space** as their last argument, defaulting to the TF-IDF of the corpus. `DIM` is now used only inside `Corpus.vector`.
+- A space is `{src, version, goal(g), piece(p)}`: `src` is the source (`tfidf`, `ollama:<model>`, `onnx:<model>`), `goal`/`piece` return the vector or `null` when it has not arrived yet, `version` grows when new vectors arrive (it is part of the snapshot cache signature). `tfidfSpace(corpus)` is the default. This is how "every vector carries its source": a vector never travels without the space it came from, and every calculation uses exactly one space. The vector cache of E2 will store `{v, src}`.
+- The snapshot now also has `src` and `pending` (pieces left out because their vector has not arrived yet). `engine` is still `'lexical'` for TF-IDF and becomes `'neural'` otherwise. Changing the source with the same cache key starts again: the PCA axes of a different source are never reused.
+- New `scripts/unit-embed.js` (called from `scripts/smoke-test.js`, one line) and the fixture `scripts/fixtures/agentmind-tfidf.json`.
+
+**Rule for mixed sources (decision).** Pieces do not hold vectors at all; vectors live in the cache of each source, so a mind cannot "hold" two sources. The question is only which source a calculation uses. `pickSpace(minds, corpus, candidates)` takes the first candidate neural space that has a vector for **every goal and every action** of the minds involved; otherwise TF-IDF, which can always be recomputed from the term maps. Pieces of other kinds (results, files, replies, thinking, summaries) without a vector in the chosen space are left out of the cloud and counted in `pending`. The plan said "use the most common source": I chose "complete coverage of goals and actions" instead, because the north star and the drift rule need every action of the series; a series with holes would change `run` and the averages. Nothing is ever mixed.
+
+**How the text reaches a neural source (decision, before E2).** Each piece keeps `text`, a snippet of its text with whitespace collapsed, at most 320 characters (`SNIP`); when a result arrives, the action's snippet gets ` → <result snippet>` appended, capped at 480 (`SNIP_ACTION`), just as its term map is merged today. Goals already kept `text` (300 characters). Snippets live in memory only: minds are never serialized (checked: nothing outside `semantic.js` reads `pieces` except the demo and the API, which sends labels, not text). Worst case about 900 × 480 characters per mind. The cache of E2 keys vectors by the sha1 of the normalized snippet and the kind (`query` for goals, `document` for pieces), and stores no text.
+
+**Checks.**
+- The fixture was written with the code of `db4e531`, before touching `semantic.js`, from a demo scenario replayed as a transcript with a fixed clock and the office in Italian (portale-clienti: CLAUDE redoes the login, a compaction, a new task; a Plan subagent that starts on the DB migration and drifts into `src/ui/components`). After the change the numbers of the snapshot for `main`, `plan1` and `all` (pieces, goals, clusters, align, ctx) and `drift()` for both agents (`run`, `rel`, `weak`, `drifting`) are identical.
+- `scripts/unit-engine.js` is unchanged and its `drift`/`driftBack`/`snapshotMinds` checks pass.
+- New tests: snippets are bounded and the action carries its result; spaces of 8 and 384 dimensions go through PCA, kmeans, alignment and drift with finite numbers; a neural space missing one goal or one action vector gives TF-IDF; pieces without a vector are left out and counted; switching source and back gives the same numbers.
+- `npm test` → "Tutto a posto."; `npm run i18n:check` → 0 missing. Run with a temporary home, `PLATYPUS_PORT=47840`, `PLATYPUS_DATA_DIR=<worktree>/.platypus-dev`.
+
+**Doubts for Max.** None blocking. The 320-character snippet is a guess at what is useful for small multilingual models (about 80–100 tokens); E5 can say whether more text helps.
