@@ -198,6 +198,10 @@ class Bottega {
     return true;
   }
 
+  // "non parlare agli agenti di questo progetto": il feedback (feedback.js) lo rispetta prima di ogni altra cosa
+  setMute(cwd, on) { const b = this.book(cwd); b.mute = !!on; b.dirty = true; return b.mute; }
+  muted(cwd) { try { return !!this.book(cwd).mute; } catch { return false; } }
+
   // le lezioni pronte da mostrare: peso, livello e testi nella lingua di adesso
   view(cwd, now = Date.now()) {
     const b = this.book(cwd);
@@ -207,7 +211,7 @@ class Bottega {
       return { ...rest, weight: Math.round(weight * 100) / 100, level: l.pinned || (l.count > 1 && weight >= LESSON_WEIGHT) ? 'lesson' : 'observation', ...describe(l) };
     }).sort((x, y) => (y.pinned - x.pinned) || (y.weight - x.weight));
     const job = b.job ? { running: b.job.running, total: b.job.total, done: b.job.done, cases: b.job.cases, error: b.job.error } : null;
-    return { key: b.key, name: b.name, cwd: b.cwd, learnedSessions: Object.keys(b.learned || {}).length, learning: job, lessons };
+    return { key: b.key, name: b.name, cwd: b.cwd, mute: !!b.mute, learnedSessions: Object.keys(b.learned || {}).length, learning: job, lessons };
   }
 
   // i progetti che hanno un libro (sul disco o già in memoria), per la scheda BOTTEGA dell'atrio

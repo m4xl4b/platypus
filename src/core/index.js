@@ -47,6 +47,7 @@ const osint = require('./osint');
 const { Stats } = require('./stats');
 const hooks = require('./hooks');
 const feedback = require('./feedback');
+const { FeedbackLog } = require('./feedbacklog');
 
 const DEFAULT_PORT = Number(process.env.PLATYPUS_PORT) || 47800;
 const RENDERER = path.join(__dirname, '..', '..', 'renderer');
@@ -202,12 +203,14 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   // ---- feedback agli agenti: risposta sincrona agli hook. Mai un errore, mai un'attesa: se non c'è niente di pronto, 204
   // e Claude Code prosegue come se Platypus non ci fosse.
   const FEEDBACK_MS = 300;
-  const feedbackStats = { calls: 0, said: 0, late: 0, errors: 0 };
+  const feedbackStats = { calls: 0, said: 0, shadow: 0, late: 0, errors: 0 };
+  const feedbackLog = new FeedbackLog(path.join(path.dirname(settingsPath), 'feedback')); // accanto alle opzioni: ~/.platypus/feedback
+  const feedbackGate = new feedback.Gate(); // i limiti di frequenza, in memoria: ripartono con Platypus
   // PLATYPUS_FEEDBACK_CHECK=1: solo per la prova su una sessione vera (docs/plans/2.11-real-check.md)
   const FEEDBACK_CHECK = process.env.PLATYPUS_FEEDBACK_CHECK === '1';
   function feedbackHook(j, res, req) {
     const t0 = Date.now();
-    let out = null;
+    let out = null, entry = null, cwd = '';
     feedbackStats.calls++;
     if (FEEDBACK_CHECK) {
       let a = null;
@@ -221,14 +224,21 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       // a fine turno le ultime righe del transcript possono non essere ancora lette: servono per giudicare il turno
       if (ev === 'Stop' || ev === 'SubagentStop') { try { watcher.pollTracked(); } catch {} }
       const s = (j && state.sessions.get(j.session_id)) || null;
-      const r = feedback.decide(j, {
-        now: Date.now, deadline: t0 + FEEDBACK_MS, session: s, cwd: (j && j.cwd) || (s && s.cwd) || '', settings: state.settings,
+      cwd = (j && j.cwd) || (s && s.cwd) || '';
+      const r = feedback.respond(j, {
+        now: Date.now, deadline: t0 + FEEDBACK_MS, session: s, cwd, settings: state.settings,
         lessons: cwd => { try { return bottega.view(cwd).lessons; } catch { return []; } },
-      });
-      if (r) out = feedback.answer(ev, r.message);
+        muted: cwd => bottega.muted(cwd),
+        log: s && s.demo ? null : feedbackLog, // la demo non lascia righe nel registro vero
+      }, feedbackGate);
+      out = r.out; entry = r.entry;
+      if (entry && entry.mode === 'shadow') feedbackStats.shadow++;
     } catch { feedbackStats.errors++; out = null; }
     // calcolata tardi: non la mandiamo (la regola del tempo massimo vale anche per noi)
-    if (out && Date.now() - t0 > FEEDBACK_MS) { feedbackStats.late++; out = null; }
+    if (out && Date.now() - t0 > FEEDBACK_MS) {
+      feedbackStats.late++; out = null;
+      try { if (entry && entry.id) feedbackLog.setOutcome(cwd, entry.id, 'late'); } catch {} // nel registro risultava mandata: non lo è stata
+    }
     try {
       if (out) { feedbackStats.said++; json(res, 200, out); }
       else { res.writeHead(204); res.end(); }
@@ -410,6 +420,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       case '/api/bottega': {
         const cwd = projectCwd(j);
         if (!cwd) return json(res, 404, { ok: false });
+        // il progetto non vuole che Platypus parli ai suoi agenti (o lo vuole di nuovo)
+        if (j.action === 'mute' || j.action === 'unmute') return json(res, 200, { ok: true, mute: bottega.setMute(cwd, j.action === 'mute') });
         const ok = bottega.act(cwd, String(j.action || ''), String(j.id || ''));
         return json(res, ok ? 200 : 404, { ok });
       }
@@ -595,7 +607,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     server.close();
   }
 
-  return { state, stats, bottega, learnLive, feedbackStats, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
+  return { state, stats, bottega, learnLive, feedbackStats, feedbackLog, feedbackGate, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
     install: () => hooks.install({ port, base }),
     uninstall: () => hooks.uninstall({ base }),
     status: () => hooks.status({ base }),

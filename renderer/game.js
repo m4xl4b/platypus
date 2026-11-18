@@ -3169,12 +3169,28 @@ function settingsStatus() {
 }
 // gli hook di feedback (2.11): si installano e si tolgono da qui, a parte da quelli che osservano,
 // e sempre dopo aver visto le righe esatte che finiscono nelle impostazioni di Claude Code
-function feedbackHooksHtml() {
+// ogni funzione ha tre modi: spenta, ombra (registra che cosa direbbe, senza dirlo) e accesa; due nella 2.11 arrivano solo all'ombra
+const FEEDBACK_FEATURES = [
+  ['fbSessionLessons', tr('Lezioni del progetto a inizio sessione'), true],
+  ['fbElder', tr('Il Nonno parla all\'agente dopo una trappola nota'), true],
+  ['fbLoop', tr('Uscita dal giro in tondo (stesso errore due volte)'), true],
+  ['fbClaims', tr('Affermazioni senza prove a fine turno'), false],
+  ['fbDrift', tr('Richiamo al compito quando va alla deriva'), false],
+];
+function feedbackStateHtml() {
   const on = !!(snap && snap.hooks && snap.hooks.feedback);
+  return `<p class="${on ? 'on' : 'dim'}">${esc(on ? tr('Hook di feedback: installati.') : tr('Hook di feedback: non installati.'))} ${esc(tr('Da soli non dicono niente all\'agente.'))}</p>` +
+    `<button type="button" data-do="fbhooks">${esc(on ? tr('RIMUOVI GLI HOOK DI FEEDBACK…') : tr('INSTALLA GLI HOOK DI FEEDBACK…'))}</button><div class="fbconfirm" hidden></div>`;
+}
+function feedbackHooksHtml(st) {
+  const opt = (v, l, cur) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${esc(l)}</option>`;
+  const row = ([k, label, canOn]) => { const cur = (st && st[k]) || 'off'; return `<label><span>${esc(label)}</span><select name="${k}" data-fb>` +
+    opt('off', tr('spenta'), cur) + opt('shadow', tr('ombra'), cur) + (canOn ? opt('on', tr('accesa'), cur) : '') + '</select></label>'; };
   return `<fieldset class="fbhooks"><legend>${esc(tr('FEEDBACK AGLI AGENTI'))}</legend>` +
     `<p>${esc(tr('Platypus può dire all\'agente quello che vede (una lezione del Libro, un giro in tondo) attraverso gli hook di Claude Code. Servono hook a parte, che si installano solo da qui e solo dopo la tua conferma.'))}</p>` +
-    `<p class="${on ? 'on' : 'dim'}">${esc(on ? tr('Hook di feedback: installati.') : tr('Hook di feedback: non installati.'))} ${esc(tr('Da soli non dicono niente all\'agente.'))}</p>` +
-    `<button type="button" data-do="fbhooks">${esc(on ? tr('RIMUOVI GLI HOOK DI FEEDBACK…') : tr('INSTALLA GLI HOOK DI FEEDBACK…'))}</button><div class="fbconfirm" hidden></div></fieldset>`;
+    FEEDBACK_FEATURES.map(row).join('') +
+    `<p class="dim">${esc(tr('«Ombra» registra che cosa avrebbe detto, senza dirlo: serve a vedere se aiuterebbe. I messaggi sono rari (uno ogni 2 minuti per agente, 6 all\'ora per sessione) e mai due volte la stessa lezione. Le ultime due funzioni per ora arrivano solo all\'ombra.'))}</p>` +
+    `<div class="fbstate">${feedbackStateHtml()}</div></fieldset>`;
 }
 function bindFeedbackHooks(box) {
   const btn = box.querySelector('[data-do=fbhooks]'), cf = box.querySelector('.fbconfirm');
@@ -3197,8 +3213,8 @@ function bindFeedbackHooks(box) {
       if (!r || !r.ok) return toast((r && r.reason) || tr('Non sono riuscito a modificare le impostazioni di Claude Code'), false);
       if (snap && snap.hooks) snap.hooks.feedback = !!r.installed;
       toast(r.installed ? tr('Hook di feedback installati') : tr('Hook di feedback rimossi'));
-      // si ridisegna solo questo riquadro: le altre opzioni modificate e non salvate restano come sono
-      box.querySelector('.fbhooks').outerHTML = feedbackHooksHtml();
+      // si ridisegna solo lo stato degli hook: le opzioni modificate e non salvate restano come sono
+      box.querySelector('.fbstate').innerHTML = feedbackStateHtml();
       bindFeedbackHooks(box);
     };
   };
@@ -3207,7 +3223,7 @@ function toggleSettings() {
   const box = $('#settings');
   if (!box.hidden) { if (box._tryClose) box._tryClose(); else box.hidden = true; return; }
   const st = (snap && snap.settings) || {};
-  box.innerHTML = '<span class="x">X</span><h3>' + tr('OPZIONI') + '</h3>' + settingsGroupsHtml(st) + feedbackHooksHtml() + settingsStatus() +
+  box.innerHTML = '<span class="x">X</span><h3>' + tr('OPZIONI') + '</h3>' + settingsGroupsHtml(st) + feedbackHooksHtml(st) + settingsStatus() +
     `<p class="dim">${tr('Le opzioni restano salvate anche alla prossima apertura.')}</p>` +
     `<div class="btns save-bar"><button data-do="save">${tr('SALVA')}</button><span class="dirty" hidden>${tr('Modifiche non salvate')}</span></div>`;
   // chiudere con X dopo una modifica: la prima volta avvisa, la seconda chiude senza salvare
@@ -3229,6 +3245,7 @@ function toggleSettings() {
     for (const [k] of SETTINGS_CHECKS) body[k] = box.querySelector(`input[name=${k}]`).checked;
     for (const [k] of SETTINGS_TEXTS) body[k] = box.querySelector(`input[name=${k}]`).value;
     body.lang = box.querySelector('select[name=lang]').value;
+    for (const sel of box.querySelectorAll('select[data-fb]')) body[sel.name] = sel.value;
     const r = await api('/api/settings', body);
     if (r && r.budgetUSD != null) { snap.settings = r; dress.t = -1e9; toast(tr('Opzioni salvate')); box.hidden = true; boardSig = ''; reconcile(); } else toast(tr('Non sono riuscito a salvare'), false);
   };

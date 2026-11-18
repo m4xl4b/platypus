@@ -47,7 +47,7 @@
 
   function render() {
     const d = B.data;
-    const sig = JSON.stringify([d.lessons.map(l => [l.id, l.count, l.pinned, l.ignored, l.level]), d.learning, B.showObs, B.showIgnored, B.focus, B.md]);
+    const sig = JSON.stringify([d.lessons.map(l => [l.id, l.count, l.pinned, l.ignored, l.level]), d.learning, B.showObs, B.showIgnored, B.focus, B.md, d.mute]);
     if (sig === B.sig) return;
     B.sig = sig;
     const live = window.sessions ? new Set(sessions().filter(s => !s.demo).map(s => s.id)) : new Set();
@@ -77,6 +77,7 @@
       `<p class="honest">${esc(tr('Lezioni dedotte dai fatti (esiti, ripetizioni, correzioni) delle sessioni di questo progetto: indizi, non regole certe.'))}</p>` +
       `<div class="bar">${isDemo ? `<span class="dim">${esc(tr('Libro della demo: lezioni finte.'))}</span>` : learn}<span class="dim">${esc(trn('{n} sessione letta dall\'archivio', '{n} sessioni lette dall\'archivio', d.learnedSessions || 0))}</span>` +
       `<button data-do="md" title="${esc(tr('Prepara una sezione per il CLAUDE.md del progetto con le lezioni fissate e le più forti'))}">${esc(tr('PROPONI PER CLAUDE.MD'))}</button></div>` +
+      (isDemo ? '' : `<label class="mute" title="${esc(tr('Vale per le funzioni di feedback delle opzioni: con questa spunta Platypus non manda né registra messaggi per gli agenti di questo progetto.'))}"><input type="checkbox" data-do="mute" ${d.mute ? 'checked' : ''}> ${esc(tr('Non parlare agli agenti di questo progetto'))}</label>`) +
       (B.md ? `<div class="md"><div class="mh">${esc(tr('ANTEPRIMA'))} <span class="dim">${esc(B.md.path)}</span></div>` +
         (B.md.markdown ? `<pre>${esc(B.md.markdown)}</pre>` : `<p class="dim">${esc(WHY_NOT.empty)}</p>`) +
         `<div class="la"><button data-do="copy" ${B.md.markdown ? '' : 'disabled'}>${esc(tr('COPIA'))}</button>` +
@@ -102,6 +103,8 @@
       if (r && r.ok) { closeBottega(); if (window.goTo) goTo('replay'); }
       else if (window.toast) toast((r && r.error) || tr('Sessione non trovata'), false);
     };
+    const mute = e.querySelector('[data-do=mute]');
+    if (mute) mute.onchange = async () => { await post('/api/bottega', { action: mute.checked ? 'mute' : 'unmute' }); load(); };
     // CLAUDE.md: anteprima, copia, e scrittura solo dopo una conferma che mostra il percorso
     const mdBtn = e.querySelector('[data-do=md]');
     if (mdBtn) mdBtn.onclick = async () => {

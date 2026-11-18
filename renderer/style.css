@@ -624,6 +624,7 @@ body.tiny .balloon .ung { display: none; }
 #bottega .x { position: absolute; right: 10px; top: 8px; font-family: 'PS2P'; font-size: 10px; cursor: pointer; color: var(--dim); }
 #bottega .honest { margin: 0 0 6px; color: var(--dim); font-size: 15px; }
 #bottega .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+#bottega .mute { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 16px; color: var(--ink); cursor: pointer; }
 #bottega button { font-family: 'PS2P'; font-size: 7px; background: #2a2440; color: var(--ink); border: 0; padding: 5px 7px; cursor: pointer; }
 #bottega button.danger { background: #3a1420; color: #ff77a8; }
 #bottega .prog { color: var(--yellow); }

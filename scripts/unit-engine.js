@@ -536,10 +536,93 @@ function feedbackTests(ok) {
   const long = fb.say('x'.repeat(2000));
   ok(long.length === fb.MAX_TEXT && long.endsWith('…'), `feedback: testo lungo tagliato a ${fb.MAX_TEXT} caratteri (${long.length})`);
   ok(Object.values(fb.RULES).every(l => Array.isArray(l) && l.length === 0), 'feedback: in A1 nessuna regola è ancora accesa');
+  feedbackModeTests(ok, fb, inp);
   // la prova su una sessione vera: un marcatore per evento, e un solo blocco a fine turno
   const ck = ev => fb.checkAnswer(inp(ev));
   ok(/PLATY-PRE/.test(ck('PreToolUse').hookSpecificOutput.additionalContext) && /PLATY-FAIL/.test(ck('PostToolUseFailure').hookSpecificOutput.additionalContext) && ck('Notification') === null && fb.checkAnswer(null) === null, 'feedback, prova reale: un marcatore per evento');
   ok(ck('Stop').decision === 'block' && fb.checkAnswer(inp('Stop', { stop_hook_active: true })) === null, 'feedback, prova reale: a fine turno un solo blocco');
+}
+
+// feedback (2.11, A3): i tre modi di ogni funzione, i limiti di frequenza, il progetto zittito e il registro
+function feedbackModeTests(ok, fb, inp) {
+  const { OfficeState, DEFAULT_SETTINGS } = require(path.join(ROOT, 'src', 'core', 'state'));
+  // opzioni: tutto spento di base, solo modi validi, e due funzioni mai oltre l'ombra
+  ok(Object.values(fb.FEATURES).every(k => DEFAULT_SETTINGS[k] === 'off'), 'feedback: ogni funzione è spenta di base');
+  const st = new OfficeState({});
+  st.setSettings({ fbElder: 'on', fbLoop: 'boh', fbClaims: 'on', fbDrift: 'shadow', fbSessionLessons: 'shadow' });
+  ok(st.settings.fbElder === 'on' && st.settings.fbLoop === 'off' && st.settings.fbClaims === 'shadow' && st.settings.fbDrift === 'shadow', `feedback, opzioni: modi ripuliti (elder ${st.settings.fbElder}, loop ${st.settings.fbLoop}, claims ${st.settings.fbClaims})`);
+  st.stop && st.stop();
+  ok(fb.modeOf({ fbElder: 'on' }, 'elder') === 'on' && fb.modeOf({}, 'elder') === 'off' && fb.modeOf({ fbClaims: 'on' }, 'claims') === 'shadow' && fb.modeOf({ x: 'on' }, 'boh') === 'off', 'feedback: il modo di una funzione, spenta se manca o non esiste');
+  // spenta, ombra, accesa
+  let clock = Date.parse('2026-11-18T10:00:00Z'), ran = 0;
+  const logged = [], log = { append: (cwd, e) => { const x = { id: 'e' + logged.length, cwd, ...e }; logged.push(x); return x; } };
+  const elder = { feature: 'elder', run: () => { ran++; return { text: 'npm test is flaky here.', lessonId: 'L1' }; } };
+  const rules = { PostToolUseFailure: [elder] };
+  const ctx = (settings, extra = {}) => ({ now: () => clock, settings, cwd: '/p', log, ...extra });
+  const go = (settings, extra, gate, input = {}, rs = rules) => fb.respond(inp('PostToolUseFailure', input), ctx(settings, extra), gate, rs);
+  let r = go({ fbElder: 'off' });
+  ok(r.out === null && r.entry === null && ran === 0 && logged.length === 0, 'feedback spento: la regola non parte nemmeno');
+  r = go({ fbElder: 'shadow' });
+  ok(r.out === null && r.entry && r.entry.mode === 'shadow' && logged.length === 1 && logged[0].text === 'Platypus: npm test is flaky here.' && logged[0].cwd === '/p', 'feedback in ombra: niente all\'agente, una riga nel registro');
+  r = go({ fbElder: 'on' });
+  ok(r.out && r.out.hookSpecificOutput.additionalContext && r.entry.mode === 'on' && r.entry.agent === 'main' && r.entry.event === 'PostToolUseFailure' && r.entry.lessonId === 'L1', 'feedback acceso: il messaggio parte e resta nel registro');
+  // il progetto zittito viene prima di tutto
+  ran = 0;
+  r = go({ fbElder: 'on' }, { muted: () => true });
+  ok(r.out === null && r.entry === null && ran === 0, 'feedback: progetto zittito, niente messaggi e niente registro');
+  // limiti: uno ogni 2 minuti per agente, mai la stessa lezione due volte, 6 all'ora per sessione; i sottoagenti contano a parte
+  const on = { fbElder: 'on' };
+  let n = 0;
+  const fresh = { PostToolUseFailure: [{ feature: 'elder', run: () => ({ text: 'lesson ' + n, lessonId: 'N' + (n++) }) }] };
+  let gate = new fb.Gate({ now: () => clock });
+  ok(go(on, {}, gate, {}, fresh).out && !go(on, {}, gate, {}, fresh).out, 'limiti: allo stesso agente non due messaggi in 2 minuti');
+  ok(!!go(on, {}, gate, { agent_id: 'sub-1' }, fresh).out, 'limiti: un sottoagente ha il suo conto');
+  clock += fb.AGENT_GAP_MS + 1000;
+  ok(!!go(on, {}, gate, {}, fresh).out, 'limiti: passati 2 minuti si può di nuovo');
+  gate = new fb.Gate({ now: () => clock });
+  ok(go(on, {}, gate).out && (clock += fb.AGENT_GAP_MS + 1000) && !go(on, {}, gate).out, 'limiti: la stessa lezione non si ripete allo stesso agente, nemmeno più tardi');
+  ok(!!go(on, {}, gate, {}, { PostToolUseFailure: [elder, fresh.PostToolUseFailure[0]] }).out, 'limiti: se la prima regola ripeterebbe, parla la successiva');
+  gate = new fb.Gate({ now: () => clock });
+  const sent = [];
+  for (let i = 0; i < 8; i++) sent.push(!!go(on, {}, gate, { agent_id: 'a' + i }, fresh).out);
+  ok(sent.filter(Boolean).length === fb.SESSION_MAX && !sent[6] && !sent[7], `limiti: al massimo ${fb.SESSION_MAX} messaggi all'ora per sessione (${sent.filter(Boolean).length} su 8)`);
+  ok(!!go(on, {}, gate, { session_id: 'sess-fb-altra', agent_id: 'a0' }, fresh).out, 'limiti: un\'altra sessione non ne risente');
+  clock += 3600000 + 1000;
+  ok(!!go(on, {}, gate, { agent_id: 'a9' }, fresh).out, 'limiti: dopo un\'ora la sessione può di nuovo');
+  // la fine del turno ha la sua regola (una volta per turno) e non consuma gli altri limiti; il controllo resta in ombra anche se «acceso»
+  const stopRules = { Stop: [{ feature: 'claims', run: () => ({ text: 'you said the tests pass, but none ran.', block: true }) }] };
+  gate = new fb.Gate({ now: () => clock });
+  go(on, {}, gate, {}, fresh);
+  r = fb.respond(inp('Stop'), ctx({ fbClaims: 'on' }), gate, stopRules);
+  ok(r.out === null && r.entry && r.entry.mode === 'shadow' && r.entry.feature === 'claims', 'feedback: il controllo a fine turno nella 2.11 registra soltanto, anche subito dopo un altro messaggio');
+  // registro: righe aggiunte in coda, esiti, un file per progetto, rotazione
+  const { FeedbackLog } = require(path.join(ROOT, 'src', 'core', 'feedbacklog'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-fblog-'));
+  try {
+    const fl = new FeedbackLog(tmp, { maxBytes: 600 });
+    const e1 = fl.append('/p/app', { t: 1000, sid: 's', agent: 'main', feature: 'elder', mode: 'shadow', event: 'PostToolUseFailure', lessonId: 'L1', text: 'Platypus: uno' });
+    const e2 = fl.append('/p/app', { t: 2000, sid: 's', agent: 'sub-1', feature: 'loop', mode: 'on', event: 'PostToolUseFailure', lessonId: null, text: 'Platypus: due' });
+    fl.append('/p/altro', { t: 3000, sid: 'x', agent: 'main', feature: 'elder', mode: 'on', event: 'PostToolUse', text: 'Platypus: altrove' });
+    ok(fl.setOutcome('/p/app', e1.id, 'helped') && !fl.setOutcome('/p/app', '', 'x'), 'registro: l\'esito si aggiunge dopo');
+    let rec = fl.recent('/p/app');
+    ok(rec.length === 2 && rec[0].id === e2.id && rec[1].id === e1.id && rec[1].outcome === 'helped' && !rec[0].outcome && e1.id !== e2.id, 'registro: gli ultimi messaggi del progetto, dal più recente, con il loro esito');
+    ok(fl.recent('/p/altro').length === 1 && fl.recent('/p/nessuno').length === 0 && fs.readdirSync(tmp).length === 2, 'registro: un file per progetto');
+    for (let i = 0; i < 12; i++) fl.append('/p/app', { t: 4000 + i, sid: 's', agent: 'main', feature: 'elder', mode: 'on', event: 'PostToolUse', text: 'Platypus: riga ' + i + ' ' + 'x'.repeat(60) });
+    const files = fs.readdirSync(tmp).filter(f => f.startsWith(path.basename(fl.file('/p/app'), '.jsonl')));
+    rec = fl.recent('/p/app', 5);
+    ok(files.length === 2 && fs.statSync(fl.file('/p/app')).size < 1500 && rec.length === 5 && /riga 11/.test(rec[0].text), `registro: oltre il limite il file ruota e non cresce senza fine (${files.length} file)`);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  // il Libro ricorda il progetto zittito
+  const bt = require(path.join(ROOT, 'src', 'core', 'bottega'));
+  const bdir = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-mute-'));
+  try {
+    const b1 = new bt.Bottega(bdir);
+    ok(b1.muted('/p/app') === false && b1.setMute('/p/app', true) === true && b1.view('/p/app').mute === true, 'Libro: «non parlare agli agenti di questo progetto»');
+    b1.stop();
+    const b2 = new bt.Bottega(bdir);
+    ok(b2.muted('/p/app') === true && b2.muted('/p/altro') === false && b2.setMute('/p/app', false) === false, 'Libro: la scelta resta salvata, progetto per progetto');
+    b2.stop();
+  } finally { fs.rmSync(bdir, { recursive: true, force: true }); }
 }
 
 // il fumetto di un comando senza descrizione mostra il comando vero, non il "cd" davanti

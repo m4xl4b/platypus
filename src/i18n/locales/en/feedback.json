@@ -22,5 +22,16 @@
   "ANNULLA": "CANCEL",
   "Non sono riuscito a modificare le impostazioni di Claude Code": "I couldn't change the Claude Code settings",
   "Hook di feedback installati": "Feedback hooks installed",
-  "Hook di feedback rimossi": "Feedback hooks removed"
+  "Hook di feedback rimossi": "Feedback hooks removed",
+  "Vale per le funzioni di feedback delle opzioni: con questa spunta Platypus non manda né registra messaggi per gli agenti di questo progetto.": "It applies to the feedback features in the options: with this ticked, Platypus neither sends nor records messages for this project's agents.",
+  "Non parlare agli agenti di questo progetto": "Don't talk to this project's agents",
+  "Lezioni del progetto a inizio sessione": "Project lessons at session start",
+  "Il Nonno parla all'agente dopo una trappola nota": "Grandpa talks to the agent after a known trap",
+  "Uscita dal giro in tondo (stesso errore due volte)": "Out of the loop (same error twice)",
+  "Affermazioni senza prove a fine turno": "Claims without evidence at the end of a turn",
+  "Richiamo al compito quando va alla deriva": "Back to the task when it drifts",
+  "spenta": "off",
+  "ombra": "shadow",
+  "accesa": "on",
+  "«Ombra» registra che cosa avrebbe detto, senza dirlo: serve a vedere se aiuterebbe. I messaggi sono rari (uno ogni 2 minuti per agente, 6 all'ora per sessione) e mai due volte la stessa lezione. Le ultime due funzioni per ora arrivano solo all'ombra.": "\"Shadow\" records what it would have said, without saying it: it shows whether it would help. Messages are rare (one every 2 minutes per agent, 6 an hour per session) and never the same lesson twice. The last two features go no further than shadow for now."
 }

@@ -188,20 +188,39 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const fb0 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUse'));
   ok(fb0.status === 204 && fb0.body === '', 'feedback senza regole: 204 e corpo vuoto → ' + fb0.status);
   ok(!JSON.parse((await get(port, '/api/state')).body).sessions.some(s => s.id === 'fb-none'),'feedback: l\'hook non crea sessioni né tocca lo stato');
-  const fbRule = () => ({ feature: 'elder', text: 'npm test is flaky here: rerun it once before investigating.' });
+  const fbSay = () => ({ text: 'npm test is flaky here: rerun it once before investigating.', lessonId: 'L-smoke' });
+  const fbRule = { feature: 'elder', run: fbSay };
   fbMod.RULES.PostToolUseFailure.push(fbRule);
-  const fb1 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUseFailure', { error: 'Exit code 1' }));
+  const fbFail = extra => get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUseFailure', { error: 'Exit code 1', ...extra }));
+  const fbOffR = await fbFail();
+  ok(fbOffR.status === 204 && core.feedbackLog.recent(tmp).length === 0, 'feedback, funzione spenta (come di base): niente all\'agente e niente nel registro → ' + fbOffR.status);
+  core.state.setSettings({ fbElder: 'shadow' });
+  const fbSh = await fbFail();
+  let fbLog = core.feedbackLog.recent(tmp);
+  ok(fbSh.status === 204 && fbLog.length === 1 && fbLog[0].mode === 'shadow' && fbLog[0].feature === 'elder' && fbLog[0].agent === 'main' && /^Platypus: npm test/.test(fbLog[0].text), 'feedback in ombra: niente all\'agente, ma nel registro c\'è che cosa avrebbe detto → ' + fbSh.status);
+  core.state.setSettings({ fbElder: 'on' });
+  const fb1 = await fbFail({ session_id: 'fb-on' });
   let fb1j = {}; try { fb1j = JSON.parse(fb1.body); } catch {}
-  ok(fb1.status === 200 && fb1j.hookSpecificOutput && fb1j.hookSpecificOutput.hookEventName === 'PostToolUseFailure' && /^Platypus: npm test is flaky/.test(fb1j.hookSpecificOutput.additionalContext), 'feedback con una regola: il contesto arriva nella forma di Claude Code → ' + fb1.status);
+  ok(fb1.status === 200 && fb1j.hookSpecificOutput && fb1j.hookSpecificOutput.hookEventName === 'PostToolUseFailure' && /^Platypus: npm test is flaky/.test(fb1j.hookSpecificOutput.additionalContext), 'feedback acceso: il contesto arriva nella forma di Claude Code → ' + fb1.status);
+  const fbRep = await fbFail({ session_id: 'fb-on' });
+  const fbSub = await fbFail({ session_id: 'fb-on', agent_id: 'sub-1' });
+  ok(fbRep.status === 204 && fbSub.status === 200, `feedback: allo stesso agente non due volte di fila (${fbRep.status}), a un sottoagente sì (${fbSub.status})`);
+  const fbMute = JSON.parse((await get(port, '/api/bottega', 'POST', JSON.stringify({ cwd: tmp, action: 'mute' }))).body);
+  const fbMuted = await fbFail({ session_id: 'fb-muted' });
+  const fbView = JSON.parse((await get(port, '/api/bottega?cwd=' + encodeURIComponent(tmp))).body);
+  await get(port, '/api/bottega', 'POST', JSON.stringify({ cwd: tmp, action: 'unmute' }));
+  ok(fbMute.ok && fbMute.mute === true && fbView.mute === true && fbMuted.status === 204 && !core.feedbackLog.recent(tmp).some(e => e.sid === 'fb-muted'), 'feedback: un progetto zittito dal Libro non riceve né registra messaggi → ' + fbMuted.status);
   fbMod.RULES.PostToolUseFailure.length = 0;
-  fbMod.RULES.PostToolUse.push(() => { throw new Error('regola rotta'); });
-  const fb2 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUse'));
+  fbMod.RULES.PostToolUse.push({ feature: 'elder', run: () => { throw new Error('regola rotta'); } });
+  const fb2 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUse', { session_id: 'fb-broken' }));
   fbMod.RULES.PostToolUse.length = 0;
   ok(fb2.status === 204, 'feedback, una regola che lancia: 204, mai un errore → ' + fb2.status);
-  fbMod.RULES.PostToolUse.push(() => { const t = Date.now(); while (Date.now() - t < 350); return fbRule(); }); // più lenta del tempo massimo
-  const fb3 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUse'));
+  fbMod.RULES.PostToolUse.push({ feature: 'elder', run: () => { const t = Date.now(); while (Date.now() - t < 350); return fbSay(); } }); // più lenta del tempo massimo
+  const fb3 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUse', { session_id: 'fb-slow' }));
   fbMod.RULES.PostToolUse.length = 0;
-  ok(fb3.status === 204 && core.feedbackStats.late === 1, `feedback oltre i 300 ms: la risposta in ritardo non si manda → ${fb3.status} (in ritardo: ${core.feedbackStats.late})`);
+  fbLog = core.feedbackLog.recent(tmp);
+  ok(fb3.status === 204 && core.feedbackStats.late === 1 && fbLog.some(e => e.sid === 'fb-slow' && e.outcome === 'late'), `feedback oltre i 300 ms: la risposta in ritardo non si manda, e il registro lo dice → ${fb3.status} (in ritardo: ${core.feedbackStats.late})`);
+  core.state.setSettings({ fbElder: 'off' });
   const fb4 = await get(port, '/platypus-hook/feedback', 'POST', 'non è json {');
   ok(fb4.status === 204, 'feedback con un corpo che non è JSON: 204 → ' + fb4.status);
   // gli hook di feedback dal pannello delle opzioni: prima le righe da vedere, poi si scrive solo con la conferma
