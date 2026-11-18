@@ -1,6 +1,6 @@
 'use strict';
 // "Avvia all'accesso": funziona sia con l'app compilata sia lanciata dai sorgenti (git clone).
-//  - Windows: voce di avvio di Windows (con percorso ed argomenti di Electron)
+//  - Windows: voce di avvio di Windows, chiave Run di HKCU (con percorso ed argomenti di Electron)
 //  - macOS:   LaunchAgent in ~/Library/LaunchAgents (dai sorgenti) o login item (app compilata)
 //  - Linux:   file .desktop in ~/.config/autostart
 
@@ -16,6 +16,7 @@ const LEGACY = [
   path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.agentoffice.desktop.plist'),
   path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'autostart', 'agent-office.desktop'),
 ];
+const LEGACY_WIN_NAME = 'com.agentoffice.desktop'; // nome del valore nella chiave Run di HKCU
 function plistPath() { return path.join(os.homedir(), 'Library', 'LaunchAgents', LABEL + '.plist'); }
 function desktopPath() { return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'autostart', 'platypus.desktop'); }
 function xml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
@@ -34,6 +35,8 @@ function isEnabled(app) {
 
 function setEnabled(app, on) {
   for (const f of LEGACY) { try { fs.rmSync(f, { force: true }); } catch {} }
+  // Windows: la voce di avvio di Agent Office si chiamava come il suo AppUserModelID
+  if (process.platform === 'win32') { try { app.setLoginItemSettings({ openAtLogin: false, name: LEGACY_WIN_NAME }); } catch {} }
   try {
     if (process.platform === 'win32') {
       app.setLoginItemSettings({ openAtLogin: !!on, path: process.execPath, args: launchArgs(app) });

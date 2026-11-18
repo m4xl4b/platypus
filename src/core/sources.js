@@ -376,7 +376,48 @@ function hasTranscripts(projectsDir) {
   return n ? { n, newest } : 0;
 }
 
-// ritorna le cartelle "config" (quelle che contengono projects/) trovate sotto le radici
+// Percorso noto (docs/plans/cowork-structure.md, app 6.6395 su Windows):
+//   <radice>/local-agent-mode-sessions/<account>/<organizzazione>/local_<uuid>/.claude   (cartella config, con projects/)
+//   <radice>/local-agent-mode-sessions/<account>/<organizzazione>/local_<uuid>.json      (metadati della sessione)
+// Dai metadati teniamo solo i campi che servono: mai messaggi, prompt di sistema, e-mail o nome dell'account.
+function readCoworkMeta(file) {
+  const j = readJson(file);
+  if (!j || typeof j !== 'object') return null;
+  const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : undefined);
+  return {
+    title: str(j.title, 200),
+    sessionId: str(j.sessionId, 80),
+    cliSessionId: str(j.cliSessionId, 80),
+    model: str(j.model, 80),
+    createdAt: Number.isFinite(j.createdAt) ? j.createdAt : undefined,
+    lastActivityAt: Number.isFinite(j.lastActivityAt) ? j.lastActivityAt : undefined,
+    isArchived: typeof j.isArchived === 'boolean' ? j.isArchived : undefined,
+    isAgentCompleted: typeof j.isAgentCompleted === 'boolean' ? j.isAgentCompleted : undefined,
+  };
+}
+function subdirs(d) {
+  try { return fs.readdirSync(d, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name); } catch { return []; }
+}
+function findKnownCoworkBases(root) {
+  const out = [];
+  const top = path.join(root, 'local-agent-mode-sessions');
+  for (const a of subdirs(top)) {
+    for (const b of subdirs(path.join(top, a))) {
+      const dir = path.join(top, a, b);
+      for (const s of subdirs(dir)) {
+        if (!/^local_/.test(s)) continue;
+        const cfg = path.join(dir, s, '.claude');
+        const h = hasTranscripts(path.join(cfg, 'projects'));
+        if (h) out.push({ path: cfg, files: h.n, newest: h.newest, meta: readCoworkMeta(path.join(dir, s + '.json')) });
+      }
+    }
+  }
+  return out;
+}
+
+// ritorna le cartelle "config" (quelle che contengono projects/) trovate sotto le radici:
+// prima il percorso noto di Cowork; la ricerca larga resta per le radici dove quel percorso non trova niente
+// (la struttura può cambiare con la versione dell'app, o la radice può essere una cartella indicata a mano)
 function findCoworkBases(extra = '', exclude = []) {
   const ex = new Set(exclude.map(p => path.resolve(p).toLowerCase()));
   const roots = coworkRoots(extra).map(p => ({ path: p, exists: fs.existsSync(p) }));
@@ -384,6 +425,8 @@ function findCoworkBases(extra = '', exclude = []) {
   let visited = 0;
   for (const r of roots) {
     if (!r.exists) continue;
+    const known = findKnownCoworkBases(r.path).filter(b => !ex.has(path.resolve(b.path).toLowerCase()) && !bases.some(x => x.path === b.path));
+    if (known.length) { bases.push(...known); r.known = known.length; continue; }
     // la radice stessa può essere già una cartella config
     const queue = [[r.path, 0]];
     while (queue.length && visited < 8000) {
@@ -406,4 +449,4 @@ function findCoworkBases(extra = '', exclude = []) {
   return { roots, bases, visited };
 }
 
-module.exports = { TranscriptWatcher, SessionRegistry, claudeDir, findCoworkBases, coworkRoots };
+module.exports = { TranscriptWatcher, SessionRegistry, claudeDir, findCoworkBases, coworkRoots, readCoworkMeta };

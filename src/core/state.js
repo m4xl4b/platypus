@@ -293,6 +293,15 @@ class OfficeState extends EventEmitter {
     s.cwd = cwd;
     s.project = path.basename(cwd.replace(/\\/g, '/')) || cwd;
   }
+  // metadati che l'app desktop tiene per una sessione Cowork (docs/plans/cowork-structure.md): il titolo scelto
+  // nell'app vale più di quello del transcript. true se la sessione c'è già e il titolo è stato applicato
+  applyCoworkMeta(m) {
+    const s = m && m.cliSessionId && this.sessions.get(m.cliSessionId);
+    if (!s) return false;
+    if (m.title && s.title !== m.title) { s.title = m.title; s.titleFromApp = true; this.touch(); }
+    else if (m.title) s.titleFromApp = true;
+    return true;
+  }
 
   setEntrypoint(s, ep) {
     if (!ep || s.entrypoint === ep) return;
@@ -761,8 +770,8 @@ class OfficeState extends EventEmitter {
     const ts = Date.parse(line.timestamp) || 0;
     const s = this.ensureSession(sessionId, line.cwd, ts || undefined);
     if (line.entrypoint) this.setEntrypoint(s, line.entrypoint);
-    if (type === 'ai-title' && line.aiTitle) { s.title = line.aiTitle; this.touch(); return; }
-    if (type === 'custom-title' && line.customTitle) { s.title = line.customTitle; this.touch(); return; }
+    if (type === 'ai-title' && line.aiTitle) { if (!s.titleFromApp) s.title = line.aiTitle; this.touch(); return; }
+    if (type === 'custom-title' && line.customTitle) { if (!s.titleFromApp) s.title = line.customTitle; this.touch(); return; }
     if (type === 'summary' && line.summary && !s.title) { s.title = line.summary; this.touch(); return; }
     if (type === 'cost-state' && !agentId) { this.applyCostState(s, line); this.touch(); return; }
     if (type === 'system' && line.subtype === 'compact_boundary') {

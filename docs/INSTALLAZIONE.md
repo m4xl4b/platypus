@@ -11,6 +11,7 @@ Platypus si usa direttamente dai sorgenti: si clona il repository e si lancia. N
 - [Modalità browser](#modalità-browser)
 - [Aggiornare e disinstallare](#aggiornare-e-disinstallare)
 - [Casi particolari](#casi-particolari): WSL, più cartelle `.claude`, Cowork, proxy aziendale
+- [Testato su](#testato-su)
 - [Problemi frequenti](#problemi-frequenti)
 
 ## Requisiti
@@ -218,7 +219,7 @@ In **OPZ → Altre cartelle di Claude Code** (o con la variabile `PLATYPUS_CLAUD
 
 ### Cowork
 
-Le sessioni Cowork dell'app desktop Claude vengono cercate nella cartella dell'app (`%APPDATA%\Claude`, `~/Library/Application Support/Claude`, `~/.config/Claude`). Le sessioni Cowork avviate nel cloud (dal telefono o dal web) girano sui server di Anthropic e non lasciano file sul computer: quelle non si possono vedere. In **OPZ** trovi cosa è stato trovato e puoi aggiungere altre cartelle.
+Le sessioni Cowork dell'app desktop Claude vengono cercate nella cartella dell'app (`%APPDATA%\Claude`, `~/Library/Application Support/Claude`, `~/.config/Claude`); su Windows il percorso è `%APPDATA%\Claude\local-agent-mode-sessions`, la scheda mostra il titolo scelto nell'app e le sessioni archiviate nell'app non vengono seguite. Le sessioni Cowork avviate nel cloud (dal telefono o dal web) girano sui server di Anthropic e non lasciano file sul computer: quelle non si possono vedere. In **OPZ** trovi cosa è stato trovato e puoi aggiungere altre cartelle.
 
 ### Proxy aziendale
 
@@ -235,11 +236,23 @@ Se GitHub è bloccato, Electron si può scaricare da un mirror interno: `ELECTRO
 
 Se il repository è privato, git chiede di autenticarti. Il modo più semplice è [GitHub CLI](https://cli.github.com): `gh auth login`, poi `gh repo clone <proprietario>/platypus`. In alternativa usa una chiave SSH o un token personale.
 
+## Testato su
+
+Cosa è stato provato su sistemi veri e cosa no. Le date sono quelle delle prove; la struttura delle altre app (Claude Code, l'app desktop Claude) può cambiare dopo.
+
+| Sistema | Versione | Data | Cosa funziona | Limiti |
+|---|---|---|---|---|
+| Windows 11 Pro (x64) | build 26200, Node.js 24, Windows Terminal | 2026-11-18 | clone pulito in una cartella con lo spazio, `start.cmd`, aggiornamento dopo un `git pull`, modalità browser senza Electron, voce nel menu Start, notifiche (il clic apre il piano giusto), menu dell'icona, *Avvia all'accesso*, `npm run shortcut`, modalità mini su tre schermi, permessi dal fumetto (SÌ / SEMPRE / NO, due insieme, tempo scaduto, Platypus chiuso) con Claude Code 2.1.11, hook di feedback, ricerca delle sessioni Cowork dell'app Claude (versione Microsoft Store 6.6395; provata sulle sue cartelle e su una copia finta, non su una sessione in corso) | non provati: Windows 10, arm64, VS Code, JetBrains, WSL, una sessione Cowork in corso in quel momento. *VAI ALLA FINESTRA* sceglie la finestra del terminale per nome e titolo: con più finestre di Windows Terminal può scegliere quella sbagliata |
+| macOS (Intel) | runner macOS 15 su GitHub Actions, Node.js 22 | 2026-11-18 | tutti i test del motore, la finestra con la demo, la modalità mini, la mappa della realtà, il collegamento (`Platypus.app`, `Info.plist` valido, icona), il file di avvio all'accesso | provato solo dai controlli automatici, non da una persona: niente notifiche, icona nella barra, permessi o Cowork. Apple Silicon non provato |
+| Linux (Ubuntu) | runner Ubuntu su GitHub Actions, Node.js 22 e 24, schermo virtuale X | 2026-11-18 | test del motore, la finestra con la demo, la voce nel menu delle applicazioni e il file di avvio all'accesso | provato solo dai controlli automatici: niente icona nella barra, notifiche, *VAI ALLA FINESTRA*, Wayland o Cowork (l'app desktop Claude ufficiale per Linux è in beta, la struttura delle sue cartelle non è confermata) |
+
 ## Problemi frequenti
 
 | Problema | Soluzione |
 |---|---|
 | `node` non trovato | Installa Node.js e riapri il terminale. Su macOS con nvm: `start.sh` carica nvm da solo; se usi un altro gestore, assicurati che `node` sia nel PATH. |
+| Windows: `start.cmd` «non è riconosciuto» in PowerShell | PowerShell non lancia i file della cartella corrente per nome: scrivi `.\start.cmd`, oppure fai doppio clic. |
+| Windows: *Avvia all'accesso* si spegne o si accende da solo | Windows tiene una sola voce di avvio, chiamata `com.platypus.desktop`, per tutte le copie di Platypus sul computer (un clone, una versione impacchettata). Accendila dalla copia che vuoi tenere. |
 | Il primo avvio si ferma durante `npm ci` | Rete o proxy: vedi [Proxy aziendale](#proxy-aziendale). Intanto puoi usare `npm run web`. |
 | Linux: "The SUID sandbox helper binary was found, but is not configured correctly" | Su alcune distribuzioni (es. Ubuntu 24.04) la sandbox di Electron scaricato da npm è bloccata. Il lanciatore riparte da solo con `--no-sandbox`; per farlo sempre: `PLATYPUS_NO_SANDBOX=1 ./start.sh`. |
 | Linux: niente icona nella barra | GNOME ha bisogno dell'estensione *AppIndicator and KStatusNotifierItem Support*. La finestra funziona comunque. |

@@ -119,10 +119,15 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     const now = Date.now();
     for (const b of r.bases) {
       if (coworkWatchers.has(b.path) || now - (b.newest || 0) > ACTIVE_MS) continue;
+      if (b.meta && b.meta.isArchived === true) continue; // archiviata nell'app: non la seguiamo
       const w = new TranscriptWatcher(state, { base: b.path, forceCowork: true });
       coworkWatchers.set(b.path, w);
       w.start();
     }
+    // i titoli dell'app (arrivano dai metadati della sessione): subito, e di nuovo quando i transcript appena aperti hanno creato le sessioni
+    const applyMeta = () => { for (const b of r.bases) if (b.meta) state.applyCoworkMeta(b.meta); };
+    applyMeta();
+    const t = setTimeout(applyMeta, 6000); if (t.unref) t.unref();
     state.coworkScan = {
       t: now,
       roots: r.roots,

@@ -565,6 +565,44 @@ function shellEvents(port, headers = {}) {
   core.demo.stop();
   const dAfter = p1Cwd ? JSON.parse((await get(port, '/api/feedback/log?cwd=' + encodeURIComponent(p1Cwd))).body) : {};
   ok(dAfter.ok && dAfter.demo === false && dAfter.entries.length === 0 && ![...core.feedbackPending.values()].some(p => /^demo-/.test(p.entry.sid)) && !core.feedbackSaid().some(x => /^demo-/.test(x.sid)), 'demo spenta: niente più righe di feedback della demo, né in attesa né nei fumetti');
+
+  // Cowork su un albero finto di Windows (docs/plans/cowork-structure.md): percorso noto, titolo e stato dai metadati
+  console.log('Cowork (albero finto di Windows)');
+  {
+    const copyTree = (from, to) => { // `_claude` è la cartella `.claude` (git ignora `.claude/`)
+      fs.mkdirSync(to, { recursive: true });
+      for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+        const dst = path.join(to, e.name === '_claude' ? '.claude' : e.name);
+        if (e.isDirectory()) copyTree(path.join(from, e.name), dst); else fs.copyFileSync(path.join(from, e.name), dst);
+      }
+    };
+    const cwRoot = path.join(tmp, 'cowork-win');
+    copyTree(path.join(__dirname, 'fixtures', 'cowork-win'), cwRoot);
+    const fresh = new Date(); // i file di prova sembrano scritti adesso (il motore segue solo le cartelle usate nelle ultime 36 ore)
+    const touchAll = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) touchAll(p); else fs.utimesSync(p, fresh, fresh); } };
+    touchAll(cwRoot);
+    const { findCoworkBases, readCoworkMeta } = require(path.join(ROOT, 'src', 'core', 'sources'));
+    const r = findCoworkBases(cwRoot).bases.filter(b => b.path.startsWith(cwRoot));
+    const act = r.find(b => b.meta && b.meta.title === 'Prova Cowork dal metadato'), arc = r.find(b => b.meta && b.meta.isArchived === true);
+    ok(r.length === 2 && act && arc && act.files === 1 && act.path.endsWith(path.join('local_1', '.claude')), `Cowork: il percorso noto trova le due sessioni e non il decoy delle abilità (${r.map(b => path.basename(path.dirname(b.path))).join(', ')})`);
+    ok(act && act.meta.cliSessionId === 'c1' && act.meta.model === 'claude-opus-4-8' && act.meta.isArchived === false, 'Cowork: dai metadati titolo, id del transcript, modello e stato');
+    const meta = readCoworkMeta(path.join(cwRoot, 'local-agent-mode-sessions', 'a', 'b', 'local_1.json'));
+    ok(meta && !('emailAddress' in meta) && !('accountName' in meta) && !('systemPrompt' in meta) && !('initialMessage' in meta) && !JSON.stringify(meta).includes('example.invalid'), 'Cowork: dei metadati si tengono solo i campi che servono (niente e-mail, nome, prompt)');
+    // una radice senza il percorso noto (cartella indicata a mano, struttura cambiata): resta la ricerca larga
+    const odd = path.join(tmp, 'cowork-odd');
+    fs.mkdirSync(path.join(odd, 'chissa', 'dove', 'projects', 'p'), { recursive: true });
+    fs.writeFileSync(path.join(odd, 'chissa', 'dove', 'projects', 'p', 'x.jsonl'), '{}\n');
+    const r2 = findCoworkBases(odd).bases.filter(b => b.path.startsWith(odd));
+    ok(r2.length === 1 && r2[0].meta === undefined, 'Cowork: struttura sconosciuta → la ricerca larga trova lo stesso la cartella');
+    // nel motore: il titolo dell'app vince su quello del transcript, e la sessione archiviata non si segue
+    await get(port, '/api/settings', 'POST', JSON.stringify({ coworkDirs: cwRoot }));
+    let cw = null;
+    for (let k = 0; k < 40 && !cw; k++) { await sleep(150); const st = JSON.parse((await get(port, '/api/state')).body); cw = st.sessions.find(s => s.wing === 'cowork' && /Prova Cowork|Titolo dal transcript/.test(s.title || '')); }
+    ok(cw && cw.title === 'Prova Cowork dal metadato', `Cowork: la scheda mostra il titolo dei metadati (${cw && cw.title})`);
+    const st2 = JSON.parse((await get(port, '/api/state')).body);
+    ok(!st2.sessions.some(s => s.title === 'Sessione archiviata'), 'Cowork: la sessione archiviata nell\'app non compare');
+    await get(port, '/api/settings', 'POST', JSON.stringify({ coworkDirs: '' }));
+  }
   core.stop();
 
   console.log('hook di Claude Code');
@@ -660,6 +698,37 @@ function shellEvents(port, headers = {}) {
   }
   fs.mkdirSync(path.join(tmp, 'a%PATH%b'), { recursive: true });
   ok(osint.cmdArgs('code', path.join(tmp, 'a%PATH%b')) === null, 'cartella con «%»: cmd.exe la espanderebbe, quindi non si usa');
+
+  // Windows: cambiando «Avvia all'accesso» sparisce anche la voce di avvio che si chiamava come Agent Office
+  {
+    const autostart = require(path.join(ROOT, 'src', 'autostart'));
+    const calls = [];
+    const fakeApp = { isPackaged: false, commandLine: { hasSwitch: () => false }, setLoginItemSettings: o => calls.push(o), getLoginItemSettings: () => ({ openAtLogin: false }) };
+    const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try { autostart.setEnabled(fakeApp, false); } finally { Object.defineProperty(process, 'platform', realPlatform); }
+    ok(calls.some(c => c.openAtLogin === false && c.name === 'com.agentoffice.desktop'), 'Windows: la vecchia voce di avvio «com.agentoffice.desktop» viene tolta');
+  }
+
+  // il controllo del log della modalità mini (lo usano le Actions su macOS)
+  {
+    const { check } = require('./check-mini-log');
+    ok(check('x\n[snapshot] bounds {"x":1,"y":2,"width":382,"height":151} onTop true\n').ok, 'modalità mini: striscia piccola e in primo piano → bene');
+    ok(!check('[snapshot] bounds {"x":1,"y":2,"width":980,"height":620} onTop true').ok && !check('[snapshot] bounds {"x":1,"y":2,"width":380,"height":150} onTop false').ok && !check('niente').ok, 'modalità mini: finestra grande, non in primo piano o senza riga → errore');
+  }
+
+  // Windows rifiuta i percorsi sopra i 260 caratteri: un file del repository troppo "lungo" fa fallire il checkout nelle Actions
+  {
+    const ls = spawnSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8' });
+    if (ls.status === 0) {
+      const longest = ls.stdout.split('\n').filter(Boolean).sort((a, b) => b.length - a.length)[0] || '';
+      ok(longest.length <= 150, `repository: il percorso più lungo di un file ha ${longest.length} caratteri (max 150, per stare sotto i 260 di Windows con una cartella di lavoro lunga): ${longest.slice(0, 60)}`);
+    } else ok(true, 'git non disponibile: lunghezza dei percorsi non controllata');
+  }
+
+  // Node 24 stampa l'avviso DEP0190 se si passano argomenti a un processo con shell: l'avvio non deve farlo
+  const launchSrc = fs.readFileSync(path.join(__dirname, 'launch.js'), 'utf8');
+  ok(!/spawnSync\([^;]*\[[^\]]*\][^;]*shell:\s*(IS_WIN|true)/.test(launchSrc), 'avvio: nessun argomento separato con shell (avviso DEP0190 di Node 24)');
 
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(failed ? `\n${failed} controlli falliti` : '\nTutto a posto.');

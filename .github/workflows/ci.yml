@@ -1,7 +1,8 @@
 # Checks on Windows, macOS and Linux on every push and pull request.
 #  - "engine": npm test with Node 22 and 24 (nothing to install)
-#  - "window": installs Electron like a user would, opens the app with the demo,
-#    takes a screenshot and saves it among the run's artifacts
+#  - "window": installs Electron like a user would, runs scripts/platform-test.js (shortcuts, autostart,
+#    osint, Cowork folders, in a temporary home), opens the app with the demo, takes a screenshot and
+#    saves it among the run's artifacts; on macOS it also checks the mini mode and screenshots the reality map
 # The two groups run independently, so a runner stuck in the queue on one system
 # doesn't hold back the others. macOS uses Intel runners: the arm64 ones
 # (macos-latest) often never get a machine because of GitHub's capacity limits.
@@ -52,6 +53,10 @@ jobs:
           cache: npm
       - name: Install dependencies like the launcher does
         run: node scripts/launch.js --setup
+      - name: System checks in a temporary home (shortcuts, autostart, osint, Cowork folders)
+        env:
+          CI: 'true'
+        run: node scripts/platform-test.js
       - name: Graphics libraries (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnss3 libgbm1 libxss1 libnotify4 libasound2t64
@@ -67,6 +72,31 @@ jobs:
           else
             npx electron . --demo
           fi
+          test -s "$PLATYPUS_SNAPSHOT"
+      - name: Mini mode (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          PLATYPUS_SNAPSHOT: ${{ github.workspace }}/snapshot-mini-${{ runner.os }}.png
+          PLATYPUS_SNAPSHOT_DELAY: '10000'
+          PLATYPUS_SNAPSHOT_JS: "document.getElementById('btn-mini').click()"
+          PLATYPUS_DEBUG: '1'
+          PLATYPUS_PORT: '47811'
+        run: |
+          npx electron . --demo | tee mini.log
+          test -s "$PLATYPUS_SNAPSHOT"
+          # the strip must be small and always on top (src/main.js prints the bounds just before the screenshot)
+          node scripts/check-mini-log.js mini.log
+      - name: Reality map screenshot (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          PLATYPUS_SNAPSHOT: ${{ github.workspace }}/snapshot-map-${{ runner.os }}.png
+          PLATYPUS_SNAPSHOT_DELAY: '12000'
+          PLATYPUS_SNAPSHOT_JS: "(async()=>{const s=(await (await fetch('/api/state')).json()).sessions[0]; window.openWorldMap(s.id,'main');})()"
+          PLATYPUS_PORT: '47811'
+        run: |
+          npx electron . --demo
           test -s "$PLATYPUS_SNAPSHOT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

@@ -1,0 +1,2 @@
+{"type":"ai-title","aiTitle":"Titolo dal transcript","sessionId":"c1"}
+{"type":"user","timestamp":"2026-07-01T10:00:00.000Z","sessionId":"c1","cwd":"/sessions/calm-test-curie","entrypoint":"local-agent","message":{"role":"user","content":"Ciao"}}

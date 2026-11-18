@@ -69,7 +69,11 @@ function installDeps() {
   const npm = IS_WIN ? 'npm.cmd' : 'npm';
   const useCi = fs.existsSync(path.join(ROOT, 'package-lock.json'));
   // l'unica dipendenza è Electron: npm scarica da solo quella giusta per il sistema (Windows, macOS, Linux; x64 o arm64)
-  const r = spawnSync(npm, [useCi ? 'ci' : 'install', '--no-audit', '--no-fund'], { cwd: ROOT, stdio: 'inherit', shell: IS_WIN });
+  const npmArgs = [useCi ? 'ci' : 'install', '--no-audit', '--no-fund'];
+  // su Windows npm è un .cmd, che vuole la shell; con una riga sola (senza argomenti separati) Node 24 non stampa l'avviso DEP0190
+  const r = IS_WIN
+    ? spawnSync(`${npm} ${npmArgs.join(' ')}`, { cwd: ROOT, stdio: 'inherit', shell: true })
+    : spawnSync(npm, npmArgs, { cwd: ROOT, stdio: 'inherit' });
   if (r.status !== 0) {
     fail('npm non è riuscito a installare le dipendenze. Controlla la connessione (o il proxy aziendale: vedi docs/INSTALLAZIONE.md) e riprova.');
     return false;
