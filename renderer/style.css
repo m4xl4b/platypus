@@ -683,6 +683,21 @@ body.tiny .balloon .ung { display: none; }
 #bottega .fbsum { border: 2px solid #2a2440; padding: 6px 8px; margin-bottom: 8px; font-size: 15px; }
 #bottega .fbsum b { color: var(--yellow); font-weight: normal; margin-right: 6px; }
 #bottega .fbsum p { margin: 4px 0 0; font-size: 14px; }
+/* scheda STORIA: una linea per metrica (2px, colore validato sul fondo del Libro), base e guida al passaggio del mouse a 1px */
+#bottega .hist .hrow { display: grid; grid-template-columns: 1fr 220px; gap: 10px; align-items: center; padding: 5px 0; border-bottom: 1px solid #2a2440; font-size: 15px; }
+#bottega .hist .hrow b { color: var(--ink); font-weight: normal; }
+#bottega .hist .hrow .dim { font-size: 14px; }
+#bottega .spark { display: block; width: 220px; height: 36px; cursor: crosshair; }
+#bottega .spark .sp-base { stroke: #2a2440; stroke-width: 1; }
+#bottega .spark .sp-line { fill: none; stroke: #2196e0; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+#bottega .spark .sp-end, #bottega .spark .sp-dot { fill: #2196e0; stroke: #14111f; stroke-width: 2; }
+#bottega .spark .sp-cross { stroke: var(--dim); stroke-width: 1; }
+#bottega .htip { position: absolute; z-index: 2; max-width: 220px; padding: 4px 6px; background: #07060c; border: 1px solid #2a2440; color: var(--ink); font-size: 14px; pointer-events: none; }
+#bottega .htable { width: 100%; border-collapse: collapse; font-size: 13px; }
+#bottega .htable th, #bottega .htable td { padding: 2px 4px; text-align: right; border-bottom: 1px solid #2a2440; }
+#bottega .htable th { color: var(--dim); font-weight: normal; }
+#bottega .htable td:first-child, #bottega .htable th:first-child { text-align: left; }
+@media (max-width: 520px) { #bottega .hist .hrow { grid-template-columns: 1fr; } }
 /* feedback agli agenti in ufficio: l'ultimo messaggio di Platypus nel fumetto di chi l'ha ricevuto (in ombra: tratteggiato) */
 .balloon .fbk { color: #1d2b53; border-top: 1px solid #1d2b53; margin-top: 2px; padding-top: 1px;
   white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.05; } /* due righe, il resto al passaggio del mouse */

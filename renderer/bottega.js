@@ -10,7 +10,7 @@
   const when = t => new Date(t).toLocaleString(LOCALE, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   const LEVEL = { lesson: [tr('LEZIONE'), 'ok'], observation: [tr('OSSERVAZIONE'), ''] };
 
-  const B = { open: false, q: null, focus: null, data: null, showObs: false, showIgnored: false, timer: null, sig: '', md: null, tab: 'lessons', fb: null, fbAt: 0 };
+  const B = { open: false, q: null, focus: null, data: null, showObs: false, showIgnored: false, timer: null, sig: '', md: null, tab: 'lessons', fb: null, fbAt: 0, hist: null, histTable: false };
   // scheda FEEDBACK: i nomi brevi delle funzioni e dei modi (i messaggi partono dagli hook, vedi le opzioni)
   const FEATURE = {
     sessionLessons: tr('Lezioni a inizio sessione'), elder: tr('Il Nonno'), loop: tr('Giro in tondo'),
@@ -29,7 +29,7 @@
 
   window.openBottega = function (sid, lessonId, opts = {}) {
     B.open = true; B.focus = lessonId || null; B.sig = ''; B.scrolled = false; B.md = null;
-    B.tab = opts.tab === 'feedback' ? 'feedback' : 'lessons'; B.fb = null; B.fbAt = 0;
+    B.tab = ['feedback', 'history'].includes(opts.tab) ? opts.tab : 'lessons'; B.fb = null; B.fbAt = 0; B.hist = null; B.histTable = false;
     B.q = sid ? { sid } : opts.key ? { key: opts.key } : null;
     if (!B.q) return;
     el().hidden = false;
@@ -48,7 +48,7 @@
   async function load() {
     try {
       const d = await (await fetch('/api/bottega?' + new URLSearchParams(B.q))).json();
-      if (d && d.ok) { B.data = d; render(); if (B.tab === 'feedback') loadFeedback(); }
+      if (d && d.ok) { B.data = d; render(); if (B.tab === 'feedback') loadFeedback(); if (B.tab === 'history' && !B.hist) loadHistory(); }
       else el().innerHTML = `<span class="x">X</span><p>${esc(tr('Nessun libro per questo progetto.'))}</p>`, bindClose();
     } catch {}
   }
@@ -126,12 +126,116 @@
   }
   function bindClose() { const x = el().querySelector('.x'); if (x) x.onclick = closeBottega; }
 
+  function tabsHtml() {
+    const tab = (k, label) => `<button data-tab="${k}" class="${B.tab === k ? 'on' : ''}">${esc(label)}</button>`;
+    return `<div class="tabs">${tab('lessons', tr('LEZIONI'))}${tab('feedback', tr('FEEDBACK'))}${tab('history', tr('STORIA'))}</div>`;
+  }
+  function bindTabs() {
+    for (const b of el().querySelectorAll('[data-tab]')) b.onclick = () => {
+      if (B.tab === b.dataset.tab) return;
+      B.tab = b.dataset.tab; B.md = null;
+      render();
+      if (B.tab === 'feedback') loadFeedback();
+      if (B.tab === 'history') loadHistory();
+    };
+  }
+
+  // ---- scheda STORIA (S12): come vanno le sessioni del progetto, settimana per settimana
+  const HIST = () => [
+    ['loops', tr('Giri in tondo')], ['stuck', tr('Fasi bloccate')], ['surprises', tr('Sorprese')], ['flaky', tr('Comandi instabili')],
+    ['claims', tr('Affermazioni senza prove')], ['stale', tr('Memorie non aggiornate')], ['lessons', tr('Lezioni del Libro mandate agli agenti')], ['cost', tr('Costo')],
+  ];
+  const fmt = (m, v) => (v == null ? '—' : m === 'cost' ? '$' + v.toFixed(2) : (Math.round(v * 10) / 10).toFixed(1));
+  async function loadHistory() {
+    try { const x = await (await fetch('/api/history?metric=all&' + new URLSearchParams(B.q))).json(); B.hist = { ...x, at: Date.now() }; }
+    catch { B.hist = { ok: false, at: Date.now() }; }
+    if (B.open && B.data && B.tab === 'history') render();
+  }
+  // la lettura in una frase: le ultime 4 settimane contro le 4 prima, sempre con le sessioni dietro
+  function reading(m, t) {
+    if (!t) return '';
+    const a = fmt(m, t.recent.perSession), b = fmt(m, t.before.perSession);
+    if (t.verdict === 'not-enough') return tr('dati insufficienti: {a} sessioni nelle ultime 4 settimane, {b} nelle 4 prima (ne servono {min} per parte)', { a: t.recent.sessions, b: t.before.sessions, min: t.min });
+    const base = { a, b, n: t.recent.sessions, m: t.before.sessions };
+    const s = t.verdict === 'fewer' ? tr('meno di un mese fa: {a} a sessione ({n} sessioni) contro {b} ({m} sessioni)', base)
+      : t.verdict === 'more' ? tr('più di un mese fa: {a} a sessione ({n} sessioni) contro {b} ({m} sessioni)', base)
+        : tr('più o meno come un mese fa: {a} a sessione ({n} sessioni) contro {b} ({m} sessioni)', base);
+    return s + (t.better === true ? ' · ' + tr('meglio') : t.better === false ? ' · ' + tr('peggio') : '');
+  }
+  // una linea per metrica: la media per sessione di ogni settimana; una settimana senza sessioni interrompe la linea
+  const SW = 220, SH = 36, SP = 5;
+  function spark(m, buckets) {
+    const vals = buckets.map(b => b.perSession), max = Math.max(...vals.filter(v => v != null), 0) || 1;
+    const step = (SW - 2 * SP) / Math.max(1, vals.length - 1), x = i => SP + i * step, y = v => SH - SP - (v / max) * (SH - 2 * SP);
+    let d = '', pen = false, last = -1;
+    vals.forEach((v, i) => { if (v == null) { pen = false; return; } d += (pen ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1); pen = true; last = i; });
+    // una settimana isolata tra due vuote è un punto, non una linea
+    const dots = vals.map((v, i) => (v != null && (vals[i - 1] == null) && (vals[i + 1] == null) && i !== last ? `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="2.5" class="sp-dot"/>` : '')).join('');
+    return `<svg class="spark" viewBox="0 0 ${SW} ${SH}" width="${SW}" height="${SH}" data-m="${m}" role="img" aria-label="${esc(tr('andamento settimanale'))}">` +
+      `<line x1="${SP}" y1="${SH - SP}" x2="${SW - SP}" y2="${SH - SP}" class="sp-base"/>` +
+      (d ? `<path d="${d}" class="sp-line"/>` : '') + dots +
+      (last >= 0 ? `<circle cx="${x(last).toFixed(1)}" cy="${y(vals[last]).toFixed(1)}" r="4" class="sp-end"/>` : '') +
+      `<line x1="0" y1="0" x2="0" y2="${SH}" class="sp-cross" visibility="hidden"/></svg>`;
+  }
+  function historyBody() {
+    const h = B.hist;
+    if (!h) return `<p class="dim">${esc(tr('Carico lo storico…'))}</p>`;
+    if (h.demo) return `<p class="dim">${esc(tr('Libro della demo: la demo non scrive niente nello storico.'))}</p>`;
+    if (!h.ok) return `<p class="dim">${esc(tr('Non riesco a leggere lo storico.'))}</p>`;
+    const M = h.metrics;
+    // dalla prima settimana con sessioni (sempre almeno 8): un progetto giovane non resta schiacciato in fondo alla linea
+    const first = M.loops.buckets.findIndex(b => b.sessions > 0);
+    const from = first < 0 ? 0 : Math.max(0, Math.min(first, M.loops.buckets.length - 8));
+    B.histFrom = from;
+    const cut = m => M[m].buckets.slice(from), weeks = cut('loops');
+    const total = weeks.reduce((a, b) => a + b.sessions, 0);
+    if (!total) return `<p class="dim">${esc(tr('Ancora nessuna sessione di questo progetto nello storico.'))}</p>`;
+    if (B.histTable) {
+      const cols = HIST();
+      return `<table class="htable"><thead><tr><th>${esc(tr('Settimana'))}</th><th>${esc(tr('Sessioni'))}</th>${cols.map(([, l]) => `<th>${esc(l)}</th>`).join('')}</tr></thead><tbody>` +
+        weeks.map((w, i) => ({ w, i })).reverse().map(({ w, i }) => `<tr><td>${esc(day(w.start))}</td><td>${w.sessions}</td>${cols.map(([m]) => `<td>${esc(fmt(m, cut(m)[i].perSession))}</td>`).join('')}</tr>`).join('') +
+        `</tbody></table>`;
+    }
+    const rows = HIST().map(([m, label]) => `<div class="hrow"><div><b>${esc(label)}</b><br><span class="dim">${esc(reading(m, M[m].trend))}</span></div>${spark(m, cut(m))}</div>`).join('');
+    const f = M.feedback.buckets.reduce((a, b) => { for (const k of Object.keys(a)) a[k] += b[k]; return a; }, { on: 0, shadow: 0, judgedOn: 0, helpedOn: 0, judgedShadow: 0, helpedShadow: 0 });
+    const fb = f.on + f.shadow ? `<p class="dim">${esc(tr('Messaggi agli agenti in queste settimane: {on} mandati (probabilmente utili {h1} su {j1}), {sh} in ombra ({h2} su {j2}). Il confronto vero è nell\'esperimento, scheda FEEDBACK.', { on: f.on, h1: f.helpedOn, j1: f.judgedOn, sh: f.shadow, h2: f.helpedShadow, j2: f.judgedShadow }))}</p>` : '';
+    return rows + fb;
+  }
+  function renderHistory() {
+    const d = B.data;
+    el().innerHTML = `<span class="x" title="${esc(tr('Chiudi'))}">X</span>` +
+      `<h3>${esc(tr('LIBRO DELLA BOTTEGA'))} · ${esc(d.name)}</h3>` + tabsHtml() +
+      `<p class="honest">${esc(tr('Come vanno le sessioni di questo progetto nelle ultime 26 settimane: ogni linea è la media per sessione, settimana per settimana. La frase accanto confronta le ultime 4 settimane con le 4 prima.'))}</p>` +
+      (B.hist && B.hist.ok && !B.hist.demo ? `<div class="bar"><button data-do="histtable">${esc(B.histTable ? tr('LINEE') : tr('NUMERI'))}</button></div>` : '') +
+      `<div class="list hist">${historyBody()}</div><div class="htip" hidden></div>`;
+    bindClose(); bindTabs();
+    const e = el(), tip = e.querySelector('.htip');
+    const tg = e.querySelector('[data-do=histtable]');
+    if (tg) tg.onclick = () => { B.histTable = !B.histTable; B.sig = ''; render(); };
+    // al passaggio del mouse: la settimana, il valore per sessione e quante sessioni
+    for (const svg of e.querySelectorAll('svg.spark')) {
+      const m = svg.dataset.m, bk = B.hist.metrics[m].buckets.slice(B.histFrom || 0), cross = svg.querySelector('.sp-cross');
+      svg.onmousemove = ev => {
+        const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (SW / r.width);
+        const i = Math.max(0, Math.min(bk.length - 1, Math.round((px - SP) / ((SW - 2 * SP) / Math.max(1, bk.length - 1)))));
+        const b = bk[i], cx = SP + i * ((SW - 2 * SP) / Math.max(1, bk.length - 1));
+        cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.setAttribute('visibility', 'visible');
+        tip.textContent = b.sessions ? tr('settimana del {d}: {v} a sessione ({n} sessioni)', { d: day(b.start), v: fmt(m, b.perSession), n: b.sessions }) : tr('settimana del {d}: nessuna sessione', { d: day(b.start) });
+        const er = e.getBoundingClientRect();
+        tip.style.left = Math.min(er.width - 230, ev.clientX - er.left + 12) + 'px'; tip.style.top = (ev.clientY - er.top + 14) + 'px';
+        tip.hidden = false;
+      };
+      svg.onmouseleave = () => { tip.hidden = true; cross.setAttribute('visibility', 'hidden'); };
+    }
+  }
+
   function render() {
     const d = B.data;
     const fbTab = B.tab === 'feedback';
-    const sig = JSON.stringify([d.lessons.map(l => [l.id, l.count, l.pinned, l.ignored, l.level]), d.learning, B.showObs, B.showIgnored, B.focus, B.md, d.mute, B.tab, B.fb && [B.fb.length, B.fb[0] && B.fb[0].id, B.fb.map(e => e.outcome).join()]]);
+    const sig = JSON.stringify([B.hist && B.hist.at, B.histTable, d.lessons.map(l => [l.id, l.count, l.pinned, l.ignored, l.level]), d.learning, B.showObs, B.showIgnored, B.focus, B.md, d.mute, B.tab, B.fb && [B.fb.length, B.fb[0] && B.fb[0].id, B.fb.map(e => e.outcome).join()]]);
     if (sig === B.sig) return;
     B.sig = sig;
+    if (B.tab === 'history') return renderHistory();
     const live = window.sessions ? new Set(sessions().filter(s => !s.demo).map(s => s.id)) : new Set();
     const isDemo = window.sessions && sessions().some(s => s.demo && s.cwd === d.cwd);
     const lessons = d.lessons.filter(l => !l.ignored && l.level === 'lesson');
@@ -156,7 +260,7 @@
         (lj ? ` <span class="dim">${esc(lj.error ? tr('Finito, con un errore: {e}', { e: lj.error }) : trn('{n} caso nuovo', '{n} casi nuovi', lj.cases))}</span>` : '');
     el().innerHTML = `<span class="x" title="${esc(tr('Chiudi'))}">X</span>` +
       `<h3>${esc(tr('LIBRO DELLA BOTTEGA'))} · ${esc(d.name)}</h3>` +
-      `<div class="tabs"><button data-tab="lessons" class="${fbTab ? '' : 'on'}">${esc(tr('LEZIONI'))}</button><button data-tab="feedback" class="${fbTab ? 'on' : ''}">${esc(tr('FEEDBACK'))}</button></div>` +
+      tabsHtml() +
       (fbTab
         ? `<p class="honest">${esc(tr('Quello che Platypus ha detto agli agenti di questo progetto, o avrebbe detto («in ombra»). I messaggi partono in inglese: qui li leggi nella lingua dell\'ufficio.'))}</p>`
         : `<p class="honest">${esc(tr('Lezioni dedotte dai fatti (esiti, ripetizioni, correzioni) delle sessioni di questo progetto: indizi, non regole certe.'))}</p>`) +
@@ -178,12 +282,7 @@
       `</div>`);
     bindClose();
     const e = el();
-    for (const b of e.querySelectorAll('[data-tab]')) b.onclick = () => {
-      if (B.tab === b.dataset.tab) return;
-      B.tab = b.dataset.tab; B.md = null;
-      render();
-      if (B.tab === 'feedback') loadFeedback();
-    };
+    bindTabs();
     for (const b of e.querySelectorAll('[data-act]')) b.onclick = async () => {
       const id = b.closest('.lesson').dataset.id, action = b.dataset.act;
       if (action === 'forget' && !confirm(tr('Dimenticare questa lezione? Se i fatti si ripetono, il libro la imparerà di nuovo.'))) return;
