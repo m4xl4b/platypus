@@ -58,6 +58,7 @@ const COLLECTIONS = {
     fields: {
       end: 'number', kind: 'string', model: 'string', effort: 'string', agents: 'number',
       actions: 'number', errors: 'number', surprises: 'number', claims: 'number', loops: 'number', stale: 'number', lessons: 'number',
+      stuck: 'number', flaky: 'number', // fasi bloccate e comandi instabili (S12)
       cost: 'number', tokens: 'number',
     },
     indexes: [['project', 't']],

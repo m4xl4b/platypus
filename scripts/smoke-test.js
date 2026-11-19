@@ -269,13 +269,16 @@ process.on('exit', code => {
   ok(core.learnLive() === 0, 'imparare di nuovo dalla stessa sessione non aggiunge nulla');
   {
     // lo storico: i passi della sessione aperta e il suo riassunto (la demo, che gira insieme, non lascia niente)
-    core.history.summarize(core.state); core.history.flush();
+    core.history.summarize(core.state, { counts: core.sessionCounts }); core.history.flush();
     const hs = core.history.store;
     const mySteps = hs.collection('steps').find({ session: 'bottega-smoke-0001' });
     const demoIds = st.sessions.filter(x => x.demo).map(x => x.id);
     ok(mySteps.length === 4 && mySteps.every(x => x.project && x.outcome === 'error') && mySteps.filter(x => x.cmd === 'npm test' && x.action === 'verify').length === 3 && mySteps.some(x => x.action === 'read' && x.target === 'src/vecchio.ts') && hs.collection('sessions').get('bottega-smoke-0001') !== null &&
       hs.collection('steps').count({ session: { $in: demoIds } }) === 0 && hs.collection('sessions').count({ _id: { $in: demoIds } }) === 0,
       `storico: ${mySteps.length} passi e il riassunto della sessione aperta; niente della demo`);
+    const sumS = hs.collection('sessions').get('bottega-smoke-0001');
+    ok(sumS && sumS.surprises >= 1 && sumS.loops >= 1 && Number.isFinite(sumS.claims) && Number.isFinite(sumS.stale) && Number.isFinite(sumS.stuck) && Number.isFinite(sumS.flaky) && sumS.lessons === 0,
+      `storico: il riassunto della sessione ha i conteggi (sorprese ${sumS && sumS.surprises}, giri in tondo ${sumS && sumS.loops}, bloccato ${sumS && sumS.stuck}, instabili ${sumS && sumS.flaky}, affermazioni senza prove ${sumS && sumS.claims}, memorie vecchie ${sumS && sumS.stale})`);
     const rr = await core.retention();
     ok(rr && rr.limitBytes === 200 * 1048576 && rr.trimmedForSize === 0 && Object.values(rr.removed).every(n => n === 0) && hs.collection('steps').count({ session: 'bottega-smoke-0001' }) === 4 && JSON.parse(hs.getMeta('retentionLast')).at === rr.at,
       'storico: la conservazione gira nel motore e lascia stare i passi recenti');

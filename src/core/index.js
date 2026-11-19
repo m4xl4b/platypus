@@ -80,7 +80,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const history = new History({ dir: path.dirname(settingsPath), settings: initialSettings });
   // ogni azione finita diventa un passo nello storico; i riassunti delle sessioni ogni minuto e alla chiusura
   state.on('step', (s, a, step) => { try { history.recordStep(s, a, step); } catch {} });
-  const summaryTimer = setInterval(() => { try { history.summarize(state); } catch {} }, 60000);
+  const summaryTimer = setInterval(() => { try { history.summarize(state, { counts: sessionCounts }); } catch {} }, 60000);
   summaryTimer.unref && summaryTimer.unref();
   const stats = new Stats(state, { store: history.store }); // nello storico, collezione daily
   // il Libro della bottega, nello storico. La cartella di un progetto (lo storico non la tiene) la cerca il motore
@@ -405,6 +405,26 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       const active = embedder.activeId(); // la fonte scelta: finché non ha tutti i vettori si mostra il TF-IDF e si "affina"
       return { ok: true, sid: s.id, aid, now: st.now(), active, refining: active !== 'tfidf' && !(active.startsWith('fake:') && !s.demo) && (v.src !== active || v.pending > 0), fallback: embedder.fallback, names: Object.fromEntries(minds.map(m => [m.id, m.name])), ctxNow: Object.fromEntries(minds.map(m => [m.id, m.ctx])), models: Object.fromEntries(minds.map(m => [m.id, m.model])), ...v };
     } catch (e) { return { ok: false, error: e.message }; }
+  }
+
+  // i conteggi di una sessione per lo storico (S12): gli stessi fatti che l'ufficio mostra, contati.
+  //   surprises  i fallimenti inattesi (surprise.js)          loops  quelli in cui l'agente insiste con lo stesso comando
+  //   stuck      le volte che un agente entra nella fase "bloccato"   flaky  i comandi di verifica instabili (come il Libro)
+  //   claims     le affermazioni senza prove (grounding.js)    stale  le memorie non aggiornate e le modifiche alla cieca
+  //   lessons    i messaggi del Libro mandati davvero agli agenti della sessione
+  function sessionCounts(s) {
+    const agents = agentsOf(s), now = Date.now();
+    const sp = surprise.surprises(agents, { now }).surprises;
+    const loops = new Set(sp.filter(x => x.reaction === 'insists').map(x => x.sig || x.target || x.t));
+    let stuck = 0;
+    for (const a of agents) { let prev = ''; for (const st of a.world.steps) { if (st.phase === 'stuck' && prev !== 'stuck') stuck++; prev = st.phase; } }
+    const cases = digest(s, agents, now);
+    const flaky = new Set(cases.filter(c => c.kind === 'flaky-command').map(c => c.key)).size;
+    const g = grounding.checkStale(s, agents, s.cwd, { disk: false });
+    const claims = grounding.checkClaims(s, agents, s.cwd).claims.filter(c => c.status === 'ungrounded').length;
+    let lessons = 0;
+    try { lessons = history.store.collection('feedback').count({ sid: s.id, mode: 'on', lessonId: { $exists: true } }); } catch {}
+    return { surprises: sp.length, loops: loops.size, stuck, flaky, claims, stale: g.stale.length + g.blindEdits.length, lessons };
   }
 
   // gli agenti di una sessione con la loro mappa, per grounding.js, surprise.js e bottega.js
@@ -798,7 +818,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     state.stop();
     clearInterval(summaryTimer);
     clearInterval(retentionTimer);
-    try { history.summarize(state); } catch {}
+    try { history.summarize(state, { counts: sessionCounts, final: true }); } catch {}
     history.stop(); // per ultimo: statistiche, Libro e registro hanno appena salvato
     for (const c of clients) try { c.end(); } catch {}
     server.close();
@@ -827,7 +847,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     };
   }
 
-  return { state, history, historyReady: () => historyReady, retention, forgetProject, stats, notify: notifier, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
+  return { state, history, historyReady: () => historyReady, retention, forgetProject, sessionCounts, stats, notify: notifier, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
     install: () => hooks.install({ port, base }),
     uninstall: () => hooks.uninstall({ base }),
     status: () => hooks.status({ base }),

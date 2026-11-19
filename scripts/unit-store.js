@@ -849,6 +849,23 @@ async function historyTests(ok) {
     ok(w1 === 1 && w2 === 0 && w3 === 1 && sum.project === pathKey(CWD) && sum.t === T && sum.end === T + 9000 && sum.kind === 'code' && sum.model === 'claude-opus-5-5' && sum.effort === 'high' && sum.agents === 2 &&
       sum.actions === 10 && sum.errors === 1 && sum.cost === 1.25 && sum.tokens === 165 && h.store.collection('sessions').count({}) === 1,
       'il riassunto di una sessione: si riscrive solo quando cambia, mai per la demo');
+    // i conteggi pesanti: al massimo ogni 5 minuti, solo se la sessione si è mossa; sempre alla chiusura
+    let calls = 0, clockNow = Date.now();
+    const counts = () => { calls++; return { surprises: calls, loops: 1, stuck: 0, flaky: 0, claims: 2, stale: 0, lessons: 0, nonDichiarato: 5 }; };
+    const hc = mk(); hc.clock = () => clockNow;
+    const sc = { ...s1, id: 'sess-conti', lastActivity: 1 };
+    const stc = { sessions: new Map([[sc.id, sc]]), costOf: () => 0 };
+    hc.summarize(stc, { counts }); hc.summarize(stc, { counts });
+    sc.lastActivity = 2; hc.summarize(stc, { counts });
+    const within = calls;
+    clockNow += 5 * 60000; hc.summarize(stc, { counts });
+    const afterWait = calls;
+    hc.summarize(stc, { counts, final: true });
+    sc.lastActivity = 3; hc.summarize(stc, { counts, final: true });
+    hc.flush();
+    const sumC = hc.store.collection('sessions').get('sess-conti');
+    ok(within === 1 && afterWait === 2 && calls === 3 && sumC.surprises === 3 && sumC.claims === 2 && !('nonDichiarato' in sumC), 'i conteggi pesanti di una sessione: una volta, poi solo se si è mossa e dopo 5 minuti, e alla chiusura; nel riassunto solo quelli previsti');
+    hc.stop();
     // un documento che la guardia rifiuta non fa perdere gli altri
     h.store.guardMode = 'reject';
     h.recordStep(s1, main, step('ok-1', { err: false, fail: null }));

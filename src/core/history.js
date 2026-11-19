@@ -19,7 +19,9 @@ const { retentionFromSettings } = require('./retention');
 
 // le copie di sicurezza accanto a platypus.db: prima delle migrazioni, database messi da parte (con -wal e -shm), file della 2.12
 const BACKUP_RE = /^(platypus\.db\.(bak-\d+|broken-[\d-]+)(-wal|-shm)?|legacy-\d{8})$/;
-const FLUSH_MS = 2000, FLUSH_DOCS = 500; // come la coda di sqlite.js: al massimo ogni 2 s, o a 500 documenti
+const FLUSH_MS = 2000, FLUSH_DOCS = 500;
+const COUNT_MS = 5 * 60000; // i conteggi pesanti di una sessione, al massimo ogni 5 minuti
+const COUNT_FIELDS = ['surprises', 'loops', 'stuck', 'flaky', 'claims', 'stale', 'lessons']; // come la coda di sqlite.js: al massimo ogni 2 s, o a 500 documenti
 
 class History {
   // dir: la cartella dei dati (dove sta platypus.db); settings: le opzioni vive del motore
@@ -38,6 +40,7 @@ class History {
     this.pending = new Map(); // _id -> { coll, doc }: passi e riassunti che aspettano di andare nello storico
     this.timer = null;
     this.summaries = new Map(); // id della sessione -> il riassunto scritto l'ultima volta (JSON)
+    this.countCache = new Map(); // id della sessione -> { at, activity, values }: gli ultimi conteggi pesanti
     if (this.store.fallback) log('store: ' + this.store.fallback.code + ': ' + this.store.fallback.detail);
   }
 
@@ -85,12 +88,19 @@ class History {
     this.queue('experiments', { _id: `${sid}:${feature}`, project: this.keys.keyNow(cwd), t: t || this.clock(), sid: String(sid), feature, group });
   }
 
-  // ---- il riassunto di ogni sessione (collezione sessions): si riscrive solo se è cambiato
-  summarize(state) {
+  // ---- il riassunto di ogni sessione (collezione sessions): si riscrive solo se è cambiato.
+  // counts(s): i conteggi pesanti (sorprese, giri in tondo, affermazioni senza prove…), che dà il motore: si rifanno al
+  // massimo ogni COUNT_MS per sessione, solo se la sessione si è mossa, e sempre con final (alla chiusura)
+  summarize(state, { counts = null, final = false } = {}) {
     if (!state || !state.sessions) return 0;
     let n = 0;
+    const now = this.clock();
     for (const s of state.sessions.values()) {
       if (s.demo || !s.cwd) continue;
+      let c = this.countCache.get(s.id);
+      if (counts && (!c || (c.activity !== s.lastActivity && (final || now - c.at >= COUNT_MS)))) {
+        try { c = { at: now, activity: s.lastActivity, values: counts(s) || {} }; this.countCache.set(s.id, c); } catch { /* resta il conteggio di prima */ }
+      }
       const sum = o => Object.values(o || {}).reduce((x, y) => x + (Number(y) || 0), 0);
       const tok = s.tok ? (s.tok.in || 0) + (s.tok.out || 0) + (s.tok.cr || 0) + (s.tok.cw || 0) : 0;
       let cost = 0;
@@ -101,6 +111,7 @@ class History {
         agents: 1 + (s.subs ? s.subs.size : 0), actions: sum(s.toolsByType), errors: sum(s.errByType),
         cost: Number.isFinite(cost) ? cost : 0, tokens: tok,
       };
+      if (c) for (const [k, v] of Object.entries(c.values)) if (COUNT_FIELDS.includes(k) && Number.isFinite(v)) doc[k] = v;
       const json = JSON.stringify(doc);
       if (this.summaries.get(s.id) === json) continue;
       this.summaries.set(s.id, json);
@@ -241,4 +252,4 @@ class History {
   }
 }
 
-module.exports = { History, FLUSH_MS, FLUSH_DOCS };
+module.exports = { History, FLUSH_MS, FLUSH_DOCS, COUNT_MS, COUNT_FIELDS };
