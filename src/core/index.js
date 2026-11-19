@@ -70,13 +70,13 @@ function defaultSettingsPath() { return path.join(dataDir(), 'settings.json'); }
 function loadSettings(p) { try { return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(p, 'utf8')) }; } catch { return { ...DEFAULT_SETTINGS }; } }
 function saveSettings(p, s) { try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(s, null, 2)); } catch {} }
 
-function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPath = defaultSettingsPath(), statsPath, fetch: fetchImpl, osLocale } = {}) {
+function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPath = defaultSettingsPath(), fetch: fetchImpl, osLocale } = {}) {
   const initialSettings = loadSettings(settingsPath);
   i18n.setLang(i18n.resolveLang(initialSettings.lang, osLocale));
   const state = new OfficeState({ settings: initialSettings });
   // lo storico (store): accanto alle opzioni, in platypus.db. Se non si apre si va avanti in memoria e l'ufficio lo dice
   const history = new History({ dir: path.dirname(settingsPath), settings: initialSettings });
-  const stats = new Stats(state, statsPath || path.join(path.dirname(settingsPath), 'stats.json'));
+  const stats = new Stats(state, { store: history.store }); // nello storico, collezione daily
   // il Libro della bottega, nello storico. La cartella di un progetto (lo storico non la tiene) la cerca il motore
   const bottega = new Bottega({ store: history.store, keys: history.keys, cwdOf: projectFolder });
   // le notifiche (attese, avvisi, report): le decide il motore, le mostra la shell

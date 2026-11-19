@@ -146,7 +146,7 @@ process.on('exit', code => {
   // il significato resta lessicale, anche se su questo computer gira un Ollama: i numeri delle prove non cambiano
   fs.writeFileSync(path.join(tmp, 'settings.json'), JSON.stringify({ embedEngine: 'tfidf' }));
   const port = 47900 + Math.floor(Math.random() * 90);
-  const core = startCore({ port, base, settingsPath: path.join(tmp, 'settings.json'), statsPath: path.join(tmp, 'stats.json'), fetch: async () => { throw new Error('offline'); } });
+  const core = startCore({ port, base, settingsPath: path.join(tmp, 'settings.json'), fetch: async () => { throw new Error('offline'); } });
   await core.ready;
   core.demo.start({ scale: 0.02 }); // gli scenari costruiti apposta, in velocità
   await sleep(2500);

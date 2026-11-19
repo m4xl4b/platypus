@@ -599,7 +599,7 @@ function costsHtml() {
   return `<h2>${tr('COSTI NEL TEMPO')} <span>${tr('ultimi 14 giorni · totale {sum} · ultimi 7 giorni {week}', { sum: money(sum), week: money(week) })}</span></h2>` +
     `<svg class="costs" viewBox="0 0 ${Wd} ${Hd}" preserveAspectRatio="none" role="img" aria-label="${esc(tr('Costi degli ultimi 14 giorni'))}">${svg}</svg>` +
     `<div class="legend2">${top.map((p, k) => `<span><i style="background:${pal[k]}"></i>${esc(p)} · ${money(projTot[p])}</span>`).join('')}${Object.keys(projTot).length > top.length ? `<span><i style="background:${pal[6]}"></i>${tr('altri')}</span>` : ''}</div>` +
-    `<div class="foot">${esc(snap && snap.demo && !d.some(x => x.total && !snap.demo) ? tr('Le statistiche si accumulano mentre l\'ufficio è aperto e restano salvate in .platypus/stats.json (in demo: dati finti).') : tr('Le statistiche si accumulano mentre l\'ufficio è aperto e restano salvate in .platypus/stats.json.'))}</div>`;
+    `<div class="foot">${esc(snap && snap.demo && !d.some(x => x.total && !snap.demo) ? tr('Le statistiche si accumulano mentre l\'ufficio è aperto e restano salvate nello storico, .platypus/platypus.db (in demo: dati finti).') : tr('Le statistiche si accumulano mentre l\'ufficio è aperto e restano salvate nello storico, .platypus/platypus.db.'))}</div>`;
 }
 function honorsHtml() {
   const h = honorsData || {};

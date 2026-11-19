@@ -1,16 +1,25 @@
 'use strict';
-// Statistiche che restano nel tempo (~/.platypus/stats.json):
-// costi, token e lavoro per giorno e per progetto, premi della settimana per tipo di agente,
-// rilasci e avvisi. Servono al grafico dei costi, al report giornaliero e al dipendente del mese.
+// Statistiche che restano nel tempo: costi, token e lavoro per giorno e per progetto, premi della settimana per
+// tipo di agente, rilasci e avvisi. Servono al grafico dei costi, al report giornaliero e al dipendente del mese.
+// Dalla 2.13 stanno nello storico, collezione `daily` (src/core/store/collections.js): un documento per giorno
+// (day:<data>), per settimana (week:<settimana ISO>) e per sessione seguita (last:<sessione>, l'ultimo stato visto,
+// per sommare solo le differenze). In memoria resta tutto come prima; ogni 30 s si scrivono i documenti cambiati.
+// Senza store le statistiche restano in memoria (le prove).
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
 const { tr } = require('../i18n');
+
+const MAX_NAME = 128, MAX_LIST = 200; // i limiti della guardia dello store (privacy.js)
 
 function dayKey(t) {
   const d = new Date(t);
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+// il lunedì (ora locale) di una settimana ISO: il tempo del documento di quella settimana
+function weekStart(key) {
+  const m = /^(\d{4})-W(\d{2})$/.exec(String(key));
+  if (!m) return 0;
+  const jan4 = new Date(Number(m[1]), 0, 4);
+  return new Date(jan4.getFullYear(), 0, 4 - ((jan4.getDay() + 6) % 7) + (Number(m[2]) - 1) * 7).getTime();
 }
 function weekKey(t) { // settimana ISO, es. 2026-W43
   const d = new Date(t); d.setHours(0, 0, 0, 0);
@@ -21,11 +30,13 @@ function weekKey(t) { // settimana ISO, es. 2026-W43
 }
 
 class Stats {
-  constructor(state, file = path.join(require('../paths').dataDir(), 'stats.json')) {
+  constructor(state, { store = null, log = msg => console.error('[platypus] ' + msg) } = {}) {
     this.state = state;
-    this.file = file;
+    this.store = store;
+    this.log = log;
     this.data = { days: {}, weeks: {}, last: {} };
-    try { this.data = { ...this.data, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
+    this.saved = new Map(); // _id -> il documento come è nello storico (JSON), per scrivere solo quelli cambiati
+    this.load();
     this.dirty = false;
     this.timer = setInterval(() => this.collect(), 10000);
     this.saveTimer = setInterval(() => this.save(), 30000);
@@ -35,17 +46,62 @@ class Stats {
 
   stop() { clearInterval(this.timer); clearInterval(this.saveTimer); this.save(); }
 
+  // dallo storico in memoria, con la stessa forma che aveva stats.json
+  load() {
+    if (!this.store) return;
+    try {
+      for (const d of this.store.collection('daily').find({})) {
+        if (d.kind === 'day' && d.day) this.data.days[d.day] = { projects: d.projects || {}, releases: d.releases || [], alerts: d.alerts || 0 };
+        else if (d.kind === 'week' && d.week) this.data.weeks[d.week] = d.types || {};
+        else if (d.kind === 'last') this.data.last[d._id.slice(5)] = { ...(d.last || {}), t: d.t };
+        else continue;
+        this.saved.set(d._id, JSON.stringify(d));
+      }
+    } catch (e) { this.log('statistiche: non riesco a leggere lo storico (' + (e && e.message || e) + ')'); }
+  }
+
+  // i documenti per lo storico, con i limiti della guardia (nomi di progetto e elenchi tagliati)
+  docs() {
+    const cap = a => (Array.isArray(a) ? a.slice(-MAX_LIST) : []);
+    const name = n => String(n).slice(0, MAX_NAME);
+    const out = [];
+    for (const [day, d] of Object.entries(this.data.days)) {
+      const projects = {};
+      for (const [n, p] of Object.entries(d.projects || {})) projects[name(n)] = { ...p, sessions: cap(p.sessions) };
+      out.push({ _id: 'day:' + day, t: new Date(day + 'T00:00:00').getTime() || 0, kind: 'day', day, projects, releases: cap(d.releases).map(r => ({ ...r, project: r.project === undefined ? undefined : name(r.project) })), alerts: d.alerts || 0 });
+    }
+    for (const [week, types] of Object.entries(this.data.weeks)) {
+      const t = {};
+      for (const [type, v] of Object.entries(types || {})) t[name(type)] = v;
+      out.push({ _id: 'week:' + week, t: weekStart(week), kind: 'week', week, types: t });
+    }
+    for (const [sid, v] of Object.entries(this.data.last)) {
+      const { t, ...last } = v;
+      out.push({ _id: 'last:' + sid, t: t || 0, kind: 'last', last: { ...last, alerts: cap(last.alerts), ...(last.name !== undefined ? { name: String(last.name).slice(0, 200) } : {}) } });
+    }
+    return out;
+  }
+
   save() {
     if (!this.dirty) return;
     this.dirty = false;
-    // tieni 120 giorni e 26 settimane
-    const days = Object.keys(this.data.days).sort();
-    for (const k of days.slice(0, Math.max(0, days.length - 120))) delete this.data.days[k];
-    const weeks = Object.keys(this.data.weeks).sort();
-    for (const k of weeks.slice(0, Math.max(0, weeks.length - 26))) delete this.data.weeks[k];
+    // l'ultimo stato di una sessione serve solo finché la si segue: dopo 10 giorni si toglie. Giorni e settimane restano (sono piccoli)
     const cutoff = Date.now() - 10 * 86400000;
     for (const [k, v] of Object.entries(this.data.last)) if ((v.t || 0) < cutoff) delete this.data.last[k];
-    try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.data)); } catch {}
+    if (!this.store) return;
+    try {
+      const daily = this.store.collection('daily'), now = new Map();
+      for (const d of this.docs()) now.set(d._id, d);
+      this.store.transaction(() => {
+        for (const [id, d] of now) {
+          const json = JSON.stringify(d);
+          if (this.saved.get(id) === json) continue;
+          daily.put(d);
+          this.saved.set(id, json);
+        }
+        for (const id of [...this.saved.keys()]) if (!now.has(id)) { daily.delete(id); this.saved.delete(id); }
+      });
+    } catch (e) { this.dirty = true; this.log('statistiche: non riesco a salvarle nello storico (' + (e && e.message || e) + ')'); }
   }
 
   day(t) {
@@ -103,7 +159,7 @@ class Stats {
         if (r.kind === 'tests') p.tests++;
         this.dirty = true;
       }
-      if (d.releases.length > 300) d.releases.splice(0, d.releases.length - 300);
+      if (d.releases.length > MAX_LIST) d.releases.splice(0, d.releases.length - MAX_LIST);
       const newAlerts = cur.alerts.filter(id => !(base.alerts || []).includes(id)).length;
       if (newAlerts) { d.alerts += newAlerts; this.dirty = true; }
       cur.name = name;

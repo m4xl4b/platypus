@@ -176,7 +176,9 @@ function statsRenameTests(ok) {
     let cost = 0.8, label = 'Report';
     const s = { id: 'sess-cw-0001', kind: 'cowork', project: 'cowork', createdAt: Date.now(), tok: { in: 1, out: 1, cr: 0, cw: 0 }, completed: 0, completedByType: {}, errByType: {}, toolsByType: {}, wByType: {}, releases: [], alerts: [] };
     const st = { sessions: new Map([[s.id, s]]), label: () => label, costOf: () => cost, rateOf: () => 0 };
-    const stats = new Stats(st, path.join(tmp, 'stats.json'));
+    // nello storico, come nel motore: sqlite nella cartella di prova
+    const db = testStore('sqlite', path.join(tmp, 'db'));
+    const stats = new Stats(st, { store: db.store });
     stats.collect();
     label = 'Report trimestrale per il cliente'; cost = 1.6;
     stats.collect();
@@ -188,17 +190,23 @@ function statsRenameTests(ok) {
     const mk = id => ({ ...s, id });
     const a = mk('sess-cw-000a'), b = mk('sess-cw-000b'), labels = { [a.id]: 'outputs', [b.id]: 'outputs' };
     const st2 = { sessions: new Map([[a.id, a], [b.id, b]]), label: x => labels[x.id], costOf: () => 0.5, rateOf: () => 0 };
-    const stats2 = new Stats(st2, path.join(tmp, 'stats2.json'));
+    const stats2 = new Stats(st2);
     stats2.collect();
     labels[b.id] = 'Report Q3';
     stats2.collect();
     const r2 = stats2.report(Object.keys(stats2.data.days)[0]);
     ok(r2.totals.sessions === 2, `nome condiviso da due sessioni, una cambia titolo: ${r2.totals.sessions} sessioni in tutto (${r2.projects.map(p => p.name + ':' + p.sessions).join(', ')})`);
     stats2.stop();
-    const again = new Stats(st, path.join(tmp, 'stats.json')); // il vecchio stats.json (senza «name») resta leggibile
-    ok(Object.keys(again.data.days).length === 1, 'stats.json riletto');
+    db.store.close();
+    const db2 = testStore('sqlite', path.join(tmp, 'db'));
+    const again = new Stats(st, { store: db2.store }); // dopo un riavvio
+    const r3 = again.report(Object.keys(again.data.days)[0]);
+    ok(Object.keys(again.data.days).length === 1 && r3.projects.length === 1 && r3.projects[0].name === label && Math.abs(r3.projects[0].cost - 1.6) < 1e-6 && again.data.last[s.id].cost === 1.6 && db2.store.collection('daily').count({ kind: 'day' }) === 1,
+      'statistiche rilette dallo storico dopo un riavvio: il giorno, il progetto, l\'ultimo stato della sessione');
     again.stop();
-  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+    db2.store.close();
+    ok(!fs.readdirSync(tmp).some(f => f.endsWith('.json')), 'nessun stats.json: le statistiche stanno nello storico');
+  } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
 // una domanda di Claude all'utente (AskUserQuestion) senza risposta: l'agente aspetta, e dopo un po' scatta l'avviso
