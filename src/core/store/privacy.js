@@ -11,6 +11,8 @@
 //      'number'   'boolean'
 //      'path'     un percorso: sempre relativo alla radice del progetto; uno assoluto diventa impronta/nome-file
 //      'excerpt'  un estratto di una riga: passa dal filtro dei segreti (scrub) e si ferma a 200 caratteri
+//      'note'     una frase scritta da Platypus stesso (il messaggio a un agente): anche su più righe, passa dal
+//                 filtro dei segreti e si ferma a 2000 caratteri. Mai per testo che viene da una sessione
 //      { a: tipo, … }   un oggetto con quei campi          { '*': tipo }   un oggetto con chiavi qualsiasi
 //      [tipo]           un elenco (al massimo 200 voci)
 //    `_id`, `project` e `t` ci sono sempre. null è permesso ovunque.
@@ -21,8 +23,8 @@
 const crypto = require('crypto');
 const { fail, isPlain } = require('./common');
 
-const TYPES = ['string', 'id', 'number', 'boolean', 'path', 'excerpt'];
-const MAX_STRING = 300, MAX_EXCERPT = 200, MAX_PATH = 400, MAX_ID = 128, MAX_LIST = 200, MAX_KEY = 128;
+const TYPES = ['string', 'id', 'number', 'boolean', 'path', 'excerpt', 'note'];
+const MAX_NOTE = 2000, MAX_STRING = 300, MAX_EXCERPT = 200, MAX_PATH = 400, MAX_ID = 128, MAX_LIST = 200, MAX_KEY = 128;
 const ID_RE = /^[A-Za-z0-9._:@#+-]+$/;
 
 // ---------------------------------------------------------------- dichiarazione dei campi
@@ -86,6 +88,7 @@ function relPath(file, root) {
   const f = slash(file || '').trim();
   if (!f) return '';
   if (f.startsWith('ext:')) return f.slice(0, MAX_PATH);
+  if (f.startsWith('abs:')) return outside(f.slice(4)); // la mappa della realtà segna così i file fuori dal progetto
   if (!isAbsolute(f)) { const t = tidy(f); return t === null ? outside(f) : t; }
   const r = slash(root || '').replace(/\/+$/, '');
   if (r && isAbsolute(r)) {
@@ -161,6 +164,7 @@ function guardValue(v, spec, where, problems) {
       case 'id': return typeof v !== 'string' ? no('tipo') : (v.length > MAX_ID || !ID_RE.test(v)) ? no('forma') : v;
       case 'path': return typeof v !== 'string' ? no('tipo') : v.length > 4 * MAX_PATH ? no('testo') : guardPath(v).slice(0, MAX_PATH);
       case 'excerpt': return typeof v !== 'string' ? no('tipo') : excerpt(v);
+      case 'note': { if (typeof v !== 'string') return no('tipo'); const s = scrub(v); return s.length > MAX_NOTE ? s.slice(0, MAX_NOTE - 1) + '…' : s; }
     }
   }
   if (Array.isArray(spec)) {

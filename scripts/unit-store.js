@@ -431,7 +431,94 @@ async function privacyTests(ok) {
   }
 }
 
-module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); } };
+// S7: le collezioni dello storico. Che cosa entra in ognuna, con quali indici e per quanto tempo
+async function collectionsTests(ok) {
+  console.log('store: collezioni');
+  const { openStore } = require(path.join(ROOT, 'src', 'core', 'store'));
+  const { COLLECTIONS, NAMES, declareCollections, defaultRetention } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
+  const { ProjectKeys } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
+  const code = fn => { try { fn(); } catch (e) { return e.code; } return null; };
+  ok(NAMES.join() === 'projects,lessons,steps,sessions,feedback,experiments,daily' && JSON.stringify(defaultRetention()) === '{"projects":0,"lessons":180,"steps":90,"sessions":365,"feedback":365,"experiments":365,"daily":0}',
+    'le sette collezioni, con la conservazione di partenza: passi 90 giorni, sessioni e feedback 365, lezioni 180, progetti e statistiche per sempre');
+  const P = '0123456789abcdef', T = 1763500000000;
+  // un documento per collezione, con la forma che i dati hanno oggi nel motore
+  const samples = {
+    projects: { _id: P, name: 'platypus', remote: 'github.com/m4xl4b/platypus', aliases: { fedcba9876543210: T }, firstSeen: T, lastSeen: T + 5, forgotten: { '1a2b3c4d5e6f': T }, learned: { 'sess-0001': T } },
+    lessons: { _id: `${P}:1a2b3c4d5e6f`, project: P, t: T, lesson: '1a2b3c4d5e6f', kind: 'flaky-command', key: 'npm run test:e2e', count: 3, sessions: ['sess-0001', 'sess-0002'], first: T - 9, last: T,
+      evidence: [{ sid: 'sess-0001', t: T, agent: 'Claude', excerpt: 'FAIL src/a.test.js: expected 3 to equal 4' }], seen: ['sess-0001|1763500000000|Claude'], pinned: false, ignored: false },
+    steps: { _id: 'step-1', project: P, t: T, session: 'sess-0001', agent: 'main', action: 'verify', tool: 'Bash', target: 'cmd:npm test', outcome: 'error', err: 'AssertionError: expected N to equal N', fail: 'test', cmd: 'npm test', phase: 'test', dur: 4200 },
+    sessions: { _id: 'sess-0001', project: P, t: T, end: T + 60000, kind: 'code', model: 'claude-fable-5-2[1m]', effort: 'high', agents: 3, actions: 120, errors: 7, surprises: 2, claims: 1, loops: 1, stale: 0, lessons: 2, cost: 1.25, tokens: 250000 },
+    feedback: { _id: 'mb1x2y3', project: P, t: T, sid: 'sess-0001', agent: 'main', name: 'Claude', feature: 'loop', mode: 'shadow', event: 'PreToolUse', lessonId: '1a2b3c4d5e6f', tag: 'tests/ungrounded', toolUseId: 'toolu_01AbC',
+      text: 'Platypus: this command failed 4 times in a row with the same error.\nChange something before running it again.', local: 'Platypus: questo comando è fallito 4 volte di fila con lo stesso errore.',
+      about: { kind: 'loop', cmd: 'npm test', pat: 'FAIL <path>', file: 'src/a.js' }, group: 'on', outcome: 'helped', at: T + 9000, why: 'il comando è poi riuscito' },
+    experiments: { _id: 'sess-0001:loop', project: P, t: T, sid: 'sess-0001', feature: 'loop', group: 'shadow' },
+    daily: { _id: 'day:2026-11-19', t: T, kind: 'day', day: '2026-11-19', alerts: 2,
+      projects: { platypus: { cost: 1.5, tokens: 300000, completed: 4, commits: 2, prs: 1, tests: 3, sessions: ['sess-0001'], wing: 'code' } },
+      releases: [{ t: T, kind: 'commit', text: 'S6: add the privacy guard of the store', url: 'https://github.com/m4xl4b/platypus/pull/18', agent: 'Claude', project: 'platypus' }] },
+  };
+  const week = { _id: 'week:2026-W47', t: T, kind: 'week', week: '2026-W47', types: { Claude: { completed: 10, errors: 1, tools: 200, cost: 3.5 }, Explore: { completed: 2, errors: 0, tools: 40, cost: 0.4 } } };
+  const last = { _id: 'last:sess-0001', t: T, kind: 'last', last: { cost: 1.5, tok: 300000, completed: 4, cbt: { Claude: 4 }, err: { Claude: 1 }, tools: { Claude: 80 }, costType: { Claude: 1.5 }, rel: 'r-12', alerts: ['a1', 'a2'], name: 'platypus' } };
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-collezioni-'));
+  try {
+    for (const backend of ['memory', 'sqlite']) {
+      const dir = path.join(tmp, backend);
+      const store = declareCollections(openStore({ backend, dir, guard: 'reject', requireFields: true }));
+      const info = store.info();
+      ok(info.collections.map(c => c.name).join() === NAMES.join() && info.collections.every(c => c.guarded) && info.collections.find(c => c.name === 'steps').retention.days === 90 && info.collections.find(c => c.name === 'daily').retention === null &&
+        JSON.stringify(info.collections.find(c => c.name === 'steps').indexes) === '[["project","t"],["session","t"]]', `${backend}: tutte dichiarate con i loro campi, indici e conservazione`);
+      let same = true;
+      for (const [name, doc] of Object.entries({ ...samples, 'daily (settimana)': week, 'daily (ultimo stato)': last })) {
+        const c = store.collection(name.split(' ')[0]);
+        const back = c.put(doc), got = c.get(doc._id);
+        const norm = o => JSON.stringify(o, (k, v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([x], [y]) => (x < y ? -1 : 1))) : v));
+        if (norm(back) !== norm(doc) || norm(got) !== norm(doc)) { same = false; ok(false, `${backend}: ${name} non torna uguale: ${norm(got).slice(0, 300)}`); }
+      }
+      ok(same, `${backend}: un documento vero per ogni collezione entra ed esce uguale, con la guardia che rifiuta ogni campo in più`);
+      const extras = NAMES.map(n => code(() => store.collection(n).put({ ...samples[n], _id: 'x-' + n, prompt: 'testo' })));
+      ok(extras.every(c => c === 'undeclared-field') && code(() => store.collection('steps').put({ ...samples.steps, _id: 'x1', output: 'righe di log' })) === 'undeclared-field' &&
+        code(() => store.collection('sessions').put({ ...samples.sessions, _id: 'x2', title: 'titolo della sessione' })) === 'undeclared-field' && code(() => store.collection('feedback').put({ ...samples.feedback, _id: 'x3', about: { kind: 'loop', output: 'x' } })) === 'undeclared-field' &&
+        code(() => store.collection('daily').put({ ...samples.daily, _id: 'x4', projects: { p: { cost: 1, note: 'x' } } })) === 'undeclared-field', `${backend}: in nessuna collezione entra un campo non dichiarato (prompt, output, titolo…)`);
+      // i campi che possono portare testo passano dai filtri
+      const st = store.collection('steps').put({ ...samples.steps, _id: 'step-2', target: 'abs:C:/Users/mario/Desktop/conti.xlsx', err: 'login fallito per mario.rossi@example.com con password=hunter2', cmd: 'curl -H "Authorization: Bearer abcDEF123456" https://api.example.org' });
+      const fbk = store.collection('feedback').put({ ...samples.feedback, _id: 'fb-2', text: `riga uno\nriga due con token ghp_abcdefghijklmnopqrstuvwxyz012345\n${'x'.repeat(3000)}`, about: { file: '/home/mario/.ssh/id_rsa' } });
+      const dl = store.collection('daily').put({ ...samples.daily, _id: 'day:2026-11-18', releases: [{ t: T, kind: 'commit', text: 'fix: rimuove la chiave sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz012345', url: 'https://utente:parola@git.example.org/x/y/pull/3' }] });
+      ok(/^ext:[0-9a-f]{10}\/conti\.xlsx$/.test(st.target) && st.err === 'login fallito per [email] con password=[secret]' && !st.cmd.includes('abcDEF') && fbk.text.startsWith('riga uno\nriga due con token [token]\n') && fbk.text.length === 2000 &&
+        /^ext:[0-9a-f]{10}\/id_rsa$/.test(fbk.about.file) && dl.releases[0].text === 'fix: rimuove la chiave [token]' && dl.releases[0].url === 'https://[credentials]@git.example.org/x/y/pull/3',
+        `${backend}: percorsi, righe d'errore, comandi, messaggi e titoli dei commit passano dai filtri`);
+      // la chiave del progetto e "dimentica"
+      const keys = new ProjectKeys({ store, exec: async () => 'git@github.com:m4xl4b/altro.git', clock: () => T });
+      const other = await keys.resolve('/home/max/altro');
+      store.collection('steps').append({ project: other.key, t: T, session: 's9', action: 'read', tool: 'Read', target: 'README.md', outcome: 'ok' });
+      store.flush();
+      const before = store.collection('steps').count({});
+      ok(store.collection('projects').get(other.key).remote === 'github.com/m4xl4b/altro' && store.forgetProject(P) === 8 && store.collection('projects').get(P) === null && store.collection('steps').count({ project: P }) === 0 &&
+        store.collection('steps').count({}) === before - 2 && store.collection('projects').get(other.key) !== null && store.collection('daily').count({}) === 4,
+        `${backend}: la collezione projects accetta quello che scrive la chiave del progetto; "dimentica" toglie il progetto dalle collezioni che hanno la sua chiave`);
+      store.close();
+      // conservazione scelta nelle opzioni
+      const custom = declareCollections(openStore({ backend, dir: path.join(tmp, backend + '-2'), requireFields: true }), { retention: { steps: 30, sessions: 0, daily: 400, lessons: 60 } });
+      const r = Object.fromEntries(custom.info().collections.map(c => [c.name, c.retention]));
+      ok(r.steps.days === 30 && r.sessions === null && r.daily.days === 400 && r.lessons.days === 60 && r.lessons.onlyIf === 'low-weight' && r.feedback.days === 365 && r.projects === null, `${backend}: la conservazione si può cambiare per collezione (0 = per sempre)`);
+      custom.close();
+    }
+    const m = () => openStore({ requireFields: true });
+    ok(code(() => declareCollections(m(), { retention: { steps: -1 } })) === 'invalid-argument' && code(() => declareCollections(m(), { retention: { steps: 1.5 } })) === 'invalid-argument' && code(() => declareCollections(m(), { retention: { steps: '30' } })) === 'invalid-argument' &&
+      code(() => declareCollections(m(), { retention: { steps: 99999 } })) === 'invalid-argument' && code(() => declareCollections(m(), { retention: { boh: 3 } })) === 'invalid-argument' && code(() => declareCollections(m(), { retention: [30] })) === 'invalid-argument',
+      'una conservazione che non ha senso (negativa, non intera, di una collezione che non c\'è) è un errore');
+    // nessuna collezione ha un campo libero senza limiti: solo i tipi della guardia
+    const types = new Set();
+    const walk = spec => { if (typeof spec === 'string') types.add(spec); else if (Array.isArray(spec)) walk(spec[0]); else for (const v of Object.values(spec)) walk(v); };
+    for (const n of NAMES) walk(COLLECTIONS[n].fields);
+    const notes = [];
+    const find = (spec, at) => { if (spec === 'note') notes.push(at); else if (Array.isArray(spec)) find(spec[0], at + '[]'); else if (typeof spec === 'object') for (const [k, v] of Object.entries(spec)) find(v, at + '.' + k); };
+    for (const n of NAMES) find(COLLECTIONS[n].fields, n);
+    ok([...types].sort().join() === 'boolean,excerpt,id,note,number,path,string' && notes.join() === 'feedback.text,feedback.local', 'il testo su più righe è ammesso in due campi soli: il messaggio di Platypus all\'agente, nelle due lingue');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); } };
 if (require.main === module) {
   let failed = 0;
   module.exports.run((c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) failed++; })
