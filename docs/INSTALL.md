@@ -96,12 +96,22 @@ npm run hooks:status -- --feedback
 npm run hooks:uninstall -- --feedback
 ```
 
-- They are `http` hooks to `http://127.0.0.1:47800/platypus-hook/feedback` on `SessionStart`, `PostToolUse`, `PostToolUseFailure`, `Stop` and `SubagentStop`, with a 3-second timeout. If your Claude Code is too old for `http` hooks, add `--curl` to install them as `curl` commands instead.
+- They are `http` hooks to `http://127.0.0.1:47800/platypus-hook/feedback` on `SessionStart`, `PreToolUse` (from 2.14, for the fear; also MCP tools), `PostToolUse`, `PostToolUseFailure`, `Stop` and `SubagentStop`, with a 3-second timeout. If you installed them with 2.13, OPT says they are from an earlier version: remove them and install them again, or the fear never reaches the agent. If your Claude Code is too old for `http` hooks, add `--curl` to install them as `curl` commands instead.
 - Installing them changes nothing by itself: every feature in OPT → *Feedback to the agents* starts *off*. *Shadow* records what Platypus would have said without saying it; *on* says it. In this version three features stop at shadow. The three that can be turned on also have *experiment*: each session is assigned at random, half and half, to *on* or *shadow*, and the Book's FEEDBACK tab compares the two groups (with a 95% interval, and "not enough data" while there are fewer than 10 cases per group).
 - If Platypus is closed, or takes more than 300 ms to answer, Claude Code goes on as usual. Platypus never answers for you on a permission and never changes a tool's input or output.
 - To keep a project out of it: in its Book tick *Don't talk to this project's agents*.
 
 Every message, sent or in shadow, goes to the history database, `~/.platypus/platypus.db`, under the project's key (the same as the Workshop book), with what was said, to which agent, and what the agent did next. The text is passed through the secret filter before it is kept, and messages older than 365 days are deleted. Nothing leaves your computer. The Book's FEEDBACK tab shows the same log; to delete it, use *Forget this project* (see *The history* below).
+
+### Fear
+
+From 2.14 Platypus notices the actions that are hard to undo (`git reset --hard`, a force push to `main`, `rm -rf` outside the project, `DROP TABLE`, `terraform apply`, an MCP tool that sends or deletes…) and whether the agent was prudent before them. **Platypus is not a protection**: it recognises known patterns and can miss what it does not know.
+
+- **In the office** (OPT → *FEAR AND SCARS*, on by default): it only observes. Without hooks it works from the transcripts, a few seconds late.
+- **To the agent** (OPT → *Feedback to the agents* → *Fear*, **shadow** by default): before a risky action without prudence, one line of context ("this command is irreversible… first make a commit or a copy, or ask the user"). It needs the feedback hooks with `PreToolUse`. The action still runs: Platypus adds context, it never decides. Shadow records what it would have said, so the Book's FEARS tab can show whether it helps before you turn it on; *experiment* compares the two groups.
+- **What is kept:** in `~/.platypus/platypus.db`, collection `risks`, the rule, the level, the prudence, the shape of the command (`git reset --hard <ref>`) and the target relative to the project, never the command. It is kept as long as the session summaries (365 days).
+- **The guard is not in 2.14.0.** Taking the automatic approval away from irreversible actions, and giving the decision back to you, waits for tests on what Claude Code's hooks really allow in each permission mode.
+
 
 ## More precise meaning (optional)
 

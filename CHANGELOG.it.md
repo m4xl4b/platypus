@@ -4,6 +4,22 @@ Le versioni di Platypus (fino alla 2.7 si chiamava Agent Office), dalla più rec
 
 *English version: [CHANGELOG.md](CHANGELOG.md).*
 
+## 2.14.0: la paura e il Nonno
+
+Un agente non ha istinto di sopravvivenza: per lui `git reset --hard` pesa come `ls`. La 2.14 gli presta una paura da fuori, e fa del Nonno il custode di quello che non si può disfare. Platypus non è una protezione: riconosce schemi noti, dice "probabile", e può non vedere quello che non conosce.
+
+- **Classificatore del rischio.** Ogni azione viene letta, mai eseguita, e prende un livello: attenzione (un lockfile, una dipendenza, la CI), pericolo (`git reset --hard`, `git clean -fd`, `rm -r` di quello che git forse non conosce, `sudo`), irreversibile (un push su `main`, un force push su un branch condiviso, `rm -rf` fuori dal progetto, `DROP`/`TRUNCATE`/`DELETE` senza `WHERE`, `terraform apply`, `npm publish`, uno strumento MCP che manda, paga o cancella, segreti letti e poi una chiamata di rete). Capisce bash, PowerShell e cmd, le virgolette, `bash -c`, `sudo`, `xargs`, gli heredoc, e non grida al lupo su `rm -rf node_modules`, un push su un branch di lavoro o `DELETE … WHERE id = …`.
+- **Prudenza.** Prima di un'azione rischiosa Platypus guarda che cosa ha fatto l'agente: ha guardato prima, ha fatto un commit o una copia, ha provato a vuoto, è partito da un albero pulito, o gliel'ha chiesto l'utente. Senza abbastanza prudenza è una *paura mancata*.
+- **Nell'ufficio:** un agente prudente suda; uno con una paura mancata resta calmo, e il Nonno va alla sua scrivania, gli mette una mano sulla spalla e ci sbatte sopra il timbro PERICOLO o IRREVERSIBILE. Opzione *Paura* in OPZ, accesa di base: osserva soltanto.
+- **Cicatrici.** Quando dopo un'azione rischiosa si vede un danno (un file che c'era e non c'è più, errori nuovi su quel file, `git reflog`, "hai cancellato…"), l'evento viene segnato e il Libro riceve una *cicatrice*: "Qui `rm -r <path>` ha già distrutto del lavoro su `data/export`. Prima di rifarlo: fai un commit o una copia." Il Nonno racconta prima le cicatrici; si dimenticano in 90 giorni invece di 30. Una cicatrice vista solo nelle tue parole resta un'osservazione finché non si ripete.
+- **Il fumetto dei permessi** e la notifica del sistema dicono quanto è rischiosa l'azione, perché, quale prudenza manca e se si torna indietro. SEMPRE su un'azione irreversibile chiede una conferma in più.
+- **La paura prestata all'agente.** Una nuova funzione di feedback, *La paura*, dice all'agente prima di un'azione rischiosa senza prudenza che cosa rischia e che cosa fare, una volta per regola per sessione. **In ombra di base**, così prima si misura; *esperimento* confronta i due gruppi nel Libro. Gli hook di feedback ora comprendono `PreToolUse`: se li hai installati con la 2.13, installali di nuovo.
+- **Report, Libro, storico:** le paure mancate per agente e le cicatrici del giorno nel report; una scheda PAURE nel Libro (per livello e per regola, cicatrici, l'esperimento sul messaggio); azioni rischiose, paure mancate e cicatrici come metriche dello storico.
+- **La demo** lo recita sul piano di isms-docs ogni quattro minuti, con tre mesi di storico finto della paura. Non lancia mai un comando.
+- **Privacy:** lo storico tiene la regola, il livello, la prudenza, la forma del comando (`git reset --hard <ref>`) e il bersaglio relativo al progetto, mai il comando.
+- **Corretto:** il Nonno non fa più il suo discorso dall'ascensore quando le stanze di un piano si spostano.
+- **Non in questa versione:** la guardia che ti ridà la decisione sulle azioni irreversibili; aspetta le prove sugli hook di Claude Code.
+
 ## 2.13.0: uno storico delle tue sessioni
 
 Fino alla 2.12 Platypus teneva qualche file JSON e ricostruiva tutto il resto dai transcript: abbastanza per l'ufficio, non per domande di mesi, come "questo progetto gira in tondo meno di prima?" o "da quando i messaggi del giro in tondo sono accesi, gli agenti cambiano strada più spesso?". La 2.13 tiene uno storico, sul tuo computer, fatto di fatti e mai di testo.

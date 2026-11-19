@@ -4,6 +4,22 @@ Platypus releases (up to 2.7 it was called Agent Office), newest first.
 
 *Versione italiana: [CHANGELOG.it.md](CHANGELOG.it.md).*
 
+## 2.14.0: fear and the elder
+
+An agent has no survival instinct: to it, `git reset --hard` weighs the same as `ls`. 2.14 lends it a fear from outside, and makes Grandpa the keeper of what cannot be undone. Platypus is not a protection: it recognises known patterns, says "probable", and can miss what it does not know.
+
+- **Risk classifier.** Every action is read, never run, and gets a level: attention (a lockfile, a dependency, the CI), danger (`git reset --hard`, `git clean -fd`, `rm -r` of what git may not know, `sudo`), irreversible (a push to `main`, a force push to a shared branch, `rm -rf` outside the project, `DROP`/`TRUNCATE`/`DELETE` without `WHERE`, `terraform apply`, `npm publish`, an MCP tool that sends, pays or deletes, secrets read and then a network call). It understands bash, PowerShell and cmd, quotes, `bash -c`, `sudo`, `xargs`, heredocs, and it does not cry wolf on `rm -rf node_modules`, a push to a feature branch or `DELETE … WHERE id = …`.
+- **Prudence.** Before a risky action Platypus looks at what the agent did: looked first, made a commit or a copy, tried a dry run, started from a clean tree, or was asked by the user. Without enough of it, it is a *missed fear*.
+- **In the office:** a prudent agent sweats; one with a missed fear stays calm, and Grandpa walks to its desk, puts a hand on its shoulder and stamps DANGER or IRREVERSIBLE on it. Option *Fear* in OPT, on by default: it only observes.
+- **Scars.** When damage follows a risky action (a file that was there and is gone, new errors on it, `git reflog`, "you deleted…"), the event is marked and the Book gets a *scar*: "Here `rm -r <path>` already destroyed work on `data/export`. Before doing it again: make a commit or a copy." Grandpa tells scars first; they fade in 90 days instead of 30. A scar seen only in your words stays an observation until it happens again.
+- **The permission balloon** and the desktop notification say how risky the action is, why, what prudence is missing and whether it can be undone. ALWAYS on an irreversible action asks once more.
+- **Fear lent to the agent.** A new feedback feature, *Fear*, tells the agent before a risky action without prudence what it risks and what to do, once per rule per session. **Shadow by default**, so it can be measured first; *experiment* compares the two groups in the Book. The feedback hooks now include `PreToolUse`: if you installed them with 2.13, reinstall them.
+- **Report, Book, history:** missed fears per agent and the day's scars in the daily report; a FEARS tab in the Book (by level and rule, scars, the fear message's experiment); risky actions, missed fears and scars as history metrics.
+- **The demo** acts it out on the isms-docs floor every four minutes, with three months of fake fear history. It never runs a command.
+- **Privacy:** the history keeps the rule, the level, the prudence, the shape of the command (`git reset --hard <ref>`) and the target relative to the project, never the command.
+- **Fixed:** Grandpa no longer gives his talk from the lift when the rooms of a floor move.
+- **Not in this version:** the guard that gives you back the decision on irreversible actions; it waits for tests on Claude Code's hooks.
+
 ## 2.13.0: a history of your sessions
 
 Up to 2.12 Platypus kept a few JSON files and rebuilt everything else from the transcripts: enough for the office, not for questions about months, like "does this project go round in circles less than before?" or "since the loop messages are on, do agents change course more often?". 2.13 keeps a history, on your computer, made of facts and never of text.
