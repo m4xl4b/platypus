@@ -780,6 +780,111 @@ function prudenceTests(ok) {
   ok(!JSON.stringify(go('git reset --hard', [], 'il mio segreto è 12345, fai reset hard').p).includes('12345'), 'prudenza: del messaggio dell\'utente non resta niente nel risultato');
 }
 
+// 2.14, R3: le azioni rischiose dal transcript allo storico (fear.js, state.js, history.js)
+async function fearStoreTests(ok) {
+  const { OfficeState } = require(path.join(ROOT, 'src', 'core', 'state'));
+  const { History } = require(path.join(ROOT, 'src', 'core', 'history'));
+  const fear = require(path.join(ROOT, 'src', 'core', 'fear'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-fear-'));
+  const iso = t => new Date(t).toISOString();
+  let now = Date.parse('2026-11-19T10:00:00Z');
+  const st = new OfficeState({ clock: () => now, settings: {} });
+  const h = new History({ dir: path.join(tmp, 'dati'), backend: 'memory', log() {} });
+  h.keys.exec = async () => null;
+  st.on('step', (s, a, step) => h.recordStep(s, a, step));
+  st.on('risk', (s, a, step) => h.recordRisk(s, a, step));
+  const S = 'sess-fear-0001', cwd = '/home/u/proj';
+  let n = 0, branch = 'feature/login';
+  const line = (type, content, extra = {}) => ({ type, timestamp: iso(now += 1000), cwd, gitBranch: branch, message: { role: type, content, ...(type === 'assistant' ? { id: 'm' + (++n), usage: { input_tokens: 1, output_tokens: 1 } } : {}) }, ...extra });
+  const use = (id, name, input) => st.applyTranscriptLine(S, null, line('assistant', [{ type: 'tool_use', id, name, input }]));
+  const res = (id, content = 'ok', isErr = false) => st.applyTranscriptLine(S, null, line('user', [{ type: 'tool_result', tool_use_id: id, content, is_error: isErr }]));
+  const bash = (id, command, out) => { use(id, 'Bash', { command }); res(id, out); };
+  try {
+    st.applyTranscriptLine(S, null, line('user', 'sistema il test del login che fallisce'));
+    bash('t1', 'npm test', 'ok');
+    bash('t2', 'git reset --hard origin/feature-secret-xyz', 'HEAD is now at 1234567');
+    const s = st.sessions.get(S), steps = s.main.world.steps;
+    const r2 = steps.find(x => x.id === 't2').risk;
+    ok(r2 && r2.level === 2 && r2.ruleIds.join() === 'git-reset-hard' && r2.missed === true && r2.prudence === 0 && r2.missing.includes('backup') && !steps.find(x => x.id === 't1').risk,
+      'paura: git reset --hard senza prudenza è segnato sul passo come paura mancata; npm test no');
+    ok(s.branch === 'feature/login', 'paura: il branch della sessione arriva dal transcript');
+    // con prudenza: commit prima, e albero pulito
+    bash('t3', 'git add -A && git commit -m wip', '[feature/login abc] wip');
+    bash('t4', 'git status', 'On branch feature/login\nnothing to commit, working tree clean');
+    bash('t5', 'git reset --hard HEAD~1', 'ok');
+    const r5 = steps.find(x => x.id === 't5').risk;
+    ok(r5.level === 2 && !r5.missed && r5.present.includes('backup') && r5.present.includes('clean') && r5.present.includes('looked') && r5.prudence === 1, 'paura: con commit, git status e albero pulito la stessa azione è prudente');
+    // il branch corrente decide un "git push" senza nome
+    bash('t6', 'git push', 'ok');
+    ok(!steps.find(x => x.id === 't6').risk, 'paura: git push su un branch di lavoro non è un rischio');
+    branch = 'main';
+    st.applyTranscriptLine(S, null, line('user', 'spingi su main'));
+    bash('t7', 'git push', 'ok');
+    const r7 = steps.find(x => x.id === 't7').risk;
+    ok(r7 && r7.level === 3 && r7.ruleIds.includes('git-push-main') && r7.present.includes('asked') && !r7.missed, 'paura: lo stesso git push su main è di livello 3, e l\'utente l\'aveva chiesto');
+    // segreti letti e poi la rete, nello stesso turno
+    st.applyTranscriptLine(S, null, line('user', 'controlla la configurazione'));
+    use('t8', 'Read', { file_path: cwd + '/.env' }); res('t8', 'KEY=abc');
+    bash('t9', 'curl https://example.com/collect', 'ok');
+    const r9 = steps.find(x => x.id === 't9').risk;
+    ok(steps.find(x => x.id === 't8').secret === true && r9 && r9.level === 3 && r9.ruleIds.includes('secret-then-network') && r9.missed, 'paura: ha letto .env e poi chiama la rete nello stesso turno → livello 3');
+    st.applyTranscriptLine(S, null, line('user', 'ora scarica la pagina di esempio'));
+    bash('t10', 'curl https://example.com/page', 'ok');
+    ok(!steps.find(x => x.id === 't10').risk, 'paura: al turno dopo la stessa chiamata non è più sospetta');
+    // più di 20 file modificati in un turno
+    for (let i = 0; i < 22; i++) { use('e' + i, 'Edit', { file_path: `${cwd}/src/f${i}.js`, old_string: 'a', new_string: 'b' }); res('e' + i); }
+    ok(!steps.find(x => x.id === 'e20').risk && steps.find(x => x.id === 'e21').risk.ruleIds.join() === 'many-files' && steps.find(x => x.id === 'e21').risk.missed === false, 'paura: alla ventiduesima modifica del turno scatta "più di 20 file" (livello 1, mai paura mancata)');
+    // un'azione rischiosa che non finisce mai resta comunque nello storico
+    use('t11', 'Bash', { command: 'rm -rf data/export' });
+
+    // ---- nello storico
+    h.flush();
+    const risks = h.store.collection('risks');
+    const all = risks.find({}, { sort: { t: 1 } });
+    ok(all.length === 6 && all.map(x => x._id.split(':')[1]).join() === 't2,t5,t7,t9,e21,t11', `paura: nello storico un documento per azione rischiosa, con l'id del suo passo (${all.map(x => x._id.split(':')[1]).join()})`);
+    const d2 = risks.get(S + ':t2'), d11 = risks.get(S + ':t11');
+    ok(d2.level === 2 && d2.missed === true && d2.shape === 'git reset --hard <ref>' && d2.session === S && d2.agent === 'main' && d2.tool === 'Bash' && /^[0-9a-f]{16}$/.test(d2.project) && d2.missing.join() === 'looked,backup,clean,asked', 'paura: il documento ha regola, livello, forma, prudenze mancanti e progetto');
+    ok(d11 && d11.target === 'data/export' && d11.level === 2, 'paura: il bersaglio dentro il progetto è relativo; un\'azione mai finita è salvata lo stesso');
+    const raw = JSON.stringify(h.store.collection('risks').find({})) + JSON.stringify(h.store.collection('steps').find({}));
+    ok(!/feature-secret-xyz|example\.com|KEY=abc|sistema il test|spingi su main/.test(raw), 'paura: nello storico non c\'è il comando, né l\'output, né il messaggio dell\'utente');
+    // rileggere la sessione (a ogni avvio) non raddoppia e non cancella com'è finita
+    risks.patch(S + ':t2', { outcome: 'damage', at: now });
+    h.recordRisk(s, s.main, steps.find(x => x.id === 't2'));
+    h.flush();
+    ok(risks.count({}) === 6 && risks.get(S + ':t2').outcome === 'damage', 'paura: riscrivere lo stesso evento non lo raddoppia e non cancella l\'esito');
+    // la demo non lascia niente
+    h.recordRisk({ ...s, demo: true }, s.main, steps.find(x => x.id === 't5'));
+    h.recordRisk(s, s.main, { id: 'zz', t: now, tool: 'Bash' });
+    h.flush();
+    ok(risks.count({}) === 6, 'paura: la demo e i passi senza rischio non scrivono niente');
+
+    // ---- la lettura (GET /api/risks usa questa)
+    const q = fear.queryRisks(h.store, {});
+    ok(q.length === 6 && q[0].t >= q[5].t && q.every(x => !('_id' in x) && Array.isArray(x.reasons) && x.reasons.length), 'paura: queryRisks dà gli eventi dal più recente, con il perché');
+    const m = fear.queryRisks(h.store, { missed: true });
+    ok(m.length === 3 && m.every(x => x.missed), 'paura: solo le paure mancate (' + m.length + ')');
+    ok(fear.queryRisks(h.store, { session: 'altra' }).length === 0 && fear.queryRisks(h.store, { session: S, limit: 2 }).length === 2 && fear.queryRisks(h.store, { projects: ['0000000000000000'] }).length === 0 &&
+      fear.queryRisks(h.store, { from: d11.t }).length === 1 && fear.queryRisks(h.store, { to: d2.t + 1 }).length === 1, 'paura: filtri per sessione, progetto, periodo e limite');
+    const en = require(path.join(ROOT, 'src', 'i18n')).withLang('en', () => fear.queryRisks(h.store, { session: S, to: d2.t + 1 })[0]);
+    ok(/throws away every change/.test(en.reasons[0]) && /reflog/.test(en.undo) && en.category === 'git', 'paura: i testi arrivano dalla regola, nella lingua dell\'ufficio');
+    // conservazione: 365 giorni, e segue le sessioni nelle opzioni
+    const { COLLECTIONS } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
+    const { retentionFromSettings } = require(path.join(ROOT, 'src', 'core', 'retention'));
+    ok(COLLECTIONS.risks.retention.days === 365 && retentionFromSettings({ storeKeepSessions: 30 }).risks === 30, 'paura: conservazione di 365 giorni, o quella scelta per le sessioni');
+    // la guardia della privacy rifiuta un campo non dichiarato
+    let refused = false;
+    try { h.store.collection('risks').put({ _id: 'x:y', project: d2.project, t: now, session: 'x', level: 2, command: 'git reset --hard secret' }); } catch { refused = true; }
+    ok(refused || !h.store.collection('risks').get('x:y') || !('command' in h.store.collection('risks').get('x:y')), 'paura: la guardia non lascia entrare un campo "command"');
+    // dimenticare un progetto toglie anche i suoi eventi
+    h.forgetProject(d2.project, { state: st });
+    ok(h.store.collection('risks').count({}) === 0, 'paura: "Dimentica questo progetto" toglie anche le azioni rischiose');
+  } finally {
+    try { h.stop(); } catch {}
+    try { st.stop && st.stop(); } catch {}
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 function run(ok) {
   console.log('libro della bottega');
   bottegaTests(ok);
@@ -801,7 +906,7 @@ function run(ok) {
   alertTests(ok);
 }
 
-module.exports = { run, riskTests, prudenceTests };
+module.exports = { run, riskTests, prudenceTests, fearStoreTests };
 
 if (require.main === module) {
   require('./test-guard').requireTempDataDir('unit-test'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea

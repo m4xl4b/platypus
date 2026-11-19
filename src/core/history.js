@@ -86,6 +86,22 @@ class History {
     this.queue('steps', doc);
   }
 
+  // ---- le azioni rischiose (2.14, fear.js): un documento per azione, con lo stesso _id del suo passo.
+  // step.risk lo mette il motore quando l'azione comincia. Si scrive con patch: rileggere una sessione all'avvio
+  // non cancella com'è finita (outcome, che arriva dopo). La demo non lascia niente.
+  recordRisk(s, a, step) {
+    const r = step && step.risk;
+    if (!s || s.demo || !s.cwd || !step || !step.id || !r || !(r.level >= 1)) return;
+    const doc = {
+      _id: `${s.id}:${step.id}`, project: this.keys.keyNow(s.cwd), t: step.t, session: s.id, agent: a && a.id ? String(a.id) : 'main', tool: String(step.tool || ''),
+      ruleIds: (r.ruleIds || []).map(String), level: r.level, prudence: Number(r.prudence) || 0, present: r.present || [], missing: r.missing || [], missed: !!r.missed,
+    };
+    if (r.shape) doc.shape = String(r.shape);
+    if (r.target) doc.target = String(r.target);
+    if (r.feedbackGroup) doc.feedbackGroup = String(r.feedbackGroup);
+    this.queue('risks', doc, { merge: true });
+  }
+
   // ---- l'esperimento sul feedback (S11): il gruppo di una sessione per una funzione, una volta sola
   recordExperiment({ cwd, sid, feature, group, t }) {
     if (!cwd || !sid || !feature || (group !== 'on' && group !== 'shadow')) return;
@@ -126,8 +142,9 @@ class History {
   }
 
   // ---- la coda: in memoria, poi nello storico in una transazione sola
-  queue(coll, doc) {
-    this.pending.set(coll + '\n' + doc._id, { coll, doc });
+  // merge: i campi nuovi si aggiungono a quelli già scritti invece di sostituire il documento
+  queue(coll, doc, { merge = false } = {}) {
+    this.pending.set(coll + '\n' + doc._id, { coll, doc, merge });
     if (this.pending.size >= FLUSH_DOCS) return this.flush();
     if (!this.timer) {
       this.timer = setTimeout(() => { this.timer = null; this.flush(); }, FLUSH_MS);
@@ -141,7 +158,7 @@ class History {
     this.pending.clear();
     // la chiave del progetto può essere arrivata da git nel frattempo
     for (const x of batch) if (x.doc.project) x.doc.project = this.keys.canonical(x.doc.project);
-    const put = x => this.store.collection(x.coll).put(x.doc);
+    const put = x => { const c = this.store.collection(x.coll); const old = x.merge ? c.get(x.doc._id) : null; c.put(old ? { ...old, ...x.doc } : x.doc); };
     try { this.store.transaction(() => { for (const x of batch) put(x); }); return batch.length; }
     catch (e) {
       // un altro Platypus tiene il database (una compattazione, un "Dimentica"): niente va perso, si riprova tra poco

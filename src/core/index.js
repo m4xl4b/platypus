@@ -53,6 +53,7 @@ const { Stats } = require('./stats');
 const { History } = require('./history');
 const { runRetention } = require('./retention');
 const experiments = require('./experiments');
+const fear = require('./fear');
 const historyQuery = require('./history-query');
 const search = require('./search');
 const { demoHistoryStore } = require('./demo-history');
@@ -83,6 +84,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const history = new History({ dir: path.dirname(settingsPath), settings: initialSettings });
   // ogni azione finita diventa un passo nello storico; i riassunti delle sessioni ogni minuto e alla chiusura
   state.on('step', (s, a, step) => { try { history.recordStep(s, a, step); } catch {} });
+  state.on('risk', (s, a, step) => { try { history.recordRisk(s, a, step); } catch {} }); // le azioni rischiose (2.14)
   const summaryTimer = setInterval(() => { try { history.summarize(state, { counts: sessionCounts }); } catch {} }, 60000);
   summaryTimer.unref && summaryTimer.unref();
   const stats = new Stats(state, { store: history.store }); // nello storico, collezione daily
@@ -750,6 +752,19 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         });
         return json(res, 200, { ok: true, demo: sc.demo, ...r });
       } catch (e) { return json(res, e.code === 'bad-query' ? 400 : 200, { ok: false, error: e.message }); }
+    }
+    // le azioni rischiose salvate (2.14): per il progetto (sid, cwd, key o project) o per tutti; session, from, to, missed=1
+    if (url.pathname === '/api/risks') {
+      try {
+        history.flush();
+        const q = Object.fromEntries(url.searchParams);
+        if (q.project && !q.key) q.key = q.project;
+        const sc = historyScope(q);
+        if (!sc) return json(res, 404, { ok: false });
+        if (!sc.store) return json(res, 200, { ok: true, demo: true, risks: [] });
+        const risks = fear.queryRisks(sc.store, { projects: sc.projects, session: (q.session || '').slice(0, 200) || undefined, from: Number(q.from) || undefined, to: Number(q.to) || undefined, missed: q.missed === '1', limit: Number(q.limit) || 100 });
+        return json(res, 200, { ok: true, demo: sc.demo, risks });
+      } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
     }
     // lo storico nel tempo (S12): per il progetto (sid, cwd o key) o per tutti; metric=all dà tutte le metriche con la loro lettura
     if (url.pathname === '/api/history') {

@@ -5,6 +5,7 @@
 //     action  { tool, input } dell'azione
 //     steps   i passi recenti di quell'agente (quelli di worldmap.js: { t, tool, act, target, sig, err, clean }), il più recente per ultimo
 //     prompt  l'ultimo messaggio dell'utente: si legge qui e basta, non viene mai conservato
+//     hints   altri nomi del bersaglio che il comando non scrive (il branch corrente di un "git push")
 // Legge soltanto, come il classificatore: niente comandi, niente file, niente rete.
 // Contano solo le prudenze che la regola dichiara (risk.prudence): per "sudo" conta solo che l'utente l'abbia chiesto.
 //   looked  ha guardato prima: git status/diff/log, ls o lettura del bersaglio, terraform plan, un SELECT sulla stessa tabella
@@ -78,7 +79,7 @@ function targetWords(action, risk) {
   return [...out].filter(Boolean);
 }
 
-function assess({ risk, action, steps, prompt } = {}) {
+function assess({ risk, action, steps, prompt, hints } = {}) {
   const none = { score: 0, present: [], missing: [], probable: [] };
   if (!risk || !risk.level) return { ...none, score: 1 };
   const counts = Array.isArray(risk.prudence) ? risk.prudence : [];
@@ -88,7 +89,8 @@ function assess({ risk, action, steps, prompt } = {}) {
   const text = commandText(action);
   const mine = segments(text);
   const head = lower((mine.find(x => !/^(cd|pushd)\b/.test(x)) || '').split(/\s+/)[0]).replace(/^.*[\\/]/, '');
-  const targets = targetWords(action, risk);
+  // hints: altri nomi del bersaglio che il comando non scrive (il branch corrente di un "git push")
+  const targets = targetWords(action, risk).concat((Array.isArray(hints) ? hints : []).map(x => lower(x)).filter(x => x.length >= 3));
   const mentions = str => { const l = lower(str); return (risk.targets || []).some(t => { const b = lower(baseOf(t)); return b && (l.includes(lower(t)) || new RegExp('(^|[\\s/\\\\"\'])' + esc(b) + '($|[\\s/\\\\"\'])').test(l)); }); };
   const present = new Set();
 

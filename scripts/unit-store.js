@@ -464,8 +464,8 @@ async function collectionsTests(ok) {
   const { COLLECTIONS, NAMES, declareCollections, defaultRetention } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
   const { ProjectKeys } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
   const code = fn => { try { fn(); } catch (e) { return e.code; } return null; };
-  ok(NAMES.join() === 'projects,lessons,steps,sessions,feedback,experiments,daily' && JSON.stringify(defaultRetention()) === '{"projects":0,"lessons":180,"steps":90,"sessions":365,"feedback":365,"experiments":365,"daily":0}',
-    'le sette collezioni, con la conservazione di partenza: passi 90 giorni, sessioni e feedback 365, lezioni 180, progetti e statistiche per sempre');
+  ok(NAMES.join() === 'projects,lessons,steps,sessions,feedback,experiments,risks,daily' && JSON.stringify(defaultRetention()) === '{"projects":0,"lessons":180,"steps":90,"sessions":365,"feedback":365,"experiments":365,"risks":365,"daily":0}',
+    'le otto collezioni, con la conservazione di partenza: passi 90 giorni, sessioni, feedback e azioni rischiose 365, lezioni 180, progetti e statistiche per sempre');
   const P = '0123456789abcdef', T = 1763500000000;
   // un documento per collezione, con la forma che i dati hanno oggi nel motore
   const samples = {
@@ -898,7 +898,7 @@ async function retentionTests(ok) {
   const { Bottega } = require(path.join(ROOT, 'src', 'core', 'bottega'));
   const { ProjectKeys } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
   const DAY = 86400000, NOW = Date.now();
-  ok(JSON.stringify(retentionFromSettings({ storeKeepSteps: 30, storeKeepSessions: 0, storeKeepFeedback: '400', storeKeepLessons: -5, other: 1 })) === '{"steps":30,"sessions":0,"feedback":400,"experiments":400}' &&
+  ok(JSON.stringify(retentionFromSettings({ storeKeepSteps: 30, storeKeepSessions: 0, storeKeepFeedback: '400', storeKeepLessons: -5, other: 1 })) === '{"steps":30,"sessions":0,"feedback":400,"experiments":400,"risks":0}' &&
     JSON.stringify(retentionFromSettings({ storeKeepSteps: 99999 })) === '{"steps":3650}' && maxBytes({}) === 200 * 1048576 && maxBytes({ storeMaxMB: 0 }) === 0 && maxBytes({ storeMaxMB: 'boh' }) === 0,
     'dalle opzioni: giorni per collezione (0 = per sempre, al massimo 10 anni, i valori senza senso non contano) e il limite in MB');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-conserva-'));
@@ -1045,13 +1045,13 @@ async function forgetTests(ok) {
     const ex = h.exportAll(out);
     const files = fs.readdirSync(out).sort();
     const lines = f => fs.readFileSync(path.join(out, f), 'utf8').split('\n').filter(Boolean).length;
-    ok(ex.dir === out && files.join() === 'daily.jsonl,experiments.jsonl,feedback.jsonl,lessons.jsonl,projects.jsonl,sessions.jsonl,steps.jsonl' && ex.files.every(f => lines(f.file) === f.count && f.count === h.store.collection(f.collection).count({})),
+    ok(ex.dir === out && files.join() === 'daily.jsonl,experiments.jsonl,feedback.jsonl,lessons.jsonl,projects.jsonl,risks.jsonl,sessions.jsonl,steps.jsonl' && ex.files.every(f => lines(f.file) === f.count && f.count === h.store.collection(f.collection).count({})),
       'esporta: un file JSONL per collezione, con tutti i documenti');
     const home = path.join(tmp, 'casa'), prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
     process.env.HOME = home; process.env.USERPROFILE = home;
     try {
       const d1 = h.exportAll(), d2 = h.exportAll();
-      ok(path.dirname(d1.dir) === path.join(home, 'Downloads') && /^platypus-export-\d{8}-\d{4}$/.test(path.basename(d1.dir)) && d2.dir === d1.dir + '-2' && fs.readdirSync(d2.dir).length === 7, 'esporta: di base in Scaricati/platypus-export-<data>, senza mai sovrascrivere un\'esportazione di prima');
+      ok(path.dirname(d1.dir) === path.join(home, 'Downloads') && /^platypus-export-\d{8}-\d{4}$/.test(path.basename(d1.dir)) && d2.dir === d1.dir + '-2' && fs.readdirSync(d2.dir).length === 8, 'esporta: di base in Scaricati/platypus-export-<data>, senza mai sovrascrivere un\'esportazione di prima');
     } finally { for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
   } finally {
     if (h) { try { h.stop(); } catch {} }

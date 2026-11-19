@@ -114,6 +114,7 @@ process.on('exit', code => {
   // lo store: le stesse prove per ogni backend
   for (const backend of ['memory', 'sqlite']) await require('./store-conformance').run(ok, backend);
   await require('./unit-store').run(ok);
+  await require('./unit-test').fearStoreTests(ok); // 2.14: le azioni rischiose nello storico
   await require('./unit-concurrency').run(ok); // processi veri: due che scrivono, uno ucciso, due motori
 
   console.log('motore');
@@ -155,8 +156,8 @@ process.on('exit', code => {
   ok(st.sessions.length >= 4, `demo: ${st.sessions.length} piani, ${st.sessions.reduce((a, s) => a + s.subs.length, 0)} sottoagenti`);
   // lo storico: il motore apre il database accanto alle opzioni e lo dice nello stato (S9 di docs/plans/2.13-storage.md)
   const hist0 = await core.historyReady(), sse0 = await sseFirst(port);
-  ok(st.history && st.history.backend === 'sqlite' && st.history.notice === '' && sse0.history && sse0.history.notice === '' && fs.existsSync(path.join(tmp, 'platypus.db')) && hist0 && hist0.done === true && core.history.store.info().collections.length === 7,
-    'storico: il motore apre platypus.db accanto alle opzioni, con le sue sette collezioni, e non ha avvisi da dare');
+  ok(st.history && st.history.backend === 'sqlite' && st.history.notice === '' && sse0.history && sse0.history.notice === '' && fs.existsSync(path.join(tmp, 'platypus.db')) && hist0 && hist0.done === true && core.history.store.info().collections.length === 8,
+    'storico: il motore apre platypus.db accanto alle opzioni, con le sue otto collezioni, e non ha avvisi da dare');
   {
     // un database rovinato non ferma niente: l'ufficio parte lo stesso e lo dice
     const tmpBad = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-rotto-'));
@@ -702,14 +703,17 @@ process.on('exit', code => {
   {
     // le API dello storico (S10): stato, compatta, esporta, dimentica (con conferma), conservazione
     const si = JSON.parse((await get(port, '/api/store')).body);
+    // 2.14: le azioni rischiose salvate; un progetto sconosciuto risponde 404, come le altre API dello storico
+    const rk = JSON.parse((await get(port, '/api/risks')).body), rkm = JSON.parse((await get(port, '/api/risks?missed=1&limit=5')).body), rk404 = await get(port, '/api/risks?project=nonesiste');
+    ok(rk.ok && Array.isArray(rk.risks) && rk.demo === false && rkm.ok && rkm.risks.every(x => x.missed) && rk404.status === 404, `paura, /api/risks: risponde (${rk.risks.length} eventi), filtra le paure mancate, 404 per un progetto sconosciuto`);
     const fkKey = core.history.keys.keyNow(fakeCwd);
-    ok(si.ok && si.backend === 'sqlite' && si.persistent && si.sizeBytes > 0 && si.usedBytes > 0 && si.limitMB === 200 && si.retention.steps === 90 && si.collections.length === 7 && si.notice === '' && si.projects.some(p => p.key === fkKey && p.name === 'progetto') && Array.isArray(si.backups),
+    ok(si.ok && si.backend === 'sqlite' && si.persistent && si.sizeBytes > 0 && si.usedBytes > 0 && si.limitMB === 200 && si.retention.steps === 90 && si.collections.length === 8 && si.notice === '' && si.projects.some(p => p.key === fkKey && p.name === 'progetto') && Array.isArray(si.backups),
       `storico, /api/store: ${si.backend}, ${si.sizeBytes} byte, ${si.collections.length} collezioni, ${si.projects.length} progetti`);
     const cp = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'compact' }))).body);
     const exDir = path.join(tmp, 'esportazione');
     const ex = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'export', dir: exDir }))).body);
     const exRel = await get(port, '/api/store', 'POST', JSON.stringify({ action: 'export', dir: 'relativa' }));
-    ok(cp.ok && cp.size && cp.size.after > 0 && ex.ok && ex.dir === exDir && fs.readdirSync(exDir).length === 7 && exRel.status === 400, 'storico: compatta, ed esporta in una cartella scelta (un percorso relativo è rifiutato)');
+    ok(cp.ok && cp.size && cp.size.after > 0 && ex.ok && ex.dir === exDir && fs.readdirSync(exDir).length === 8 && exRel.status === 400, 'storico: compatta, ed esporta in una cartella scelta (un percorso relativo è rifiutato)');
     const noConfirm = await get(port, '/api/store', 'POST', JSON.stringify({ action: 'forget', cwd: fakeCwd }));
     // con la demo accesa: il suo Libro è finto e non si dimentica
     core.demo.start({ scale: 0.02 }); await sleep(800);

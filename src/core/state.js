@@ -109,6 +109,7 @@ const LONG_STRINGS = { coworkDirs: 600, claudeDirs: 600, embedModel: 80, ollamaU
 const i18n = require('../i18n');
 const feedback = require('./feedback');
 const { AgentWorld } = require('./worldmap');
+const fear = require('./fear');
 const grounding = require('./grounding');
 const { AgentMind, Corpus } = require('./semantic');
 const embedOpts = require('./embed');
@@ -747,6 +748,15 @@ class OfficeState extends EventEmitter {
   // mappa della realtà dell'agente (vedi worldmap.js)
   worldStart(s, a, id, name, input, ts) {
     try { const w = a.world || (a.world = new AgentWorld()); w.model = a.model || w.model || ''; w.start(id, name, input, ts || this.now(), s.cwd, a.ctx || 0); } catch {}
+    // 2.14: quanto è rischiosa e con quanta prudenza (fear.js). Sul passo restano solo regola, livello e prudenze
+    try {
+      const step = a.world && a.world.open.get(id);
+      if (step && !step.risk) {
+        const f = fear.fearOf({ s, a, tool: name, input, steps: a.world.steps.filter(x => x !== step) });
+        if (f.risk.marks.readsSecret) step.secret = true;
+        if (f.event) { step.risk = f.event; this.emit('risk', s, a, step); }
+      }
+    } catch {}
     try { const m = this.mindOf(s, a); m.action(id, ts || this.now(), describeTool(name, input), actionText(name, input)); const p = m.byTool.get(id); if (p) p.tool = name; } catch {}
   }
   // testo completo delle ultime risposte: serve a confrontare quello che dice con quello che c'è (grounding.js)
@@ -782,6 +792,7 @@ class OfficeState extends EventEmitter {
     const ts = Date.parse(line.timestamp) || 0;
     const s = this.ensureSession(sessionId, line.cwd, ts || undefined);
     if (line.entrypoint) this.setEntrypoint(s, line.entrypoint);
+    if (typeof line.gitBranch === 'string' && line.gitBranch && !agentId) s.branch = line.gitBranch.slice(0, 200); // serve a sapere su che branch finisce un "git push" (2.14)
     if (type === 'ai-title' && line.aiTitle) { if (!s.titleFromApp) s.title = line.aiTitle; this.touch(); return; }
     if (type === 'custom-title' && line.customTitle) { if (!s.titleFromApp) s.title = line.customTitle; this.touch(); return; }
     if (type === 'summary' && line.summary && !s.title) { s.title = line.summary; this.touch(); return; }
