@@ -83,7 +83,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   summaryTimer.unref && summaryTimer.unref();
   const stats = new Stats(state, { store: history.store }); // nello storico, collezione daily
   // il Libro della bottega, nello storico. La cartella di un progetto (lo storico non la tiene) la cerca il motore
-  const bottega = new Bottega({ store: history.store, keys: history.keys, cwdOf: projectFolder });
+  const bottega = new Bottega({ store: history.store, keys: history.keys, cwdOf: projectFolder, isDemo: cwd => isDemoCwd(cwd) });
   // le notifiche (attese, avvisi, report): le decide il motore, le mostra la shell
   // (shellInfo: le voci del menu dei gusci esterni; si chiama solo più tardi, quando hook e demo esistono già)
   const notifier = new Notifier(state, {
@@ -524,6 +524,30 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         if (!p.writable) return json(res, 409, { ok: false, reason: p.reason });
         return json(res, 200, { path: p.path, ...claudemd.upsertSection(p.path, p.markdown) });
       }
+      // lo storico: compatta, esporta, dimentica un progetto, applica subito la conservazione
+      case '/api/store': {
+        if (j.action === 'compact') return json(res, 200, { ok: true, size: history.compact() });
+        if (j.action === 'retention') return json(res, 200, { ok: true, result: await retention() });
+        if (j.action === 'export') {
+          const dir = typeof j.dir === 'string' && j.dir.trim() ? j.dir.trim().slice(0, 500) : '';
+          if (dir && !path.isAbsolute(dir)) return json(res, 400, { ok: false, reason: tr('Serve un percorso completo per la cartella di esportazione.') });
+          try { return json(res, 200, { ok: true, ...history.exportAll(dir || undefined) }); }
+          catch (e) { return json(res, 200, { ok: false, reason: tr('Non sono riuscito a esportare lo storico: {error}', { error: e.message }) }); }
+        }
+        if (j.action === 'forget') {
+          // il progetto: dalla sua chiave, oppure dalla sessione o dalla cartella (dal Libro)
+          let key = typeof j.key === 'string' && /^[0-9a-f]{16}$/.test(j.key) ? j.key : '';
+          if (!key) {
+            const cwd = projectCwd(j);
+            if (cwd && isDemoCwd(cwd)) return json(res, 409, { ok: false, reason: tr('Il Libro della demo è finto e non sta nello storico.') });
+            if (cwd) key = history.keys.keyIfKnown(cwd);
+          }
+          if (!key) return json(res, 404, { ok: false });
+          if (j.confirm !== true) return json(res, 400, { ok: false, reason: 'confirm' }); // mai senza conferma
+          return json(res, 200, { ok: true, ...forgetProject(key) });
+        }
+        return json(res, 400, { ok: false, reason: 'action' });
+      }
       case '/api/bottega/learn': {
         const cwd = projectCwd(j);
         if (!cwd) return json(res, 404, { ok: false });
@@ -648,6 +672,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     if (url.pathname === '/models.js') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' }); return res.end(fs.readFileSync(path.join(__dirname, 'models.js'))); } // nomi dei modelli, età e contesto: gli stessi del motore
     if (url.pathname === '/drift-rule.js') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' }); return res.end(fs.readFileSync(path.join(__dirname, 'drift-rule.js'))); } // la regola della deriva, la stessa del motore
     if (url.pathname === '/api/settings') return json(res, 200, state.settings);
+    if (url.pathname === '/api/store') return json(res, 200, storeInfo());
     if (url.pathname === '/api/cowork-scan') return json(res, 200, state.coworkScan || {});
     if (url.pathname === '/api/agentmap') return json(res, 200, agentMap(url.searchParams));
     if (url.pathname === '/api/agentmind') return json(res, 200, agentMind(url.searchParams));
@@ -766,6 +791,27 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
 
   // "Dimentica questo progetto" con tutto quello che il motore ha in memoria
   function forgetProject(key) { return history.forgetProject(key, { state, bottega, stats }); }
+
+  // lo storico per la sezione ARCHIVIO delle opzioni: dove sta, quanto pesa, per quanto tiene, che cosa ha tolto
+  // l'ultima volta, le copie di sicurezza accanto, i progetti che conosce (per "Dimentica")
+  function storeInfo() {
+    const st = history.store, info = st.info(), s = state.settings;
+    let used = null, last = null, projects = [];
+    try { used = st.driver && typeof st.driver.usedBytes === 'function' ? st.driver.usedBytes() : null; } catch {}
+    try { last = JSON.parse(st.getMeta('retentionLast') || 'null'); } catch {}
+    try {
+      projects = st.collection('projects').find({}, { sort: { lastSeen: -1 }, limit: 300 })
+        .map(p => ({ key: p._id, name: p.name || '', remote: p.remote || '', lastSeen: p.lastSeen || 0 }));
+    } catch {}
+    let backups = [];
+    try { backups = fs.readdirSync(history.dir).filter(n => /^platypus\.db\.(bak-\d+|broken-[\d-]+)$/.test(n) || /^legacy-\d{8}$/.test(n)).sort(); } catch {}
+    return {
+      ok: true, backend: info.backend, persistent: !!info.persistent, file: info.file || '', sizeBytes: info.sizeBytes || 0, usedBytes: used,
+      notice: history.notice(), limitMB: s.storeMaxMB,
+      retention: { steps: s.storeKeepSteps, sessions: s.storeKeepSessions, feedback: s.storeKeepFeedback, lessons: s.storeKeepLessons },
+      collections: info.collections.map(c => ({ name: c.name, count: c.count })), last, backups, projects,
+    };
+  }
 
   return { state, history, historyReady: () => historyReady, retention, forgetProject, stats, notify: notifier, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
     install: () => hooks.install({ port, base }),

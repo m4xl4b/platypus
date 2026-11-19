@@ -18,7 +18,8 @@ class FeedbackLog {
   }
   coll() { return this.store.collection('feedback'); }
   // le chiavi con cui il progetto di questa cartella può essere stato salvato (la sua e gli alias)
-  projects(cwd) { return this.keys.allKeys(this.keys.keyNow(cwd)); }
+  // (per leggere: la chiave già nota, senza chiedere a git né registrare il progetto nello storico)
+  projects(cwd) { return this.keys.allKeys(this.keys.keyIfKnown(cwd)); }
   row(d) { const { _id, project, ...rest } = d; return { id: _id, ...rest }; }
 
   // aggiunge un messaggio e gli dà un identificativo

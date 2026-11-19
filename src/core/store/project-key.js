@@ -88,14 +88,23 @@ class ProjectKeys {
   // Subito, senza aspettare git: la chiave definitiva se si sa già, altrimenti quella della cartella (che ne
   // resterà un alias) mentre parte la lettura. Per il percorso degli eventi.
   keyNow(cwd) {
+    if (!String(cwd || '').trim()) return pathKey(cwd); // nessuna cartella: niente da chiedere a git, niente da ricordare
     const known = this.byDir.get(normDir(cwd));
     if (known) return known.key;
     this.resolve(cwd).catch(() => {});
     return this.canonical(pathKey(cwd));
   }
 
+  // La chiave che si conosce già per una cartella, senza chiedere niente a git e senza scrivere niente nello storico
+  // (per le azioni che arrivano dalla pagina, come "Dimentica": una cartella qualsiasi non deve creare un progetto)
+  keyIfKnown(cwd) {
+    const known = this.byDir.get(normDir(cwd));
+    return known ? known.key : this.canonical(pathKey(cwd));
+  }
+
   // La risposta definitiva: { key, remote, name, aliases }. git si legge una volta sola per cartella.
   resolve(cwd) {
+    if (!String(cwd || '').trim()) return Promise.resolve({ key: pathKey(cwd), remote: null, name: '', aliases: [] });
     const dir = normDir(cwd);
     const known = this.byDir.get(dir);
     if (known) return Promise.resolve(known);

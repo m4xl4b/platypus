@@ -109,8 +109,10 @@ const { mergeLesson } = require('./store/legacy');
 // (il motore la cerca tra le sessioni aperte e nell'archivio di Claude Code).
 // Senza store il Libro resta in memoria (la demo, le prove).
 class Bottega {
-  constructor({ store = null, keys = null, cwdOf = () => '', log = msg => console.error('[platypus] ' + msg) } = {}) {
+  // isDemo(cwd): la cartella è di un piano della demo? Allora il Libro resta in memoria, senza chiavi né storico
+  constructor({ store = null, keys = null, cwdOf = () => '', isDemo = () => false, log = msg => console.error('[platypus] ' + msg) } = {}) {
     this.store = store;
+    this.isDemo = isDemo;
     this.keys = keys;
     this.cwdOf = cwdOf;
     this.log = log;
@@ -127,6 +129,14 @@ class Bottega {
     const pk = projectKey(cwd);
     const own = this.books.get(pk);
     if (own && own.demo) return own; // il Libro finto della demo: mai nello storico, nemmeno per chiedere la chiave
+    // un altro piano della demo, senza Libro finto: un Libro vuoto, in memoria
+    let demo = false;
+    try { demo = !!this.isDemo(cwd); } catch {}
+    if (demo) {
+      const b = { key: pk, name: dirName(cwd) || String(cwd || ''), cwd: String(cwd || ''), lessons: {}, learned: {}, forgotten: {}, mute: false, strays: new Set(), dirty: false, demo: true };
+      this.books.set(pk, b);
+      return b;
+    }
     const key = this.keyOf(cwd);
     let b = this.books.get(key);
     if (!b) {

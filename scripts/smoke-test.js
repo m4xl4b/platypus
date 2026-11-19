@@ -39,9 +39,9 @@ function sseFirst(port) {
     req.setTimeout(5000, () => { req.destroy(); resolve({}); });
   });
 }
-function get(port, p, method = 'GET', body) {
+function get(port, p, method = 'GET', body, extraHeaders = {}) {
   return new Promise(resolve => {
-    const req = http.request({ host: '127.0.0.1', port, path: p, method, headers: { 'Content-Type': 'application/json' } }, res => {
+    const req = http.request({ host: '127.0.0.1', port, path: p, method, headers: { 'Content-Type': 'application/json', ...extraHeaders } }, res => {
       let d = ''; res.on('data', c => { d += c; }); res.on('end', () => resolve({ status: res.statusCode, body: d }));
     });
     req.on('error', e => resolve({ status: 0, body: e.message }));
@@ -662,6 +662,38 @@ process.on('exit', code => {
     const st2 = JSON.parse((await get(port, '/api/state')).body);
     ok(!st2.sessions.some(s => s.title === 'Sessione archiviata'), 'Cowork: la sessione archiviata nell\'app non compare');
     await get(port, '/api/settings', 'POST', JSON.stringify({ coworkDirs: '' }));
+  }
+  {
+    // le API dello storico (S10): stato, compatta, esporta, dimentica (con conferma), conservazione
+    const si = JSON.parse((await get(port, '/api/store')).body);
+    const fkKey = core.history.keys.keyNow(fakeCwd);
+    ok(si.ok && si.backend === 'sqlite' && si.persistent && si.sizeBytes > 0 && si.usedBytes > 0 && si.limitMB === 200 && si.retention.steps === 90 && si.collections.length === 7 && si.notice === '' && si.projects.some(p => p.key === fkKey && p.name === 'progetto') && Array.isArray(si.backups),
+      `storico, /api/store: ${si.backend}, ${si.sizeBytes} byte, ${si.collections.length} collezioni, ${si.projects.length} progetti`);
+    const cp = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'compact' }))).body);
+    const exDir = path.join(tmp, 'esportazione');
+    const ex = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'export', dir: exDir }))).body);
+    const exRel = await get(port, '/api/store', 'POST', JSON.stringify({ action: 'export', dir: 'relativa' }));
+    ok(cp.ok && cp.size && cp.size.after > 0 && ex.ok && ex.dir === exDir && fs.readdirSync(exDir).length === 7 && exRel.status === 400, 'storico: compatta, ed esporta in una cartella scelta (un percorso relativo è rifiutato)');
+    const noConfirm = await get(port, '/api/store', 'POST', JSON.stringify({ action: 'forget', cwd: fakeCwd }));
+    // con la demo accesa: il suo Libro è finto e non si dimentica
+    core.demo.start({ scale: 0.02 }); await sleep(800);
+    const demoCwd = ([...core.state.sessions.values()].find(s => s.demo) || {}).cwd;
+    const demoForget = await get(port, '/api/store', 'POST', JSON.stringify({ action: 'forget', cwd: demoCwd, confirm: true }));
+    core.demo.stop();
+    const strange = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'forget', cwd: path.join(tmp, 'mai-vista'), confirm: true }))).body);
+    await sleep(300);
+    const bad = await get(port, '/api/store', 'POST', JSON.stringify({ action: 'boh' }));
+    const other = await get(port, '/api/store', 'POST', JSON.stringify({ action: 'forget', key: fkKey, confirm: true }), { Origin: 'http://localhost:3000' });
+    ok(noConfirm.status === 400 && JSON.parse(noConfirm.body).reason === 'confirm' && core.history.store.collection('lessons').count({ project: fkKey }) > 0 && demoForget.status === 409 && bad.status === 400 && other.status === 403 && strange.ok && strange.documents === 0 && !core.history.store.collection('projects').find({}).some(p => p.name === 'mai-vista'),
+      `storico: «Dimentica» mai senza conferma, mai sul Libro della demo, mai da un'altra pagina; una cartella mai vista non crea un progetto (${noConfirm.status} ${noConfirm.body.slice(0, 40)}, lezioni ${core.history.store.collection('lessons').count({ project: fkKey })}, demo ${demoForget.status}, azione ${bad.status}, origine ${other.status})`);
+    const fg = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'forget', cwd: fakeCwd, confirm: true }))).body);
+    const after = JSON.parse((await get(port, '/api/bottega?cwd=' + encodeURIComponent(fakeCwd))).body);
+    ok(fg.ok && fg.documents > 0 && core.history.store.collection('lessons').count({ project: fkKey }) === 0 && core.history.store.collection('steps').count({ session: 'bottega-smoke-0001' }) === 0 && after.ok && after.lessons.length === 0,
+      `storico: «Dimentica questo progetto» dal Libro: ${fg.documents} documenti tolti, il Libro è vuoto`);
+    const rt = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'retention' }))).body);
+    const names = core.history.store.collection('projects').find({}).map(p => p.name);
+    ok(!names.some(n => /portale-clienti|mes-clone|isms-docs/.test(n)) && !names.includes(''), `storico: nessuna cartella della demo e nessun progetto senza nome tra i progetti (${names.join(', ')})`);
+    ok(rt.ok && rt.result && rt.result.limitBytes === 200 * 1048576, 'storico: la conservazione si può applicare subito');
   }
   core.stop();
 
