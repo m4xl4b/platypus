@@ -444,11 +444,38 @@ function dataDirTests(ok) {
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 
-// lanciatore: con quali versioni di Node.js si apre la finestra (Electron 44 vuole la 22.12)
+// Node.js minimo (22.13, per node:sqlite): lo stesso per lanciatore, modalità browser, finestra e guscio Tauri
 function nodeVersionTests(ok) {
-  const { windowNodeOk } = require(path.join(ROOT, 'scripts', 'requirements'));
-  ok(['22.12.0', 'v22.23.4', '24.13.0', '25.0.0'].every(windowNodeOk), 'Node.js 22.12, 22.23, 24 e 25: finestra desktop');
-  ok(!['20.20.2', '22.11.0', '18.20.0', 'v20.0.0'].some(windowNodeOk), 'Node.js 20, 22.11 e 18: solo modalità browser');
+  const { spawnSync } = require('child_process');
+  const req = require(path.join(ROOT, 'src', 'requirements'));
+  ok(['22.13.0', 'v22.23.4', '23.4.0', '24.13.0', '25.0.0'].every(req.nodeOk), 'Node.js 22.13, 22.23, 23.4, 24 e 25: vanno bene');
+  ok(!['20.20.2', '22.12.0', '22.5.1', '23.3.0', '18.20.0', 'v20.0.0', '', 'boh'].some(req.nodeOk), 'Node.js 18, 20, 22.12 e 23.3: rifiutati');
+  const cmd = (p, env) => req.updateCommand(p, env || {});
+  ok(cmd('win32') === 'winget install OpenJS.NodeJS.LTS' && cmd('darwin') === 'brew install node' && cmd('linux') === 'nvm install --lts' &&
+    cmd('darwin', { NVM_DIR: '/x' }) === 'nvm install --lts' && cmd('win32', { NVM_HOME: 'C:\\nvm' }) === 'nvm install lts', 'Node.js vecchio: il comando per aggiornare secondo il sistema (winget, brew, nvm)');
+  const msg = req.nodeMessages('v20.20.2', 'win32', {});
+  ok(msg.length === 2 && msg.every(l => l.includes('22.13') && l.includes('20.20.2') && l.includes('winget install OpenJS.NodeJS.LTS')), 'Node.js vecchio: messaggio in italiano e in inglese, con la versione che hai e il comando');
+  // il guscio Tauri controlla il Node.js del sistema con lo stesso minimo
+  const rs = fs.readFileSync(path.join(ROOT, 'shells', 'tauri', 'src-tauri', 'src', 'engine.rs'), 'utf8');
+  const m = /pub const MIN_NODE: \(u32, u32\) = \((\d+), (\d+)\);/.exec(rs);
+  ok(m && `${m[1]}.${m[2]}.0` === req.MIN_NODE && require(path.join(ROOT, 'package.json')).engines.node === `>=${m[1]}.${m[2]}`, 'Node.js minimo: uguale in src/requirements.js, package.json e nel guscio Tauri');
+  // lanciatore e modalità browser si fermano prima di caricare altro: provati con un Node.js finto (versione riscritta)
+  const pre = path.join(os.tmpdir(), `pl-oldnode-${process.pid}.js`);
+  fs.writeFileSync(pre, `Object.defineProperty(process.versions, 'node', { value: '22.12.0' });`);
+  try {
+    for (const [name, file] of [['lanciatore', path.join(ROOT, 'scripts', 'launch.js')], ['modalità browser', path.join(ROOT, 'src', 'standalone.js')]]) {
+      const r = spawnSync(process.execPath, ['-r', pre, file, '--web', '--no-open'], { encoding: 'utf8', timeout: 20000 });
+      ok(r.status === 1 && /Serve Node\.js 22\.13/.test(r.stderr) && /Node\.js 22\.13 or newer is required: you have 22\.12\.0/.test(r.stderr) && !/in ascolto|listening/.test(r.stdout),
+        `${name} con Node.js 22.12: non parte e dice come aggiornare`);
+    }
+  } finally { fs.rmSync(pre, { force: true }); }
+  // node:sqlite: si toglie solo il suo avviso sperimentale, gli altri restano
+  const code = `const { loadSqlite } = require(${JSON.stringify(path.join(ROOT, 'src', 'core', 'store', 'sqlite-load'))});
+    const s = loadSqlite(); new s.DatabaseSync(':memory:').exec('create table t(x)');
+    process.emitWarning('altro avviso sperimentale', 'ExperimentalWarning'); process.emitWarning('avviso normale'); console.log(s === loadSqlite() ? 'ok' : 'no');`;
+  const w = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8', timeout: 20000 });
+  ok(w.status === 0 && w.stdout.trim() === 'ok' && !/SQLite/.test(w.stderr) && /altro avviso sperimentale/.test(w.stderr) && /avviso normale/.test(w.stderr),
+    'node:sqlite si carica senza il suo avviso sperimentale; gli altri avvisi si vedono ancora');
 }
 
 // lavagna B: il piano arriva dal file che Claude Code scrive (ExitPlanMode non lo passa più nell'input)

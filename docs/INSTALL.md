@@ -8,7 +8,7 @@ Platypus runs straight from source: clone the repository and launch it. There ar
 
 | | |
 |---|---|
-| **Node.js** | 22.12 or newer (LTS recommended). With older versions (Node.js 20 no longer gets security updates) the launcher opens browser mode only. |
+| **Node.js** | 22.13 or newer (LTS recommended). It is the first version with the built-in SQLite the engine uses, so it is needed in every mode: window, browser mode and the Tauri shell. With an older one Platypus does not start and prints the command to update (`winget install OpenJS.NodeJS.LTS`, `brew install node` or `nvm install --lts`). |
 | **Git** | to clone and update. |
 | **Claude Code** | what the office watches: terminal, VS Code/JetBrains, desktop app. |
 | **Disk** | about 300 MB in `node_modules` (Electron). |
@@ -180,6 +180,7 @@ What was tried on real systems, and what was not. Dates are when the test was ru
 | Problem | Fix |
 |---|---|
 | `node` not found | Install Node.js and reopen the terminal (`start.sh` loads nvm by itself). |
+| "Node.js 22.13 or newer is required" | Update Node.js with the command in the message (`winget install OpenJS.NodeJS.LTS` on Windows, `brew install node` on macOS, `nvm install --lts` with nvm) and reopen the terminal. Browser mode needs it too. The Tauri shell uses the `node` found in the `PATH`, or the one in `PLATYPUS_NODE`. |
 | Windows: `start.cmd` "is not recognized" in PowerShell | PowerShell does not run files from the current folder by name: type `.\start.cmd`, or double-click it. |
 | Windows: *Start when I log in* switches itself off or on | Windows keeps one start-up entry named `com.platypus.desktop` for every copy of Platypus on the computer (a clone, a packaged build). Turn it on from the copy you want to keep. |
 | `npm ci` hangs on first launch | Network or proxy (see above). Meanwhile, use `npm run web`. |

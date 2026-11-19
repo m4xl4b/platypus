@@ -4,6 +4,16 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, shell, dialog, nativeImage, Notification, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
+// il Node.js dentro Electron (44: Node 24) va sempre bene; un Electron più vecchio messo a mano no, e lo si dice
+{
+  const { nodeOk, nodeMessages } = require('./requirements');
+  if (!nodeOk(process.versions.node)) {
+    const lines = nodeMessages(process.versions.node);
+    for (const line of lines) console.error('[platypus] ' + line);
+    try { dialog.showErrorBox('Platypus', `Electron ${process.versions.electron}: ${lines.join('\n')}`); } catch {}
+    process.exit(1);
+  }
+}
 const { startCore } = require('./core');
 const autostart = require('./autostart');
 const { fitBounds } = require('./bounds');

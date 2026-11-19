@@ -18,7 +18,7 @@ Platypus si usa direttamente dai sorgenti: si clona il repository e si lancia. N
 
 | | |
 |---|---|
-| **Node.js** | 22.12 o più recente (LTS consigliata). Con versioni più vecchie (Node.js 20 non riceve più aggiornamenti di sicurezza) il lanciatore apre solo la modalità browser. |
+| **Node.js** | 22.13 o più recente (LTS consigliata). È la prima versione con il SQLite incorporato che il motore usa, quindi serve in ogni modalità: finestra, modalità browser e guscio Tauri. Con una più vecchia Platypus non parte e scrive il comando per aggiornare (`winget install OpenJS.NodeJS.LTS`, `brew install node` oppure `nvm install --lts`). |
 | **Git** | per clonare e aggiornare. |
 | **Claude Code** | quello che l'ufficio osserva: terminale, VS Code/JetBrains, app desktop. |
 | **Spazio** | circa 300 MB nella cartella `node_modules` (Electron). |
@@ -64,7 +64,7 @@ Note:
 
 ## Linux
 
-1. Installa Node.js 22.12+ e Git. Le versioni nei repository delle distribuzioni sono spesso vecchie: conviene [nvm](https://github.com/nvm-sh/nvm) oppure i pacchetti di [NodeSource](https://github.com/nodesource/distributions).
+1. Installa Node.js 22.13+ e Git. Le versioni nei repository delle distribuzioni sono spesso vecchie: conviene [nvm](https://github.com/nvm-sh/nvm) oppure i pacchetti di [NodeSource](https://github.com/nodesource/distributions).
    ```sh
    # con nvm (qualsiasi distribuzione)
    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
@@ -105,7 +105,7 @@ Per riavere il primo piano premi `PIN` (Platypus propone di riavviarsi) oppure s
 
 Il lanciatore (`scripts/launch.js`, chiamato da `start.cmd`, `start.command` e `start.sh`):
 
-1. controlla la versione di Node.js;
+1. controlla la versione di Node.js (22.13 o più recente; altrimenti si ferma e scrive il comando per aggiornare);
 2. installa le dipendenze con `npm ci`. L'unica è Electron, nella versione giusta per sistema e processore. Lo fa solo la prima volta o quando un aggiornamento le cambia;
 3. apre la finestra dell'ufficio e ti restituisce il terminale, che puoi chiudere;
 4. se la finestra non può partire (nessuno schermo, librerie mancanti), apre l'ufficio nel browser.
@@ -251,6 +251,7 @@ Cosa è stato provato su sistemi veri e cosa no. Le date sono quelle delle prove
 | Problema | Soluzione |
 |---|---|
 | `node` non trovato | Installa Node.js e riapri il terminale. Su macOS con nvm: `start.sh` carica nvm da solo; se usi un altro gestore, assicurati che `node` sia nel PATH. |
+| «Serve Node.js 22.13 o più recente» | Aggiorna Node.js con il comando scritto nel messaggio (`winget install OpenJS.NodeJS.LTS` su Windows, `brew install node` su macOS, `nvm install --lts` con nvm) e riapri il terminale. Serve anche alla modalità browser. Il guscio Tauri usa il `node` che trova nel `PATH`, oppure quello indicato in `PLATYPUS_NODE`. |
 | Windows: `start.cmd` «non è riconosciuto» in PowerShell | PowerShell non lancia i file della cartella corrente per nome: scrivi `.\start.cmd`, oppure fai doppio clic. |
 | Windows: *Avvia all'accesso* si spegne o si accende da solo | Windows tiene una sola voce di avvio, chiamata `com.platypus.desktop`, per tutte le copie di Platypus sul computer (un clone, una versione impacchettata). Accendila dalla copia che vuoi tenere. |
 | Il primo avvio si ferma durante `npm ci` | Rete o proxy: vedi [Proxy aziendale](#proxy-aziendale). Intanto puoi usare `npm run web`. |

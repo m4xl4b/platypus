@@ -32,7 +32,7 @@ Le novità di ogni versione sono in [CHANGELOG.it.md](CHANGELOG.it.md).
 
 ## Avvio rapido
 
-Serve **[Node.js](https://nodejs.org) 22.12 o più recente** (e Git per clonare). Tutto il resto lo installa il lanciatore al primo avvio.
+Serve **[Node.js](https://nodejs.org) 22.13 o più recente** (e Git per clonare). Tutto il resto lo installa il lanciatore al primo avvio.
 
 ```sh
 git clone https://github.com/m4xl4b/platypus.git platypus

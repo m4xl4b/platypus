@@ -37,17 +37,11 @@ function say(msg) { console.log('[platypus] ' + msg); }
 function fail(msg) { console.error('[platypus] ' + msg); process.exitCode = 1; }
 
 // ---------------------------------------------------------------- requisiti
-const { WINDOW_NODE, windowNodeOk } = require('./requirements');
-const [major] = process.versions.node.split('.').map(Number);
-if (major < 18) {
-  fail(`Serve Node.js ${WINDOW_NODE} o più recente (hai la ${process.versions.node}). Scaricalo da https://nodejs.org  ·  Node.js ${WINDOW_NODE} or newer is required.`);
+// Node.js 22.13 o più recente, per la finestra e per la modalità browser: il motore usa node:sqlite (src/requirements.js)
+const { nodeOk, nodeMessages } = require('../src/requirements');
+if (!nodeOk(process.versions.node)) {
+  for (const line of nodeMessages(process.versions.node)) fail(line);
   process.exit(1);
-}
-// la finestra (Electron) vuole Node.js 22.12+; con versioni più vecchie resta la modalità browser
-const nodeForWindow = windowNodeOk(process.versions.node);
-if (!nodeForWindow) {
-  say(`Node.js ${process.versions.node}: la finestra desktop richiede Node.js ${WINDOW_NODE} o più recente, e questa versione non riceve più aggiornamenti di sicurezza. Aggiornalo da https://nodejs.org`);
-  say(`Node.js ${process.versions.node}: the desktop window needs Node.js ${WINDOW_NODE} or newer, and this version no longer gets security updates. Update it from https://nodejs.org`);
 }
 
 // ---------------------------------------------------------------- dipendenze
@@ -132,7 +126,6 @@ function logText() { return readSince(LOG, LOG_START); }
 
 async function runDesktop() {
   if (!canShowWindow()) { say('Nessuno schermo grafico (DISPLAY/WAYLAND_DISPLAY): passo alla modalità browser.'); return runWeb(); }
-  if (!nodeForWindow) { say('Intanto apro la modalità browser, che funziona anche con questa versione.'); return runWeb(); }
   if (!depsOk() && !installDeps()) { say('Senza le dipendenze apro la modalità browser, che non ne ha bisogno.'); return runWeb(); }
   const background = has('--background');
   const extra = [];
