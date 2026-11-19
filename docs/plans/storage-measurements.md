@@ -19,7 +19,7 @@ node scripts/store-bench.js --json     # the numbers as JSON
 
 ## S3 · SQLite backend, 2026-11-19
 
-Machine: Windows 11 (x64), AMD Ryzen 9 9955HX, NVMe disk, Node.js 24.13.0, SQLite 3.50.4.
+Machine: Windows 11 (x64), AMD Ryzen 9 9955HX, Node.js 24.13.0, SQLite 3.50.4.
 
 | Measure | Target | Result |
 |---|---|---|
