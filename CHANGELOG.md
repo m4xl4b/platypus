@@ -4,6 +4,22 @@ Platypus releases (up to 2.7 it was called Agent Office), newest first.
 
 *Versione italiana: [CHANGELOG.it.md](CHANGELOG.it.md).*
 
+## 2.13.0: a history of your sessions
+
+Up to 2.12 Platypus kept a few JSON files and rebuilt everything else from the transcripts: enough for the office, not for questions about months, like "does this project go round in circles less than before?" or "since the loop messages are on, do agents change course more often?". 2.13 keeps a history, on your computer, made of facts and never of text.
+
+- **One database, `~/.platypus/platypus.db`**, with SQLite built into Node.js: no new program and no new dependency. The Workshop book, the statistics and the messages to the agents move there, together with one record per finished action (tool, file relative to the project, outcome, shape of the error, first words of a command) and one summary per session (counts of actions, errors, loops, stuck phases, claims without evidence, surprises; model, cost, times).
+- **Never text.** Each collection accepts only its declared fields, and a free field holds one line of at most 300 characters, so a prompt, a reply, an output or a file cannot fit. Paths are relative to the project; secrets in error lines and messages (tokens, keys, passwords, connection strings, e-mail addresses, IBANs) are replaced; a command keeps only its first simple words (`mysql -u root -p…` becomes `mysql`). Tests read the raw database file and find none of them.
+- **One Book per repository.** The project key now comes from the `origin` remote without credentials, so two clones share their Book; projects without a remote keep the key of their folder, and the old keys stay recognised.
+- **The Book's new HISTORY tab**: week by week, per project, loops, stuck phases, surprises, unstable commands, claims without evidence, stale memories, lessons sent and cost, each with a sentence ("loops: fewer than a month ago") and the number of sessions behind it, or "not enough data". A search over the stored steps by file, command or error opens the session in the archive.
+- **The daily report** has a line of trend: the last 4 weeks against the 4 before, for all projects.
+- **Experiment mode for the feedback.** Lessons at session start, Grandpa and out of the loop get a fourth mode, *experiment*: each session is assigned at random, half and half, to *on* or *shadow*, and the Book's FEEDBACK tab compares the two groups with a 95% interval ("likely helped 72% with the messages against 38% without"), or says "not enough data" under 10 cases per group. A before/after comparison would mix in model changes; random groups do not.
+- **OPT → ARCHIVE**: backend and size, how long each kind of data is kept (steps 90 days, sessions and messages 365, low-weight lessons 180, daily statistics forever), a size limit (200 MB; over it the oldest steps go first), COMPACT, EXPORT… (one JSONL file per collection) and FORGET A PROJECT…, which removes the project from the database, its backups and the 2.12 files. *Forget this project* is also in each Book.
+- **Never in the way.** Writes are batched every 2 seconds in one transaction; queries do not run in the office's live stream; a large database is checked in the background. If the database is damaged, written by a newer Platypus or in a read-only folder, Platypus keeps working without history and says so in a yellow bar; a damaged file is set aside and a new one is created at the next start. Two processes on the same database, a busy database and a crash in the middle of a write are tested.
+- **The demo** has three months of fake history of its own, in memory (one project improving, one getting worse, the loop messages in experiment), so HISTORY, FEEDBACK and the report show something; it never writes to the real history.
+- **Upgrading:** the first start imports the 2.12 files once and leaves them in place, with a copy in `~/.platypus/legacy-<date>/`, so going back to 2.12 still works (see the install guide).
+- **Node.js 22.13 or newer** is now required in every mode (window, browser mode, Tauri shell): it is the first version with SQLite built in. With an older one Platypus does not start and prints the command to update.
+
 ## 2.12.1: fixes
 
 - **Model names**:

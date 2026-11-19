@@ -144,11 +144,11 @@ npm run hooks:uninstall -- --feedback
 ```
 
 - Sono hook `http` verso `http://127.0.0.1:47800/platypus-hook/feedback` su `SessionStart`, `PostToolUse`, `PostToolUseFailure`, `Stop` e `SubagentStop`, con un tempo massimo di 3 secondi. Se il tuo Claude Code è troppo vecchio per gli hook `http`, aggiungi `--curl` per installarli come comandi `curl`.
-- Installarli da solo non cambia niente: in OPZ → *Feedback agli agenti* ogni funzione parte *spenta*. *Ombra* registra che cosa Platypus avrebbe detto, senza dirlo; *accesa* lo dice. In questa versione tre funzioni si fermano all'ombra.
+- Installarli da solo non cambia niente: in OPZ → *Feedback agli agenti* ogni funzione parte *spenta*. *Ombra* registra che cosa Platypus avrebbe detto, senza dirlo; *accesa* lo dice. In questa versione tre funzioni si fermano all'ombra. Le tre che si possono accendere hanno anche *esperimento*: ogni sessione finisce a caso, metà e metà, in *accesa* o in *ombra*, e la scheda FEEDBACK del Libro confronta i due gruppi (con un intervallo al 95%, e "dati insufficienti" finché ci sono meno di 10 casi per gruppo).
 - Se Platypus è chiuso, o ci mette più di 300 ms a rispondere, Claude Code prosegue come sempre. Platypus non risponde mai al posto tuo a un permesso e non cambia mai l'input o l'output di uno strumento.
 - Per lasciare fuori un progetto: nel suo Libro spunta *Non parlare agli agenti di questo progetto*.
 
-Ogni messaggio, mandato o in ombra, finisce in un registro: `~/.platypus/feedback/<chiave>.jsonl`, un file per cartella di progetto (la stessa chiave del Libro della bottega), con che cosa è stato detto, a quale agente e che cosa ha fatto l'agente dopo. Oltre i 5 MB il file diventa `<chiave>.1.jsonl` e se ne comincia uno nuovo, quindi al massimo due file per progetto. Niente esce dal computer. Per cancellarlo chiudi Platypus e cancella il file, oppure l'intera cartella `~/.platypus/feedback`. La scheda FEEDBACK del Libro mostra lo stesso registro.
+Ogni messaggio, mandato o in ombra, finisce nel database dello storico, `~/.platypus/platypus.db`, sotto la chiave del progetto (la stessa del Libro della bottega), con che cosa è stato detto, a quale agente e che cosa ha fatto l'agente dopo. Il testo passa dal filtro dei segreti prima di essere tenuto, e i messaggi più vecchi di 365 giorni si cancellano. Niente esce dal computer. La scheda FEEDBACK del Libro mostra lo stesso registro; per cancellarlo usa *Dimentica questo progetto* (vedi *Lo storico* più sotto).
 
 ## Significato più preciso (facoltativo)
 
@@ -190,7 +190,7 @@ Poi una volta `npm run tauri:build` (la prima compilazione richiede alcuni minut
 2. togli la spunta *Avvia all'accesso al computer* dal menu dell'icona;
 3. cancella la cartella del repository;
 4. se vuoi, cancella anche:
-   - impostazioni, statistiche, Libro della bottega e registro dei messaggi agli agenti: `~/.platypus`;
+   - `~/.platypus`: le impostazioni e il database dello storico `platypus.db` (Libro della bottega, statistiche, messaggi agli agenti, passi e riassunti delle sessioni), con le sue copie di sicurezza;
    - preferenze della finestra: `%APPDATA%\Platypus`, `~/Library/Application Support/Platypus` oppure `~/.config/Platypus`;
    - i collegamenti creati con `npm run shortcut`.
 
@@ -204,6 +204,16 @@ Il libro impara dalle sessioni aperte una volta al minuto e, quando un progetto 
 - Per dimenticare tutti i libri, e il resto dello storico: chiudi Platypus e cancella `~/.platypus/platypus.db` (con `platypus.db-wal` e `platypus.db-shm` accanto, se ci sono). Fino alla 2.12 i libri erano file in `~/.platypus/bottega`: la 2.13 non li legge né li scrive più.
 - Per non farlo più imparare: OPZ → *Il Libro della bottega impara dalle sessioni*. Il Nonno ha un suo interruttore lì accanto.
 - Se hai aggiunto la sezione del libro al `CLAUDE.md` di un progetto, sta tra `<!-- platypus:bottega:start -->` e `<!-- platypus:bottega:end -->`: cancella quelle righe per toglierla. La versione precedente del file è in `CLAUDE.md.platypus-backup`.
+
+### Lo storico
+
+Dalla 2.13 Platypus tiene uno storico delle tue sessioni in `~/.platypus/platypus.db`, un database SQLite che è già dentro Node.js (nessun programma in più). Tiene solo fatti ricavati dalle sessioni: per ogni azione lo strumento, il file relativo al progetto, com'è finita, la forma dell'errore e le prime parole di un comando; per ogni sessione i conteggi (azioni, errori, giri in tondo, fasi bloccate, affermazioni senza prove), il modello, il costo e gli orari. Mai il testo delle tue richieste, le risposte degli agenti, l'uscita dei comandi, il contenuto dei file, credenziali o indirizzi e-mail; i percorsi assoluti fuori dal progetto diventano un hash con il nome del file. Niente esce dal computer.
+
+- **Che cosa vedi:** la scheda STORIA del Libro (righe settimana per settimana per progetto, una frase come "giri in tondo: meno di un mese fa", sempre con il numero di sessioni dietro, e una ricerca nei passi salvati per file, comando o errore), la riga della tendenza nel report giornaliero e i risultati dell'esperimento nella scheda FEEDBACK.
+- **Quanto si tiene:** passi 90 giorni, riassunti delle sessioni e messaggi agli agenti 365 giorni, lezioni con peso basso 180 giorni, statistiche giornaliere per sempre. Ognuno si cambia in OPZ → *ARCHIVIO*, con un limite di dimensione (200 MB di base: oltre, se ne vanno per primi i passi più vecchi).
+- **OPZ → *ARCHIVIO*** ha anche COMPATTA (restituisce al disco lo spazio liberato), ESPORTA… (un file JSONL per collezione, di base in `Scaricati/platypus-export-<data>`) e DIMENTICA UN PROGETTO…. *Dimentica questo progetto* c'è anche in ogni Libro: toglie tutto quello che riguarda il progetto dal database, dalle sue copie di sicurezza e dai file della 2.12.
+- **Se il database non si può usare** (rovinato, scritto da una Platypus più nuova, cartella in sola lettura), Platypus continua a funzionare senza storico e lo dice in una barra gialla; un file rovinato viene messo da parte come `platypus.db.broken-<data>` e al giro dopo se ne crea uno nuovo. Prima di ogni cambio di schema resta una copia `platypus.db.bak-<versione>` (le ultime due).
+- **Per cancellare tutto:** chiudi Platypus e cancella `platypus.db` con `platypus.db-wal` e `platypus.db-shm`, e accanto `platypus.db.bak-*`, `platypus.db.broken-*` e `legacy-<data>/`.
 
 ### Tornare alla 2.12
 

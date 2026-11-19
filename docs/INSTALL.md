@@ -97,11 +97,11 @@ npm run hooks:uninstall -- --feedback
 ```
 
 - They are `http` hooks to `http://127.0.0.1:47800/platypus-hook/feedback` on `SessionStart`, `PostToolUse`, `PostToolUseFailure`, `Stop` and `SubagentStop`, with a 3-second timeout. If your Claude Code is too old for `http` hooks, add `--curl` to install them as `curl` commands instead.
-- Installing them changes nothing by itself: every feature in OPT → *Feedback to the agents* starts *off*. *Shadow* records what Platypus would have said without saying it; *on* says it. In this version three features stop at shadow.
+- Installing them changes nothing by itself: every feature in OPT → *Feedback to the agents* starts *off*. *Shadow* records what Platypus would have said without saying it; *on* says it. In this version three features stop at shadow. The three that can be turned on also have *experiment*: each session is assigned at random, half and half, to *on* or *shadow*, and the Book's FEEDBACK tab compares the two groups (with a 95% interval, and "not enough data" while there are fewer than 10 cases per group).
 - If Platypus is closed, or takes more than 300 ms to answer, Claude Code goes on as usual. Platypus never answers for you on a permission and never changes a tool's input or output.
 - To keep a project out of it: in its Book tick *Don't talk to this project's agents*.
 
-Every message, sent or in shadow, goes to a log: `~/.platypus/feedback/<key>.jsonl`, one file per project folder (the same key as the Workshop book), with what was said, to which agent, and what the agent did next. Past 5 MB the file becomes `<key>.1.jsonl` and a new one starts, so at most two files per project. Nothing leaves your computer. To delete it, close Platypus and delete the file or the whole `~/.platypus/feedback` folder. The Book's FEEDBACK tab shows the same log.
+Every message, sent or in shadow, goes to the history database, `~/.platypus/platypus.db`, under the project's key (the same as the Workshop book), with what was said, to which agent, and what the agent did next. The text is passed through the secret filter before it is kept, and messages older than 365 days are deleted. Nothing leaves your computer. The Book's FEEDBACK tab shows the same log; to delete it, use *Forget this project* (see *The history* below).
 
 ## More precise meaning (optional)
 
@@ -143,7 +143,7 @@ To uninstall:
 2. Untick *Start when I log in* in the tray menu.
 3. Delete the repository folder.
 4. Optionally, also delete:
-   - `~/.platypus`, the settings, the stats, the Workshop book and the log of the messages to the agents;
+   - `~/.platypus`: the settings and the history database `platypus.db` (Workshop book, statistics, messages to the agents, steps and session summaries), with its backups;
    - the window preferences folder `Platypus` under AppData (Windows), Application Support (macOS) or `~/.config` (Linux).
 
 ### The Workshop book
@@ -156,6 +156,16 @@ The book learns from the open sessions once a minute and, when a project has an 
 - To forget all the books, and the rest of the history: close Platypus and delete `~/.platypus/platypus.db` (with `platypus.db-wal` and `platypus.db-shm` next to it, if they are there). Up to 2.12 the books were files in `~/.platypus/bottega`: 2.13 no longer reads or writes them.
 - To stop learning: OPT → *The Workshop book learns from sessions*. Grandpa has his own switch next to it.
 - If you added the book's section to a project's `CLAUDE.md`, it sits between `<!-- platypus:bottega:start -->` and `<!-- platypus:bottega:end -->`: delete those lines to remove it. The previous version of the file is in `CLAUDE.md.platypus-backup`.
+
+### The history
+
+From 2.13 Platypus keeps a history of your sessions in `~/.platypus/platypus.db`, an SQLite database built into Node.js (no extra program). It holds only facts derived from the sessions: for each action the tool, the file relative to the project, the outcome, the shape of the error and the first words of a command; for each session counts (actions, errors, loops, stuck phases, claims without evidence), model, cost and times. Never the text of your prompts, the agents' replies, the output of commands, the contents of files, credentials or e-mail addresses; absolute paths outside the project become a hash with the file name. Nothing leaves your computer.
+
+- **What you see:** the Book's HISTORY tab (weekly lines per project, a sentence like "loops: fewer than a month ago", always with the number of sessions behind it, and a search over the stored steps by file, command or error), the trend line of the daily report, and the experiment results in the FEEDBACK tab.
+- **How long it is kept:** steps 90 days, session summaries and messages to the agents 365 days, lessons with a low weight 180 days, daily statistics forever. Each can be changed in OPT → *ARCHIVE*, with a size limit (200 MB by default: over it, the oldest steps go first).
+- **OPT → *ARCHIVE*** also has COMPACT (gives the freed space back to the disk), EXPORT… (one JSONL file per collection, by default in `Downloads/platypus-export-<date>`) and FORGET A PROJECT…. *Forget this project* is also in each Book: it removes everything about the project from the database, its backups and the 2.12 files.
+- **If the database cannot be used** (damaged, written by a newer Platypus, read-only folder), Platypus keeps working without history and says so in a yellow bar; a damaged file is set aside as `platypus.db.broken-<date>` and a new one is created at the next start. Before each schema change a copy is kept as `platypus.db.bak-<version>` (the last two).
+- **To delete it all:** close Platypus and delete `platypus.db` with `platypus.db-wal` and `platypus.db-shm`, and the `platypus.db.bak-*`, `platypus.db.broken-*` and `legacy-<date>/` next to it.
 
 ### Going back to 2.12
 
