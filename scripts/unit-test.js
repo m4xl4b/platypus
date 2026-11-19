@@ -660,10 +660,131 @@ function riskTests(ok) {
   ok(big < 20, `rischio: un comando di 200 mila caratteri si ferma al limite e risponde in ${big.toFixed(1)} ms`);
 }
 
+// 2.14, R2: la prudenza prima di un'azione rischiosa
+function prudenceTests(ok) {
+  const risk = require(path.join(ROOT, 'src', 'core', 'risk'));
+  const { assess, missedFear, gitStatusClean } = require(path.join(ROOT, 'src', 'core', 'prudence'));
+  const root = '/home/u/proj';
+  let k = 0;
+  const run = (cmd, extra = {}) => ({ t: ++k, tool: 'Bash', act: 'run', target: 'cmd:x', sig: 'run:' + cmd, err: false, ...extra });
+  const read = file => ({ t: ++k, tool: 'Read', act: 'read', target: file, sig: 'Read:' + file, err: false });
+  const edit = file => ({ t: ++k, tool: 'Edit', act: 'edit', target: file, sig: 'Edit:' + file, err: false });
+  const go = (cmd, steps = [], prompt = '', o = {}) => {
+    const action = { tool: o.tool || 'Bash', input: o.input || { command: cmd } };
+    const r = risk.classify({ ...action, cwd: root, root, home: '/home/u', ...o.ctx });
+    const p = assess({ risk: r, action, steps, prompt });
+    return { r, p, missed: missedFear(r, p) };
+  };
+  const has = (x, kind) => x.p.present.includes(kind);
+
+  // senza niente prima: paura mancata
+  let x = go('git reset --hard');
+  ok(x.r.level === 2 && x.p.score === 0 && x.missed && x.p.missing.join() === 'looked,backup,clean,asked', 'prudenza: git reset --hard senza niente prima è una paura mancata, e dice che cosa manca');
+  // guardare da solo non basta
+  x = go('git reset --hard', [run('git status')]);
+  ok(has(x, 'looked') && x.p.score === 0.3 && x.missed, 'prudenza: aver guardato (git status) conta, ma da solo non basta');
+  x = go('git reset --hard', [run('ls -la')]);
+  ok(!has(x, 'looked'), 'prudenza: per git, un ls non è aver guardato');
+  // copia di sicurezza
+  for (const b of ['git commit -m "wip"', 'git add -A && git commit -m wip', 'git stash', 'git stash push -u', 'git branch backup-1', 'git checkout -b safe', 'git tag before-reset']) {
+    x = go('git reset --hard', [run(b)]);
+    ok(has(x, 'backup') && !x.missed, 'prudenza: copia di sicurezza con «' + b + '»');
+  }
+  for (const b of ['git commit --amend', 'git stash drop', 'git stash pop', 'git branch -D x', 'git tag -d v1', 'git stash list']) {
+    x = go('git reset --hard', [run(b)]);
+    ok(!has(x, 'backup'), 'prudenza: «' + b + '» non è una copia di sicurezza');
+  }
+  x = go('git reset --hard', [run('git commit -m wip', { err: true })]);
+  ok(!has(x, 'backup') && x.missed, 'prudenza: un commit fallito non è una copia di sicurezza');
+  x = go('git reset --hard', [run('git commit -m wip'), ...Array.from({ length: 12 }, (_, i) => run('echo ' + i))]);
+  ok(!has(x, 'backup'), 'prudenza: un commit di più di 12 azioni fa non conta più');
+  // albero pulito
+  x = go('git reset --hard', [run('git status', { act: 'look', clean: true })]);
+  ok(has(x, 'clean') && has(x, 'looked') && x.p.score === 1 && !x.missed, 'prudenza: albero pulito all\'ultimo git status');
+  x = go('git reset --hard', [run('git status', { act: 'look', clean: true }), edit('src/a.js')]);
+  ok(!has(x, 'clean'), 'prudenza: dopo una modifica l\'albero non è più pulito');
+  x = go('git reset --hard', [run('git status', { act: 'look', clean: false })]);
+  ok(!has(x, 'clean') && x.missed, 'prudenza: albero sporco, niente prudenza "pulito"');
+  ok(gitStatusClean('git status', 'On branch main\nnothing to commit, working tree clean') === true && gitStatusClean('git status', 'Changes not staged for commit:\n  modified: a.js') === false &&
+    gitStatusClean('git status --porcelain', '') === true && gitStatusClean('git status --short', ' M a.js') === false && gitStatusClean('git status', 'nothing added to commit but untracked files present') === false &&
+    gitStatusClean('git log', 'nothing to commit') === null && gitStatusClean('git status', 'fatal: not a git repository') === null, 'prudenza: l\'output di git status dice pulito, sporco o non si sa');
+  // il segno arriva dalla mappa: la prova passa da worldmap.js
+  {
+    const w = new AgentWorld();
+    w.start('g1', 'Bash', { command: 'git status' }, 1000, root, 0);
+    w.end('g1', false, { content: 'On branch main\nnothing to commit, working tree clean' }, {}, 1100, root);
+    w.start('g2', 'Bash', { command: 'git status --short' }, 2000, root, 0);
+    w.end('g2', false, { content: ' M src/a.js' }, {}, 2100, root);
+    ok(w.steps[0].clean === true && w.steps[1].clean === false && !JSON.stringify(w.steps).includes('nothing to commit'), 'prudenza: la mappa segna pulito/sporco sul passo di git status, senza tenere l\'output');
+  }
+  // prova a vuoto
+  x = go('git clean -fd', [run('git clean -n')]);
+  ok(has(x, 'dryrun') && !x.missed, 'prudenza: git clean -n prima di git clean -fd');
+  x = go('terraform apply', [run('terraform plan -out=tfplan')]);
+  ok(has(x, 'dryrun') && has(x, 'looked') && x.r.level === 3 && !x.missed, 'prudenza: terraform plan prima di apply');
+  x = go('terraform apply', [run('kubectl get pods --dry-run=client')]);
+  ok(!has(x, 'dryrun') && x.missed, 'prudenza: la prova a vuoto di un altro strumento non conta');
+  x = go('npm publish', [run('npm publish --dry-run')]);
+  ok(has(x, 'dryrun'), 'prudenza: npm publish --dry-run prima di npm publish');
+  x = go('kubectl delete -f k8s/', [run('kubectl delete -f k8s/ --dry-run=server')]);
+  ok(has(x, 'dryrun'), 'prudenza: kubectl delete --dry-run prima');
+  // guardare il bersaglio, sui file
+  x = go('rm -rf data/export', [run('ls data/export')]);
+  ok(has(x, 'looked') && x.missed, 'prudenza: ls del bersaglio prima di cancellarlo (da solo non basta)');
+  x = go('rm -rf data/export', [run('ls src/other')]);
+  ok(!has(x, 'looked'), 'prudenza: guardare un\'altra cartella non conta');
+  x = go('rm -rf data/export', [read('data/export/a.csv')]);
+  ok(has(x, 'looked'), 'prudenza: aver letto un file del bersaglio conta');
+  x = go('rm -rf data/export', [run('cp -r data/export /tmp/export-bak')]);
+  ok(has(x, 'backup') && !x.missed, 'prudenza: una copia del bersaglio è una copia di sicurezza');
+  x = go('rm -rf data/export', [run('cp -r src/other /tmp/x')]);
+  ok(!has(x, 'backup'), 'prudenza: la copia di un\'altra cartella non conta');
+  x = go('rm -rf data/export', [run('git add -A && git commit -m "before cleanup"')]);
+  ok(has(x, 'backup'), 'prudenza: un commit prima di cancellare');
+  // database
+  x = go('psql -c "DELETE FROM users"', [run('psql -c "SELECT count(*) FROM users"')]);
+  ok(has(x, 'looked') && x.missed, 'prudenza: un SELECT sulla stessa tabella prima del DELETE');
+  x = go('psql -c "DELETE FROM users"', [run('psql -c "SELECT count(*) FROM orders"')]);
+  ok(!has(x, 'looked'), 'prudenza: un SELECT su un\'altra tabella non conta');
+  x = go('psql -c "DROP TABLE users"', [run('pg_dump app > /tmp/app.sql')]);
+  ok(has(x, 'backup') && !x.missed, 'prudenza: pg_dump prima di un DROP');
+  x = go('psql -c "DROP TABLE users"', [run('git commit -m wip')]);
+  ok(!has(x, 'backup'), 'prudenza: un commit non salva un database');
+  // l'ha chiesto l'utente (probabile)
+  x = go('git reset --hard origin/main', [], 'butta tutto e fai un reset hard a origin/main');
+  ok(has(x, 'asked') && x.p.probable.join() === 'asked' && !x.missed, 'prudenza: l\'utente ha chiesto il reset (probabile)');
+  x = go('git push --force origin main', [], 'please force push to main');
+  ok(has(x, 'asked') && x.r.level === 3, 'prudenza: l\'utente ha chiesto il force push su main');
+  x = go('git push --force origin main', [], 'sistema il test che fallisce');
+  ok(!has(x, 'asked') && x.missed, 'prudenza: un messaggio che parla d\'altro non è una richiesta');
+  x = go('rm -rf data/export', [], 'cancella la cartella export, non serve più');
+  ok(has(x, 'asked'), 'prudenza: l\'utente ha chiesto di cancellare proprio quella cartella');
+  x = go('rm -rf data/export', [], 'cancella i file temporanei');
+  ok(!has(x, 'asked'), 'prudenza: ha chiesto di cancellare, ma un\'altra cosa');
+  x = go('terraform apply -auto-approve', [], 'ok, run terraform apply');
+  ok(has(x, 'asked'), 'prudenza: l\'utente ha scritto proprio il comando');
+  x = go('psql -c "DROP TABLE users"', [], 'elimina la tabella users dal database di prova');
+  ok(has(x, 'asked'), 'prudenza: l\'utente ha chiesto di eliminare quella tabella');
+  x = go('', [], 'manda la mail a Fabio con il riassunto', { tool: 'mcp__gmail__send_message', input: { to: 'x' } });
+  ok(x.r.level === 3 && has(x, 'asked') && !x.missed, 'prudenza: uno strumento esterno che manda, chiesto dall\'utente');
+  x = go('', [], 'riassumi le mail di oggi', { tool: 'mcp__gmail__send_message', input: { to: 'x' } });
+  ok(!has(x, 'asked') && x.missed, 'prudenza: mandare una mail quando l\'utente ha chiesto solo di leggere è una paura mancata');
+  x = go('sudo apt-get install -y jq', [run('git status'), run('git commit -m wip')], '');
+  ok(x.p.present.length === 0 && x.p.missing.join() === 'asked', 'prudenza: contano solo le prudenze che la regola dichiara (per sudo, solo la richiesta)');
+  // azioni non rischiose e input rotti
+  x = go('ls -la');
+  ok(x.p.score === 1 && !x.missed && x.p.missing.length === 0, 'prudenza: un\'azione non rischiosa non ha niente da farsi perdonare');
+  let threw = 0;
+  for (const bad of [undefined, {}, { risk: null }, { risk: { level: 2 } }, { risk: { level: 2, prudence: ['looked'] }, steps: [null, {}, { sig: 5 }], prompt: 7 }]) { try { const r = assess(bad); if (typeof r.score !== 'number') threw++; } catch { threw++; } }
+  ok(threw === 0, 'prudenza: input rotti o vuoti non fanno eccezioni');
+  ok(!JSON.stringify(go('git reset --hard', [], 'il mio segreto è 12345, fai reset hard').p).includes('12345'), 'prudenza: del messaggio dell\'utente non resta niente nel risultato');
+}
+
 function run(ok) {
   console.log('libro della bottega');
   bottegaTests(ok);
   riskTests(ok);
+  prudenceTests(ok);
   bottegaNameTests(ok);
   elderTests(ok);
   console.log('sorprese');
@@ -680,7 +801,7 @@ function run(ok) {
   alertTests(ok);
 }
 
-module.exports = { run, riskTests };
+module.exports = { run, riskTests, prudenceTests };
 
 if (require.main === module) {
   require('./test-guard').requireTempDataDir('unit-test'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea
