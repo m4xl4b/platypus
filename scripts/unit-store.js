@@ -244,7 +244,106 @@ async function failureTests(ok) {
   }
 }
 
-module.exports = { run: async ok => { await run(ok); await failureTests(ok); } };
+// S5: la chiave del progetto dal remote di git, gli alias, e niente credenziali nello store
+async function projectKeyTests(ok) {
+  console.log('store: chiave del progetto');
+  const { spawnSync } = require('child_process');
+  const { openStore } = require(path.join(ROOT, 'src', 'core', 'store'));
+  const PK = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
+  const bottega = require(path.join(ROOT, 'src', 'core', 'bottega'));
+  const { normalizeRemote, keyFor, pathKey, ProjectKeys } = PK;
+  const TOKEN = 'ghp_S3GRETO9f3aXyZ', USER = 'utente-segreto';
+  // lo stesso repository scritto in tanti modi
+  const same = [
+    'https://github.com/m4xl4b/platypus.git', 'https://github.com/m4xl4b/platypus', 'https://github.com/m4xl4b/platypus/', 'https://github.com/m4xl4b/platypus.git/',
+    'git@github.com:m4xl4b/platypus.git', 'git@github.com:m4xl4b/platypus', 'github.com:m4xl4b/platypus.git', 'ssh://git@github.com/m4xl4b/platypus.git', 'ssh://git@GitHub.com:22/m4xl4b/platypus',
+    `https://${USER}:${TOKEN}@github.com/m4xl4b/platypus.git`, `https://${TOKEN}@GITHUB.COM/m4xl4b/platypus`, `https://oauth2:${TOKEN}@github.com:443/m4xl4b/platypus.git?x=${TOKEN}#${TOKEN}`,
+    'git+https://github.com/m4xl4b/platypus.git', 'git://github.com/m4xl4b/platypus.git', 'http://github.com:8080/m4xl4b/platypus.git', '  https://github.com/m4xl4b/platypus.git\n'.trim(), `${USER}@github.com:/m4xl4b/platypus.git`,
+  ];
+  const norms = same.map(normalizeRemote);
+  ok(norms.every(n => n === 'github.com/m4xl4b/platypus'), `lo stesso repository scritto in ${same.length} modi (https, ssh, con token, con porta, con .git) dà lo stesso indirizzo` + (norms.every(n => n === 'github.com/m4xl4b/platypus') ? '' : ': ' + JSON.stringify(same.filter((u, i) => norms[i] !== 'github.com/m4xl4b/platypus').map(u => [u, normalizeRemote(u)]))));
+  ok(new Set(same.map(u => keyFor('/x', u).key)).size === 1 && /^[0-9a-f]{16}$/.test(keyFor('/x', same[0]).key), 'e quindi la stessa chiave: 16 caratteri esadecimali');
+  ok(normalizeRemote('https://gitlab.com/Gruppo/Sotto/Repo.git') === 'gitlab.com/Gruppo/Sotto/Repo' && normalizeRemote('git@GitLab.com:Gruppo/Sotto/Repo.git') === 'gitlab.com/Gruppo/Sotto/Repo' &&
+    normalizeRemote('ssh://git@[::1]:2222/r.git') === '[::1]/r' && normalizeRemote('deploy@host.example:percorso/al/repo.git') === 'host.example/percorso/al/repo' &&
+    keyFor('/x', 'https://github.com/m4xl4b/platypus').key !== keyFor('/x', 'https://github.com/m4xl4b/altro').key,
+    'l\'host va in minuscolo, il percorso resta com\'è; repository diversi, chiavi diverse');
+  const local = ['', null, undefined, '/srv/git/repo.git', './repo', '../repo.git', '~/repo', 'C:\\repos\\x.git', 'c:/repos/x', 'D:\\', 'file:///srv/git/repo.git', '\\\\server\\share\\repo.git', 'https://', 'non un indirizzo', 'https://github.com/', 'a\nb@host:x'];
+  ok(local.every(u => normalizeRemote(u) === null), 'una cartella, file://, un disco di Windows, un testo qualsiasi: non sono un remote in rete');
+  ok(same.concat(['https://a:b@h.example/x', `ssh://${USER}:${TOKEN}@h.example:2222/x.git`]).map(normalizeRemote).every(n => n && !n.includes(TOKEN) && !n.includes(USER) && !n.includes('@') && !n.includes('?')), 'nell\'indirizzo normalizzato non restano utente, password o token');
+
+  // senza remote: la chiave della cartella, la stessa di sempre
+  const winA = 'C:\\Dev\\Mio Progetto\\', winB = 'c:/dev/mio progetto', posix = '/home/max/Progetto';
+  ok(pathKey(winA) === pathKey(winB) && keyFor(winA, null).key === bottega.projectKey(winA) && keyFor(posix, '').key === bottega.projectKey(posix) && keyFor(posix, '/srv/git/x.git').key === bottega.projectKey(posix) &&
+    keyFor(posix, null).remote === null && keyFor(posix, null).aliases.length === 0 && pathKey(posix) !== pathKey(posix + '/sub'),
+    'senza remote la chiave è quella della cartella, uguale a quella che usava il Libro (percorsi di Windows: barre e maiuscole non contano)');
+  const kf = keyFor(winA, same[9]);
+  ok(kf.remote === 'github.com/m4xl4b/platypus' && kf.aliases.length === 1 && kf.aliases[0] === bottega.projectKey(winA) && kf.key !== kf.aliases[0], 'con un remote la vecchia chiave della cartella diventa un alias');
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-chiave-'));
+  const open = [];
+  try {
+    // ---------------------------------------------------------- nello store: mai credenziali, mai il percorso
+    for (const backend of ['memory', 'sqlite']) {
+      const dir = path.join(tmp, backend);
+      const store = openStore({ backend, dir });
+      open.push(store);
+      store.declare('projects', { projectField: '_id' });
+      let calls = 0, now = 1000;
+      const remotes = { [PK.normDir(winA)]: same[9], [PK.normDir('C:\\Altro\\Clone')]: 'git@github.com:m4xl4b/platypus.git', [PK.normDir(posix)]: null };
+      const exec = async (cwd, args) => { calls++; if (args.join(' ') !== 'remote get-url origin') throw new Error('comando inatteso'); return remotes[PK.normDir(cwd)] || null; };
+      const keys = new ProjectKeys({ store, exec, clock: () => now });
+      const early = keys.keyNow(winA);
+      const info = await keys.resolve(winA);
+      const [i2, i3] = await Promise.all([keys.resolve(winB), keys.resolve(winA)]);
+      ok(early === bottega.projectKey(winA) && info.key === keyFor(winA, same[9]).key && keys.keyNow(winA) === info.key && i2 === info && i3 === info && calls === 1,
+        `${backend}: keyNow risponde subito con la chiave della cartella; poi vale quella del repository, e git si legge una volta sola`);
+      now = 2000;
+      const clone = await keys.resolve('C:\\Altro\\Clone');
+      const doc = store.collection('projects').get(info.key);
+      ok(clone.key === info.key && doc.remote === 'github.com/m4xl4b/platypus' && doc.name === 'Clone' && store.collection('projects').count({}) === 1, `${backend}: due cartelle dello stesso repository sono lo stesso progetto`);
+      ok(doc.firstSeen === 1000 && doc.lastSeen === 2000 && Object.keys(doc.aliases).sort().join() === [bottega.projectKey(winA), bottega.projectKey('C:\\Altro\\Clone')].sort().join() &&
+        keys.canonical(bottega.projectKey(winA)) === info.key && new ProjectKeys({ store }).canonical(bottega.projectKey('C:\\Altro\\Clone')) === info.key && keys.canonical('0123456789abcdef') === '0123456789abcdef' &&
+        keys.allKeys(bottega.projectKey(winA)).sort().join() === [info.key, ...Object.keys(doc.aliases)].sort().join(),
+        `${backend}: gli alias restano nello store, e da una vecchia chiave si arriva a quella del progetto (anche dopo un riavvio)`);
+      const plain = await keys.resolve(posix);
+      const pdoc = store.collection('projects').get(plain.key);
+      ok(plain.key === bottega.projectKey(posix) && plain.remote === null && pdoc.name === 'Progetto' && !('remote' in pdoc) && Object.keys(pdoc.aliases).length === 0 && store.collection('projects').count({}) === 2,
+        `${backend}: un progetto senza remote tiene la chiave della cartella`);
+      const failing = new ProjectKeys({ store, exec: async () => { throw new Error('git non c\'è'); } });
+      ok((await failing.resolve('/qualche/cartella')).key === pathKey('/qualche/cartella') && new ProjectKeys({ exec: async () => same[0] }).keyNow('/senza/store') === pathKey('/senza/store'), `${backend}: se git non risponde, o senza store, la chiave c'è lo stesso`);
+      const everything = JSON.stringify(store.collection('projects').find({}));
+      store.close();
+      let rawBytes = '';
+      if (backend === 'sqlite') for (const f of fs.readdirSync(dir)) rawBytes += fs.readFileSync(path.join(dir, f)).toString('latin1');
+      const leaks = [TOKEN, USER, 'Dev\\Mio', 'dev/mio', 'Altro\\Clone', 'altro/clone', '/home/max', 'qualche/cartella'].filter(x => everything.includes(x) || rawBytes.includes(x));
+      ok(leaks.length === 0 && (backend !== 'sqlite' || rawBytes.includes('github.com/m4xl4b/platypus')), `${backend}: nello store${backend === 'sqlite' ? ' (anche leggendo il file così com\'è)' : ''} non ci sono token, utenti né percorsi delle cartelle` + (leaks.length ? ': ' + leaks.join(', ') : ''));
+    }
+
+    // ---------------------------------------------------------- con git vero
+    const hasGit = spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: true }).status === 0;
+    if (!hasGit) console.log('  --   git non c\'è: prova con un repository vero saltata');
+    else {
+      const repo = path.join(tmp, 'Repo Vero'), sub = path.join(repo, 'src', 'dentro'), noRepo = path.join(tmp, 'senza-git');
+      fs.mkdirSync(sub, { recursive: true });
+      fs.mkdirSync(noRepo, { recursive: true });
+      const git = (...a) => spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8', windowsHide: true });
+      git('init', '-q');
+      const keys = new ProjectKeys();
+      const before = await new ProjectKeys().resolve(repo);
+      git('remote', 'add', 'origin', `https://${USER}:${TOKEN}@github.com/m4xl4b/platypus.git`);
+      const t0 = Date.now();
+      const [r, r2, none] = await Promise.all([keys.resolve(repo), keys.resolve(sub), keys.resolve(noRepo)]);
+      ok(before.remote === null && before.key === pathKey(repo) && r.remote === 'github.com/m4xl4b/platypus' && r.key === keyFor('/x', same[0]).key && r2.key === r.key && r.name === 'Repo Vero' &&
+        none.remote === null && none.key === pathKey(noRepo) && !JSON.stringify([r, r2]).includes(TOKEN) && Date.now() - t0 < 10000,
+        'con git vero: un repository con il token nel remote e una sua sottocartella hanno la stessa chiave, senza token; una cartella senza git ha la sua');
+    }
+  } finally {
+    for (const s of open) { try { s.close(); } catch {} }
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); } };
 if (require.main === module) {
   let failed = 0;
   module.exports.run((c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) failed++; })
