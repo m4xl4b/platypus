@@ -81,7 +81,7 @@
   // l'esperimento (S11): i due gruppi a confronto, solo con numeri e solo quando ce ne sono abbastanza
   function experimentHtml() {
     const x = B.exp;
-    if (!x || x.demo || !x.all) return '';
+    if (!x || !x.all) return '';
     const pct = v => (v * 100).toFixed(0) + '%', num = v => (Math.round(v * 10) / 10).toFixed(1), sgn = (v, f) => (v > 0 ? '+' : v < 0 ? '−' : '') + f(Math.abs(v));
     const line = (r, scope) => {
       if (!r) return '';
@@ -103,7 +103,7 @@
         (proj && JSON.stringify(proj.n) === JSON.stringify(all.n) ? '' : `<br>${esc(line(all, tr('tutti i progetti')))}`) + '</div>';
     }).filter(Boolean);
     if (!rows.length) return '';
-    return `<div class="fbsum fbexp"><div><b>${esc(tr('ESPERIMENTO'))}</b></div>${rows.join('')}` +
+    return `<div class="fbsum fbexp"><div><b>${esc(tr('ESPERIMENTO'))}</b>${x.demo ? ` <span class="dim">${esc(tr('(dati finti della demo)'))}</span>` : ''}</div>${rows.join('')}` +
       `<p class="dim">${esc(tr('Ogni sessione finisce a caso nel gruppo con i messaggi o in quello senza: i due gruppi lavorano negli stessi giorni e con gli stessi modelli. Una differenza il cui intervallo comprende lo zero non dice niente.'))}</p></div>`;
   }
   function feedbackSummary() {
@@ -180,7 +180,7 @@
   function historyBody() {
     const h = B.hist;
     if (!h) return `<p class="dim">${esc(tr('Carico lo storico…'))}</p>`;
-    if (h.demo) return `<p class="dim">${esc(tr('Libro della demo: la demo non scrive niente nello storico.'))}</p>`;
+    if (h.demo && !h.metrics) return `<p class="dim">${esc(tr('Libro della demo: la demo non scrive niente nello storico.'))}</p>`;
     if (!h.ok) return `<p class="dim">${esc(tr('Non riesco a leggere lo storico.'))}</p>`;
     const M = h.metrics;
     // dalla prima settimana con sessioni (sempre almeno 8): un progetto giovane non resta schiacciato in fondo alla linea
@@ -199,7 +199,8 @@
     const rows = HIST().map(([m, label]) => `<div class="hrow"><div><b>${esc(label)}</b><br><span class="dim">${esc(reading(m, M[m].trend))}</span></div>${spark(m, cut(m))}</div>`).join('');
     const f = M.feedback.buckets.reduce((a, b) => { for (const k of Object.keys(a)) a[k] += b[k]; return a; }, { on: 0, shadow: 0, judgedOn: 0, helpedOn: 0, judgedShadow: 0, helpedShadow: 0 });
     const fb = f.on + f.shadow ? `<p class="dim">${esc(tr('Messaggi agli agenti in queste settimane: {on} mandati (probabilmente utili {h1} su {j1}), {sh} in ombra ({h2} su {j2}). Il confronto vero è nell\'esperimento, scheda FEEDBACK.', { on: f.on, h1: f.helpedOn, j1: f.judgedOn, sh: f.shadow, h2: f.helpedShadow, j2: f.judgedShadow }))}</p>` : '';
-    return rows + fb;
+    const demoNote = h.demo ? `<p class="dim">${esc(tr('Storico finto della demo: tre mesi inventati, non vengono da nessuna sessione vera.'))}</p>` : '';
+    return demoNote + rows + fb;
   }
   // la ricerca nei passi salvati (S12b): un file, un comando o un errore, dal più recente
   const ACTION = () => ({ read: tr('legge'), edit: tr('modifica'), search: tr('cerca'), web: tr('web'), run: tr('lancia'), verify: tr('verifica'), look: tr('guarda'), delegate: tr('delega'), tool: tr('strumento'), other: tr('altro') });
@@ -240,8 +241,8 @@
     el().innerHTML = `<span class="x" title="${esc(tr('Chiudi'))}">X</span>` +
       `<h3>${esc(tr('LIBRO DELLA BOTTEGA'))} · ${esc(d.name)}</h3>` + tabsHtml() +
       `<p class="honest">${esc(tr('Come vanno le sessioni di questo progetto nelle ultime 26 settimane: ogni linea è la media per sessione, settimana per settimana. La frase accanto confronta le ultime 4 settimane con le 4 prima.'))}</p>` +
-      (B.hist && B.hist.ok && !B.hist.demo ? `<div class="bar"><button data-do="histtable">${esc(B.histTable ? tr('LINEE') : tr('NUMERI'))}</button></div>` : '') +
-      `<div class="list hist">${B.hist && B.hist.ok && !B.hist.demo ? findHtml() : ''}${historyBody()}</div><div class="htip" hidden></div>`;
+      (B.hist && B.hist.ok && B.hist.metrics ? `<div class="bar"><button data-do="histtable">${esc(B.histTable ? tr('LINEE') : tr('NUMERI'))}</button></div>` : '') +
+      `<div class="list hist">${B.hist && B.hist.ok && B.hist.metrics ? findHtml() : ''}${historyBody()}</div><div class="htip" hidden></div>`;
     bindClose(); bindTabs();
     const e = el(), tip = e.querySelector('.htip');
     // la ricerca: i campi restano come li hai lasciati; Invio cerca

@@ -21,7 +21,7 @@ function trendLine(tr0) {
   const N = TREND_NAME(), W = TREND_WORD();
   const parts = Object.entries(tr0.metrics).filter(([, t]) => t.verdict !== 'not-enough').map(([m, t]) => `${N[m] || m} ${W[t.verdict]}`);
   if (!parts.length) return tr('Tendenza della settimana: dati insufficienti ({a} sessioni nelle ultime 4 settimane, {b} nelle 4 prima; ne servono {min} per parte).', { a: tr0.recent, b: tr0.before, min: tr0.min });
-  return tr('Tendenza della settimana, tutti i progetti (ultime 4 settimane contro le 4 prima, {a} e {b} sessioni): {list}.', { a: tr0.recent, b: tr0.before, list: parts.join(', ') });
+  return tr('Tendenza della settimana, tutti i progetti (ultime 4 settimane contro le 4 prima, {a} e {b} sessioni): {list}.', { a: tr0.recent, b: tr0.before, list: parts.join(', ') }) + (tr0.demo ? ' ' + tr('(dati finti della demo)') : '');
 }
 
 function text() {

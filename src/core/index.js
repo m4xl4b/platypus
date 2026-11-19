@@ -55,6 +55,7 @@ const { runRetention } = require('./retention');
 const experiments = require('./experiments');
 const historyQuery = require('./history-query');
 const search = require('./search');
+const { demoHistoryStore } = require('./demo-history');
 const hooks = require('./hooks');
 const feedback = require('./feedback');
 const { FeedbackLog, MemoryFeedbackLog } = require('./feedbacklog');
@@ -331,7 +332,24 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     return n;
   }
   // la demo finisce: il suo registro si svuota, e i suoi messaggi non aspettano più un esito
+  // lo storico finto della demo (S14): in memoria, creato alla prima domanda mentre la demo è accesa, buttato quando finisce
+  let demoStore = null;
+  function demoHistory() {
+    if (!demo.on) { demoStore = null; return null; }
+    if (!demoStore) demoStore = demoHistoryStore();
+    return demoStore;
+  }
+  // su quale storico rispondere: quello vero, o quello della demo per un suo piano. null = progetto sconosciuto
+  function historyScope(q) {
+    if (!(q.sid || q.cwd || q.key)) return { store: history.store, projects: null, demo: false };
+    const cwd = projectCwd(q);
+    if (cwd && isDemoCwd(cwd)) { const ds = demoHistory(); return { store: ds, projects: [projectKey(cwd)], demo: true }; }
+    if (cwd) return { store: history.store, projects: history.keys.allKeys(history.keys.keyIfKnown(cwd)), demo: false };
+    if (q.key && /^[0-9a-f]{16}$/.test(q.key)) return { store: history.store, projects: history.keys.allKeys(q.key), demo: false };
+    return null;
+  }
   function dropDemoFeedback() {
+    demoStore = null;
     demoFeedbackLog.clear();
     for (const [id, p] of feedbackPending) if (p.log === demoFeedbackLog) feedbackPending.delete(id);
     feedbackSaid = feedbackSaid.filter(x => !String(x.sid).startsWith('demo-'));
@@ -722,19 +740,15 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       try {
         history.flush();
         const q = Object.fromEntries(url.searchParams);
-        let projects = null;
-        if (q.sid || q.cwd || q.key) {
-          const cwd = projectCwd(q);
-          if (cwd && isDemoCwd(cwd)) return json(res, 200, { ok: true, demo: true, results: [], scanned: 0, partial: false });
-          if (cwd) projects = history.keys.allKeys(history.keys.keyIfKnown(cwd));
-          else if (q.key && /^[0-9a-f]{16}$/.test(q.key)) projects = history.keys.allKeys(q.key);
-          else return json(res, 404, { ok: false });
-        }
-        const r = search.searchSteps(history.store, {
+        const sc = historyScope(q);
+        if (!sc) return json(res, 404, { ok: false });
+        if (!sc.store) return json(res, 200, { ok: true, demo: true, results: [], scanned: 0, partial: false });
+        const projects = sc.projects;
+        const r = search.searchSteps(sc.store, {
           projects, file: (q.file || '').slice(0, 200), command: (q.command || '').slice(0, 200), error: (q.error || '').slice(0, 200), outcome: q.outcome,
           from: Number(q.from) || undefined, to: Number(q.to) || undefined, limit: Number(q.limit) || 50,
         });
-        return json(res, 200, { ok: true, ...r });
+        return json(res, 200, { ok: true, demo: sc.demo, ...r });
       } catch (e) { return json(res, e.code === 'bad-query' ? 400 : 200, { ok: false, error: e.message }); }
     }
     // lo storico nel tempo (S12): per il progetto (sid, cwd o key) o per tutti; metric=all dà tutte le metriche con la loro lettura
@@ -742,35 +756,35 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       try {
         history.flush();
         const q = Object.fromEntries(url.searchParams);
-        const cwd = q.sid || q.cwd || q.key ? projectCwd(q) : '';
-        if (cwd && isDemoCwd(cwd)) return json(res, 200, { ok: true, demo: true });
-        let projects = null;
-        if (cwd) projects = history.keys.allKeys(history.keys.keyIfKnown(cwd));
-        else if (q.key && /^[0-9a-f]{16}$/.test(q.key)) projects = history.keys.allKeys(q.key);
-        else if (q.sid || q.cwd || q.key) return json(res, 404, { ok: false });
+        const sc = historyScope(q);
+        if (!sc) return json(res, 404, { ok: false });
+        if (!sc.store) return json(res, 200, { ok: true, demo: true });
+        const projects = sc.projects, hstore = sc.store;
         // di base le ultime 26 settimane, compresa quella in corso, dall'inizio di una settimana
         const now = Date.now(), to = Number(q.to) || now + 1, from = Number(q.from) || historyQuery.addDays(historyQuery.bucketStart(now, 'week'), -7 * 25);
         const bucket = q.bucket || 'week', metric = q.metric || 'all';
-        const one = m => { const r = historyQuery.query(history.store, { projects, metric: m, from, to, bucket }); return m === 'feedback' ? r : { ...r, trend: historyQuery.trend(r, now) }; };
+        const one = m => { const r = historyQuery.query(hstore, { projects, metric: m, from, to, bucket }); return m === 'feedback' ? r : { ...r, trend: historyQuery.trend(r, now) }; };
         if (metric === 'all') {
           // le metriche delle sessioni in una lettura sola, più il feedback
-          const all = historyQuery.queryAll(history.store, { projects, from, to, bucket });
+          const all = historyQuery.queryAll(hstore, { projects, from, to, bucket });
           for (const m of Object.keys(all)) all[m].trend = historyQuery.trend(all[m], now);
           all.feedback = one('feedback');
-          return json(res, 200, { ok: true, from, to, bucket, metrics: all });
+          return json(res, 200, { ok: true, demo: sc.demo, from, to, bucket, metrics: all });
         }
-        return json(res, 200, { ok: true, ...one(metric) });
+        return json(res, 200, { ok: true, demo: sc.demo, ...one(metric) });
       } catch (e) { return json(res, e.code && /^bad-/.test(e.code) ? 400 : 200, { ok: false, error: e.message }); }
     }
     // l'esperimento sul feedback (S11): i due gruppi a confronto, per il progetto e per tutti i progetti
     if (url.pathname === '/api/feedback/experiment') {
       try {
         history.flush();
-        const q = Object.fromEntries(url.searchParams), cwd = projectCwd(q);
-        if (cwd && isDemoCwd(cwd)) return json(res, 200, { ok: true, demo: true });
-        const keys = cwd ? history.keys.allKeys(history.keys.keyIfKnown(cwd)) : null;
-        const modes = Object.fromEntries(experiments.FEATURES.map(f => [f, feedback.modeOf(state.settings, f)]));
-        return json(res, 200, { ok: true, modes, minN: experiments.MIN_N, project: keys ? experiments.results(history.store, keys) : null, all: experiments.results(history.store) });
+        const q = Object.fromEntries(url.searchParams);
+        const sc = historyScope(q);
+        if (!sc) return json(res, 404, { ok: false });
+        if (!sc.store) return json(res, 200, { ok: true, demo: true });
+        // nella demo il giro in tondo e le lezioni a inizio sessione sono in esperimento (dati finti, demo-history.js)
+        const modes = sc.demo ? { sessionLessons: 'experiment', elder: 'on', loop: 'experiment' } : Object.fromEntries(experiments.FEATURES.map(f => [f, feedback.modeOf(state.settings, f)]));
+        return json(res, 200, { ok: true, demo: sc.demo, modes, minN: experiments.MIN_N, project: sc.projects ? experiments.results(sc.store, sc.projects) : null, all: experiments.results(sc.store) });
       } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
     }
     // quanti messaggi per funzione negli ultimi 7 giorni, in tutti i progetti (accanto agli interruttori delle opzioni)
@@ -796,7 +810,10 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       try {
         history.flush();
         const end = new Date(r.day + 'T00:00:00'); end.setDate(end.getDate() + 1);
-        r.trend = historyQuery.reportTrend(history.store, Math.min(Date.now(), end.getTime() - 1));
+        // con la demo accesa, la tendenza dei suoi tre mesi finti (come i costi della demo nel report)
+        const ds = demoHistory();
+        r.trend = historyQuery.reportTrend(ds || history.store, Math.min(Date.now(), end.getTime() - 1));
+        if (ds) r.trend.demo = true;
       } catch { r.trend = null; }
       return json(res, 200, r);
     }

@@ -242,6 +242,17 @@ process.on('exit', code => {
   ok(bk.ok && /^[0-9a-f]{16}$/.test(bk.key) && bk.lessons.length >= 5 && bk.lessons.length <= 6 && strongDemo >= 4, `libro finto della demo (piano 1): ${bk.lessons ? bk.lessons.length : '-'} lezioni, ${strongDemo} forti`);
   const demoKinds = new Set((bk.lessons || []).map(l => l.kind));
   ok(['stale-trap', 'ghost-path', 'flaky-command', 'known-fix', 'fragile-file'].every(k => demoKinds.has(k)), 'libro della demo coerente con gli scenari (file conteso, percorso inventato, test instabile, correzione nota, file fragile)');
+  {
+    // lo storico finto della demo (S14): risponde per i suoi piani, solo in memoria
+    const dh = JSON.parse((await get(port, '/api/history?metric=all&sid=' + p1.id)).body);
+    const dx = JSON.parse((await get(port, '/api/feedback/experiment?sid=' + p1.id)).body);
+    const ds = JSON.parse((await get(port, '/api/history/search?file=login&sid=' + p1.id)).body);
+    const dr = JSON.parse((await get(port, '/api/report')).body);
+    const loopX = dx.all && dx.all.find(r => r.feature === 'loop');
+    ok(dh.ok && dh.demo === true && dh.metrics.loops.trend.verdict === 'fewer' && dx.demo === true && dx.modes.loop === 'experiment' && loopX && loopX.enough && ds.results.length > 0 && dr.trend && dr.trend.demo === true &&
+      core.history.store.collection('sessions').count({ _id: { $gte: 'demo-', $lt: 'demo.' } }) === 0,
+      `demo: storico finto per i suoi piani (giri in tondo ${dh.metrics && dh.metrics.loops.trend.verdict}), esperimento con effetto, ricerca, tendenza nel report; niente nello storico vero`);
+  }
   const hd = JSON.parse((await get(port, '/api/bottega/hints?sid=' + p1.id)).body);
   ok(hd.ok && hd.hints.length >= 1, `il Nonno ha qualcosa da dire sul piano 1: «${hd.hints && hd.hints[0] ? hd.hints[0].text : '-'}»`);
   // C3 · feedback agli agenti nella demo: una scena per funzione sul piano 1 (e le lezioni a inizio sessione sul piano 2),
@@ -288,8 +299,9 @@ process.on('exit', code => {
       `ricerca nell'archivio: i ${sr.results && sr.results.length} «npm test» falliti della sessione aperta, il file citato, una richiesta vuota rifiutata`);
     // lo storico nel tempo (S12)
     const rep = JSON.parse((await get(port, '/api/report')).body);
-    ok(rep.trend && Object.keys(rep.trend.metrics).join() === 'loops,stuck,surprises,claims' && rep.trend.recent >= 1 && rep.trend.min === 5 && rep.trend.metrics.loops.verdict === 'not-enough' && rep.totals,
-      `report giornaliero: la tendenza della settimana (${rep.trend && rep.trend.recent} sessioni nelle ultime 4 settimane: dati insufficienti)`);
+    // con la demo accesa il report mostra la tendenza dei suoi dati finti; quella vera si controlla quando la demo finisce
+    ok(rep.trend && Object.keys(rep.trend.metrics).join() === 'loops,stuck,surprises,claims' && rep.trend.demo === true && rep.trend.min === 5 && rep.totals,
+      `report giornaliero con la demo accesa: la tendenza della settimana dai dati finti (${rep.trend && rep.trend.recent} sessioni)`);
     const hy = JSON.parse((await get(port, '/api/history?metric=all&cwd=' + encodeURIComponent(fakeCwd))).body);
     const hy1 = JSON.parse((await get(port, '/api/history?metric=loops&bucket=day')).body);
     const hyBad = await get(port, '/api/history?metric=boh');
@@ -646,6 +658,9 @@ process.on('exit', code => {
   core.demo.stop();
   const dAfter = p1Cwd ? JSON.parse((await get(port, '/api/feedback/log?cwd=' + encodeURIComponent(p1Cwd))).body) : {};
   ok(dAfter.ok && dAfter.demo === false && dAfter.entries.length === 0 && ![...core.feedbackPending.values()].some(p => /^demo-/.test(p.entry.sid)) && !core.feedbackSaid().some(x => /^demo-/.test(x.sid)), 'demo spenta: niente più righe di feedback della demo, né in attesa né nei fumetti');
+  const drAfter = JSON.parse((await get(port, '/api/report')).body);
+  ok(!core.demo.on && drAfter.trend && !drAfter.trend.demo && drAfter.trend.recent >= 1 && drAfter.trend.min === 5 && drAfter.trend.metrics.loops.verdict === 'not-enough',
+    `demo spenta: il report torna allo storico vero (${drAfter.trend && drAfter.trend.recent} sessioni nelle ultime 4 settimane: dati insufficienti)`);
 
   // Cowork su un albero finto di Windows (docs/plans/cowork-structure.md): percorso noto, titolo e stato dai metadati
   console.log('Cowork (albero finto di Windows)');

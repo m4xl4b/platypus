@@ -1229,7 +1229,28 @@ async function searchTests(ok) {
   } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
-module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); await retentionTests(ok); await forgetTests(ok); await experimentTests(ok); await historyQueryTests(ok); await searchTests(ok); } };
+// S14: lo storico finto della demo (src/core/demo-history.js): sempre uguale, e con qualcosa da far vedere
+async function demoHistoryTests(ok) {
+  console.log('store: storico della demo');
+  const { demoHistoryStore, PROJECTS } = require(path.join(ROOT, 'src', 'core', 'demo-history'));
+  const HQ = require(path.join(ROOT, 'src', 'core', 'history-query'));
+  const X = require(path.join(ROOT, 'src', 'core', 'experiments'));
+  const { searchSteps } = require(path.join(ROOT, 'src', 'core', 'search'));
+  const { pathKey } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
+  const now = Date.now();
+  const a = demoHistoryStore(now), b = demoHistoryStore(now);
+  const same = JSON.stringify(a.collection('sessions').find({}, { sort: { _id: 1 } })) === JSON.stringify(b.collection('sessions').find({}, { sort: { _id: 1 } }));
+  ok(same && a.seeded.sessions > 200 && a.seeded.steps > 300 && a.seeded.feedback > 100 && a.backend === 'memory', `tre mesi finti, sempre uguali e solo in memoria: ${a.seeded.sessions} sessioni, ${a.seeded.steps} passi, ${a.seeded.feedback} messaggi`);
+  const verdicts = PROJECTS.map(p => { const all = HQ.queryAll(a, { projects: [pathKey(p.cwd)], from: HQ.addDays(HQ.bucketStart(now, 'week'), -7 * 25), to: now + 1, bucket: 'week' }); return ['loops', 'stuck', 'claims', 'surprises'].map(m => HQ.trend(all[m], now).verdict).join(','); });
+  ok(verdicts[0] === 'fewer,fewer,fewer,fewer' && verdicts[1] === 'more,more,more,more' && verdicts[2] === 'same,same,same,same', `un progetto migliora, uno peggiora, uno resta uguale: ${verdicts.join(' | ')}`);
+  const loop = X.resultFor(a, 'loop'), sl = X.resultFor(a, 'sessionLessons');
+  ok(loop.enough && loop.result.lo > 0.1 && sl.enough && sl.result.hi < 0, `l'esperimento della demo ha un effetto visibile: giro in tondo +${(loop.result.diff * 100).toFixed(0)} punti (da +${(loop.result.lo * 100).toFixed(0)}), lezioni a inizio sessione ${sl.result.diff.toFixed(1)} errori ogni 100 azioni`);
+  const s1 = searchSteps(a, { projects: [pathKey(PROJECTS[0].cwd)], file: 'login' }), t = HQ.reportTrend(a, now);
+  ok(s1.results.length > 0 && s1.results.every(x => /login/.test(x.target)) && t.recent >= 5 && t.before >= 5, `la ricerca trova qualcosa (${s1.results.length} passi su «login»), il report ha la sua tendenza`);
+  a.close(); b.close();
+}
+
+module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); await retentionTests(ok); await forgetTests(ok); await experimentTests(ok); await historyQueryTests(ok); await searchTests(ok); await demoHistoryTests(ok); } };
 if (require.main === module) {
   let failed = 0;
   module.exports.run((c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) failed++; })

@@ -112,5 +112,7 @@
   "Comando": "Command",
   "Errore": "Error",
   "es. login.ts, npm test, TypeError": "e.g. login.ts, npm test, TypeError",
-  "solo falliti": "failed only"
+  "solo falliti": "failed only",
+  "(dati finti della demo)": "(fake demo data)",
+  "Storico finto della demo: tre mesi inventati, non vengono da nessuna sessione vera.": "Fake demo history: three made-up months, from no real session."
 }
