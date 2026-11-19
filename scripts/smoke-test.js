@@ -97,6 +97,8 @@ require('./test-guard').requireTempDataDir('npm test');
   require('./unit-engine').run(ok);
   await require('./unit-embed').run(ok);
   require('./unit-notify').run(ok);
+  // lo store: le stesse prove per ogni backend (sqlite si aggiunge con S3 di docs/plans/2.13-storage.md)
+  for (const backend of ['memory']) await require('./store-conformance').run(ok, backend);
 
   console.log('motore');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-test-'));
