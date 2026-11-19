@@ -4,6 +4,7 @@
 //   bottega/<chiave>.json        il Libro della bottega di ogni progetto
 //   stats.json                   le statistiche per giorno e per settimana
 //   feedback/<chiave>[.1].jsonl  i messaggi agli agenti e i loro esiti
+//   notify.json                  il giorno dell'ultimo report notificato
 // importLegacy li legge e li scrive nello store, una volta sola:
 //   - gli originali NON si toccano e NON si cancellano: una copia va in <dati>/legacy-<data>/, e i file restano
 //     dove sono. Tornare alla 2.12 funziona: rilegge i suoi file, com'erano;
@@ -67,7 +68,7 @@ function copyOriginals(dataDir, when) {
     fs.mkdirSync(path.join(target, sub), { recursive: true, mode: 0o700 });
     for (const n of names) { fs.copyFileSync(path.join(dataDir, sub, n), path.join(target, sub, n)); files++; }
   }
-  if (fs.existsSync(path.join(dataDir, 'stats.json'))) { fs.copyFileSync(path.join(dataDir, 'stats.json'), path.join(target, 'stats.json')); files++; }
+  for (const f of ['stats.json', 'notify.json']) if (fs.existsSync(path.join(dataDir, f))) { fs.copyFileSync(path.join(dataDir, f), path.join(target, f)); files++; }
   return { dir: target, files };
 }
 
@@ -169,7 +170,10 @@ async function readLegacy(dataDir, { keys = null, clock = Date.now } = {}) {
     for (const id of outcomes.keys()) if (!seen.has(id)) skipped.outcomes++; // l'esito di un messaggio che il registro aveva già lasciato andare
     if (!projects.has(project)) projects.set(project, { _id: project, name: '', aliases: project !== oldKey ? { [oldKey]: now } : {}, firstSeen: now, lastSeen: now, forgotten: {}, learned: {} });
   }
-  return { projects: [...projects.values()], lessons: [...lessons.values()], daily, feedback, skipped };
+  // il giorno dell'ultimo report notificato (notify.json): così dopo l'aggiornamento non torna lo stesso giorno
+  const notify = readJson(path.join(dataDir, 'notify.json'));
+  const reportDay = notify && typeof notify.reportDay === 'string' ? notify.reportDay.slice(0, 40) : '';
+  return { projects: [...projects.values()], lessons: [...lessons.values()], daily, feedback, skipped, reportDay };
 }
 
 // Porta nello store i dati di prima, se non è già stato fatto. Restituisce che cosa ha fatto:
@@ -196,6 +200,7 @@ async function importLegacy(store, dataDir, options = {}) {
     put('lessons', data.lessons);
     put('daily', data.daily);
     put('feedback', data.feedback);
+    if (data.reportDay && !store.getMeta('notifyReportDay')) store.setMeta('notifyReportDay', data.reportDay);
     store.setMeta(MARK, String(clock()));
   });
   return { done: true, imported: { projects: data.projects.length, lessons: data.lessons.length, daily: data.daily.length, feedback: data.feedback.length }, skipped: data.skipped, legacyDir: copy.dir, files: copy.files };

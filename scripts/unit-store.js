@@ -236,6 +236,32 @@ async function failureTests(ok) {
     const back = keep(openStoreSafe({ backend: 'sqlite', dir: d4 }));
     back.declare('things', {});
     ok(back.backend === 'sqlite' && back.fallback === null && back.collection('things').get('prima').v === 1, 'tornato scrivibile, il database si riapre con i suoi dati');
+    // un database grande si controlla dopo, in un thread a parte: qui "grande" è tutto (checkLimit 1)
+    {
+      const { History } = require(path.join(ROOT, 'src', 'core', 'history'));
+      const dirH = path.join(tmp, 'grande'), fH = path.join(dirH, 'platypus.db'), hlog = [];
+      const mkH = () => new History({ dir: dirH, backend: 'sqlite', checkLimit: 1, log: m => hlog.push(m) });
+      let h = mkH();
+      h.store.transaction(() => { for (let i = 0; i < 4000; i++) h.store.collection('steps').put({ _id: 's:' + i, project: 'p', t: i, session: 's', action: 'read', tool: 'Read', outcome: 'ok', target: 'src/a' + i + '.js' }); });
+      const later = h.store.driver.checkLater;
+      await h.start();
+      ok(later === true && h.check && h.check.ok === true && h.notice() === '' && h.imported && h.imported.done === true, 'un database grande non si controlla all\'apertura ma subito dopo, in un thread a parte: sano, nessun avviso');
+      h.stop();
+      // rovinato verso la fine: si apre, e il controllo in background se ne accorge
+      const size = fs.statSync(fH).size, fd = fs.openSync(fH, 'r+');
+      for (let off = Math.floor(size * 0.6 / 4096) * 4096; off + 4096 <= size; off += 8192) fs.writeSync(fd, crypto.randomBytes(4096), 0, 4096, off);
+      fs.closeSync(fd);
+      h = mkH();
+      const opened = h.store.backend;
+      await h.start();
+      const bad = h.check, notice = h.notice();
+      h.stop();
+      h = mkH();
+      const third = h.store.backend, aside = fs.readdirSync(dirH).filter(n => n.startsWith('platypus.db.broken-'));
+      h.stop();
+      ok(size > 400000 && opened === 'sqlite' && bad && bad.ok === false && bad.detail.length <= 320 && notice === 'storico non disponibile: il database è rovinato' && hlog.some(m => /al prossimo avvio lo metto da parte/.test(m)) &&
+        third === 'memory' && aside.length === 1, 'rovinato verso la fine: il controllo in background lo trova e l\'ufficio lo dice; all\'avvio dopo il controllo si fa subito e il file viene messo da parte');
+    }
     ok(code(() => openStoreSafe({ backend: 'non-esiste' })) === 'unknown-backend' && code(() => openStoreSafe({ backend: 'sqlite' })) === 'invalid-argument' && openStoreSafe({}).fallback === null,
       'gli errori di chi scrive il codice (backend sconosciuto, cartella mancante) restano errori');
   } finally {

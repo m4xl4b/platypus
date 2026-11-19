@@ -12,7 +12,8 @@
 //   - coda di scrittura per append: le righe aspettano in memoria e vanno su disco in una sola transazione al
 //     massimo ogni 2 s, o quando sono 500, o alla chiusura. Ogni lettura e ogni altra scrittura la svuota prima,
 //     quindi chi legge vede sempre tutto;
-//   - all'apertura (S4): PRAGMA quick_check, le migrazioni dello schema (migrations.js) e una scrittura di prova.
+//   - all'apertura (S4): PRAGMA quick_check (per i file grandi dopo, in un thread a parte: checkInBackground),
+//     le migrazioni dello schema (migrations.js) e una scrittura di prova.
 //     Se qualcosa non va il costruttore lancia uno StoreError con il motivo nel codice: 'corrupt' (file rovinato),
 //     'unopenable' (non si apre o non si scrive), 'newer-schema', 'migration-failed'. Chi apre lo store con
 //     openStoreSafe (index.js) a quel punto ripiega sulla memoria: niente si ferma.
@@ -25,6 +26,10 @@ const { loadSqlite } = require('./sqlite-load');
 const { migrate, setMeta, getMeta, schemaVersion } = require('./migrations');
 
 const FLUSH_MS = 2000, FLUSH_DOCS = 500, STMT_CACHE = 200;
+// oltre questa dimensione il controllo del file (PRAGMA quick_check, che legge tutte le pagine: 600 ms su 355 MB)
+// non si fa all'apertura ma dopo, in un thread a parte (checkInBackground), così l'ufficio non aspetta
+const CHECK_LIMIT = 64 * 1024 * 1024;
+const CHECK_NEEDED = 'checkNeeded'; // segno in meta: il controllo in background ha trovato un danno, al prossimo avvio si fa subito
 const SAFE_SEGMENT = /^[A-Za-z0-9_ -]+$/;
 const NUM = "('integer','real')";
 
@@ -120,10 +125,19 @@ class SqliteDriver {
       fs.mkdirSync(opts.dir, { recursive: true, mode: 0o700 });
       this.db = new sqlite.DatabaseSync(this.file);
       this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=3000; PRAGMA foreign_keys=ON;');
-      const check = this.db.prepare('PRAGMA quick_check').all().map(r => Object.values(r)[0]);
-      if (check[0] !== 'ok') fail('corrupt', `quick_check: ${check.slice(0, 3).join('; ')}`);
+      const limit = Number.isFinite(opts.checkLimit) ? opts.checkLimit : CHECK_LIMIT;
+      let size = 0;
+      try { size = fs.statSync(this.file).size; } catch {}
+      let checkNow = size <= limit;
+      if (!checkNow) { try { checkNow = getMeta(this.db, CHECK_NEEDED) === '1'; } catch { checkNow = true; } }
+      if (checkNow) {
+        const check = this.db.prepare('PRAGMA quick_check').all().map(r => Object.values(r)[0]);
+        if (check[0] !== 'ok') fail('corrupt', `quick_check: ${check.slice(0, 3).join('; ').replace(/\s+/g, ' ').slice(0, 300)}`);
+      }
+      this.checkLater = !checkNow;
       this.migration = migrate(this.db, this.file, opts.migrations);
       setMeta(this.db, 'lastOpen', Date.now()); // una scrittura vera: un file o una cartella di sola lettura si scoprono qui
+      if (checkNow && size > limit) setMeta(this.db, CHECK_NEEDED, '0');
     } catch (e) {
       try { if (this.db) this.db.close(); } catch {}
       this.db = null;
@@ -290,6 +304,37 @@ class SqliteDriver {
     this.queued.clear();
   }
 
+  // Il controllo del file in un thread a parte, su una connessione di sola lettura: il thread principale non aspetta.
+  // { ok, detail, ms }. Se trova un danno lo segna in meta, così al prossimo avvio il controllo si fa subito (e un
+  // file rovinato viene messo da parte, vedi openStoreSafe).
+  checkInBackground() {
+    const { Worker } = require('worker_threads');
+    const t0 = Date.now();
+    return new Promise(resolve => {
+      let done = false;
+      const finish = r => { if (done) return; done = true; resolve({ ...r, ms: Date.now() - t0 }); };
+      let w;
+      try {
+        w = new Worker(`
+          const { workerData, parentPort } = require('worker_threads');
+          try {
+            const sqlite = require(workerData.loader).loadSqlite();
+            const db = new sqlite.DatabaseSync(workerData.file, { readOnly: true });
+            try { db.exec('PRAGMA busy_timeout=3000'); parentPort.postMessage(db.prepare('PRAGMA quick_check').all().map(r => Object.values(r)[0]).slice(0, 3)); }
+            finally { db.close(); }
+          } catch (e) { parentPort.postMessage(['errore: ' + (e && e.message || e)]); }
+        `, { eval: true, workerData: { file: this.file, loader: require.resolve('./sqlite-load') } });
+      } catch (e) { return finish({ ok: true, detail: 'controllo non avviato: ' + (e && e.message || e) }); }
+      w.once('message', rows => {
+        const ok = rows[0] === 'ok';
+        if (!ok && this.db) { try { setMeta(this.db, CHECK_NEEDED, '1'); } catch {} }
+        finish({ ok, detail: ok ? '' : `quick_check: ${rows.join('; ').replace(/\s+/g, ' ').slice(0, 300)}` });
+      });
+      w.once('error', e => finish({ ok: true, detail: 'controllo non riuscito: ' + (e && e.message || e) })); // un thread che non parte non è un danno
+      w.once('exit', () => finish({ ok: true, detail: 'controllo interrotto' }));
+    });
+  }
+
   info() {
     let size = 0;
     for (const f of [this.file, this.file + '-wal']) { try { size += fs.statSync(f).size; } catch {} }
@@ -303,4 +348,4 @@ class SqliteDriver {
   }
 }
 
-module.exports = { SqliteDriver, fieldOf, nodeSql, orderSql, FLUSH_MS, FLUSH_DOCS, StoreError };
+module.exports = { SqliteDriver, fieldOf, nodeSql, orderSql, FLUSH_MS, FLUSH_DOCS, CHECK_LIMIT, StoreError };

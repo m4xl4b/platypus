@@ -86,7 +86,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   // le notifiche (attese, avvisi, report): le decide il motore, le mostra la shell
   // (shellInfo: le voci del menu dei gusci esterni; si chiama solo più tardi, quando hook e demo esistono già)
   const notifier = new Notifier(state, {
-    stats, file: path.join(path.dirname(settingsPath), 'notify.json'),
+    stats, memo: { get: k => history.store.getMeta(k), set: (k, v) => history.store.setMeta(k, String(v)) }, // nello storico, non in notify.json
     shellInfo: () => ({ hooks: hooksInstalled(), demo: demo.on, cowork: !!state.includeCowork, base: base || claudeDir() }),
   }).start();
   // il libro impara dalle sessioni aperte: gli stessi fatti della mappa, una volta al minuto

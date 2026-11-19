@@ -16,11 +16,13 @@ const FLUSH_MS = 2000, FLUSH_DOCS = 500; // come la coda di sqlite.js: al massim
 
 class History {
   // dir: la cartella dei dati (dove sta platypus.db); settings: le opzioni vive del motore
-  constructor({ dir, settings = {}, backend, clock = Date.now, log = msg => console.error('[platypus] ' + msg) } = {}) {
+  constructor({ dir, settings = {}, backend, clock = Date.now, checkLimit, log = msg => console.error('[platypus] ' + msg) } = {}) {
     this.dir = dir;
     this.log = log;
     this.clock = clock;
-    this.store = openStoreSafe({ backend: backend || process.env.PLATYPUS_STORE_BACKEND || 'sqlite', dir, requireFields: true, clock, onGuard: m => log('store: ' + m), onError: e => log('store: ' + (e && e.message || e)) });
+    this.store = openStoreSafe({ backend: backend || process.env.PLATYPUS_STORE_BACKEND || 'sqlite', dir, requireFields: true, clock, checkLimit, onGuard: m => log('store: ' + m), onError: e => log('store: ' + (e && e.message || e)) });
+    this.damaged = ''; // il controllo in background ha trovato un danno (vedi start)
+    this.check = null;
     // la conservazione scelta nelle opzioni; se non ha senso valgono i tempi di partenza
     try { declareCollections(this.store, { retention: settings.storeRetention || undefined }); }
     catch (e) { log('store: ' + e.message); declareCollections(this.store); }
@@ -35,6 +37,12 @@ class History {
   // dopo che il server è partito: porta nello store i dati della 2.12, se non è già stato fatto
   async start() {
     if (this.store.fallback) return null; // in memoria non resterebbero: si riprova al prossimo avvio
+    // un database grande si controlla qui, in un thread a parte, mentre l'ufficio lavora già
+    const d = this.store.driver;
+    if (d && d.checkLater && typeof d.checkInBackground === 'function') {
+      this.check = await d.checkInBackground();
+      if (!this.check.ok) { this.damaged = this.check.detail; this.log('store: il database è rovinato (' + this.check.detail + '): al prossimo avvio lo metto da parte'); }
+    }
     try { this.imported = await importLegacy(this.store, this.dir, { keys: this.keys, clock: this.clock }); }
     catch (e) { this.imported = { done: false, error: e.message }; this.log('store: i dati di prima non sono entrati nello storico, riprovo al prossimo avvio (' + e.message + ')'); }
     return this.imported;
@@ -117,7 +125,7 @@ class History {
   }
 
   // la frase per l'avviso nell'ufficio («storico non disponibile: …»), o '' se va tutto bene
-  notice() { return fallbackReason(this.store.fallback); }
+  notice() { return fallbackReason(this.store.fallback || (this.damaged ? { code: 'corrupt' } : null)); }
   // per /api/state: quale backend e l'eventuale avviso
   info() { return { backend: this.store.backend, notice: this.notice() }; }
 

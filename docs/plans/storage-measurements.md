@@ -46,6 +46,16 @@ Same machine and data. At start-up the store runs `PRAGMA quick_check`, reads th
 
 The time grows with the size of the file, because `quick_check` reads every page. It was not measured with a cold cache, where it can only be slower. The engine must therefore not wait for the store before it starts serving the office (see S9).
 
+## S9 · Opening a large database, 2026-11-19
+
+From S9, a database larger than 64 MB is not checked when it opens: the check runs right after, in a worker thread, while the office is already working.
+
+| Measure | Result |
+|---|---|
+| Reopening the database with one million steps (355 MB) | **12 ms** (it was 600 ms with the check at opening) |
+
+Same run: ingest 8,113 steps per second and 0.26 ms for the 100 most recent steps of a project (both targets met). The ingest figure is lower than in S3 because this run shared the machine with the API comparison and two full test runs; it is not a regression measured on its own.
+
 ## What the numbers say
 
 - **Both targets are met with a wide margin.** Ingest is 12 times the target; the query the office needs is 100 times faster than the target.
