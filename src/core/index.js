@@ -803,8 +803,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       projects = st.collection('projects').find({}, { sort: { lastSeen: -1 }, limit: 300 })
         .map(p => ({ key: p._id, name: p.name || '', remote: p.remote || '', lastSeen: p.lastSeen || 0 }));
     } catch {}
-    let backups = [];
-    try { backups = fs.readdirSync(history.dir).filter(n => /^platypus\.db\.(bak-\d+|broken-[\d-]+)$/.test(n) || /^legacy-\d{8}$/.test(n)).sort(); } catch {}
+    const backups = history.backups(); // "Dimentica" cancella anche queste
     return {
       ok: true, backend: info.backend, persistent: !!info.persistent, file: info.file || '', sizeBytes: info.sizeBytes || 0, usedBytes: used,
       notice: history.notice(), limitMB: s.storeMaxMB,

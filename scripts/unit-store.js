@@ -976,6 +976,14 @@ async function forgetTests(ok) {
     const beforeA = count(KA), beforeB = count(KB);
     // in coda, non ancora scritto: anche questo va dimenticato
     h.recordStep(sA, { id: 'main' }, { id: 't9', t: T, tool: 'Read', act: 'read', target: 'src/segreto.ts', sig: 'Read', err: false, dur: 1, phase: '' });
+    // copie di sicurezza accanto al database: "Dimentica" cancella anche queste; gli altri file restano
+    const dd = path.join(tmp, 'dati');
+    for (const n of ['platypus.db.bak-1', 'platypus.db.broken-20261119-101010', 'platypus.db.broken-20261119-101010-wal']) fs.writeFileSync(path.join(dd, n), 'progetto-segreto');
+    fs.mkdirSync(path.join(dd, 'legacy-20261119', 'bottega'), { recursive: true });
+    fs.writeFileSync(path.join(dd, 'legacy-20261119', 'bottega', 'x.json'), '{"name":"progetto-segreto"}');
+    fs.writeFileSync(path.join(dd, 'settings.json'), '{}');
+    fs.writeFileSync(path.join(dd, 'platypus.db.bak-note.txt'), 'non è una copia');
+    const backupsBefore = h.backups();
     const r = h.forgetProject(KA, { state, bottega, stats });
     const day = stats.data.days['2026-11-18'], stored = h.store.collection('daily').get('day:2026-11-18');
     ok(beforeA === 8 && r.documents === 8 && count(KA) === 0 && count(pathKey(A)) === 0 && h.store.collection('steps').count({ session: sA.id }) === 0 && count(KB) === beforeB && bottega.view(B).lessons.length === 1,
@@ -983,6 +991,9 @@ async function forgetTests(ok) {
     ok(!day.projects['progetto-segreto'] && day.projects['altro-lavoro'] && day.releases.length === 1 && !stats.data.last[sA.id] && stats.data.last[sB.id] && !stored.projects['progetto-segreto'] && stored.releases.every(x => x.project !== 'progetto-segreto') && r.stats === 2,
       'dimentica: anche le statistiche, che tengono i progetti per nome (la voce del giorno, i suoi rilasci, l\'ultimo stato della sessione)');
     ok(!bottega.books.has(KA) && r.books === 1 && r.size && r.size.after <= r.size.before, 'dimentica: il Libro esce dalla memoria e il database viene compattato');
+    ok(backupsBefore.join() === 'legacy-20261119,platypus.db.bak-1,platypus.db.broken-20261119-101010,platypus.db.broken-20261119-101010-wal' && r.backups.join() === backupsBefore.join() && h.backups().length === 0 &&
+      fs.existsSync(path.join(dd, 'settings.json')) && fs.existsSync(path.join(dd, 'platypus.db.bak-note.txt')) && fs.existsSync(path.join(dd, 'platypus.db')),
+      'dimentica: cancella anche le copie di sicurezza (prima delle migrazioni, database messi da parte, copia della 2.12); gli altri file restano');
     stats.stop(); bottega.stop();
     let raw = '';
     for (const f of fs.readdirSync(path.join(tmp, 'dati'))) if (f.startsWith('platypus.db')) raw += fs.readFileSync(path.join(tmp, 'dati', f)).toString('latin1');

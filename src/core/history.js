@@ -16,6 +16,8 @@ const { ProjectKeys } = require('./store/project-key');
 const { importLegacy } = require('./store/legacy');
 const { retentionFromSettings } = require('./retention');
 
+// le copie di sicurezza accanto a platypus.db: prima delle migrazioni, database messi da parte (con -wal e -shm), file della 2.12
+const BACKUP_RE = /^(platypus\.db\.(bak-\d+|broken-[\d-]+)(-wal|-shm)?|legacy-\d{8})$/;
 const FLUSH_MS = 2000, FLUSH_DOCS = 500; // come la coda di sqlite.js: al massimo ogni 2 s, o a 500 documenti
 
 class History {
@@ -131,7 +133,9 @@ class History {
   // ---- "Dimentica questo progetto" (S10): ogni documento della sua chiave e dei suoi alias, in ogni collezione; le
   // voci delle statistiche che lo riguardano; i Libri in memoria; poi VACUUM, così nel file non resta niente.
   // state: lo stato dell'ufficio (le sessioni aperte del progetto), bottega e stats: quelli del motore.
-  // Le copie di sicurezza (platypus.db.bak-*, legacy-*, platypus.db.broken-*) non si toccano: lo dice chi chiede conferma.
+  // Anche le copie di sicurezza accanto al database si cancellano, perché contengono anche quel progetto (deciso da Max il
+  // 2026-11-19): platypus.db.bak-* (prima delle migrazioni), platypus.db.broken-* (database messi da parte) e
+  // legacy-*/ (la copia dei file della 2.12). Chi chiede conferma lo dice. I file della 2.12 al loro posto restano.
   forgetProject(key, { state = null, bottega = null, stats = null } = {}) {
     if (typeof key !== 'string' || !/^[0-9a-f]{16}$/.test(key)) return null;
     const keys = this.keys.allKeys(key);
@@ -157,8 +161,22 @@ class History {
     try { this.store.transaction(() => { for (const id of sessions) if (this.store.collection('sessions').delete(id)) removed.documents++; removed.documents += this.store.collection('steps').deleteMany({ session: { $in: [...sessions] } }); }); } catch {}
     this.keys.forget(keys);
     try { removed.size = this.store.compact(); } catch (e) { this.log('store: ' + e.message); }
+    removed.backups = this.deleteBackups();
     this.log(`store: progetto dimenticato (${removed.documents} documenti, ${removed.stats} voci delle statistiche)`);
     return removed;
+  }
+
+  // ---- le copie di sicurezza accanto al database: i nomi, e la cancellazione (per "Dimentica")
+  backups() {
+    try { return fs.readdirSync(this.dir).filter(n => BACKUP_RE.test(n)).sort(); } catch { return []; }
+  }
+  deleteBackups() {
+    const gone = [];
+    for (const n of this.backups()) {
+      try { fs.rmSync(path.join(this.dir, n), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); gone.push(n); }
+      catch (e) { this.log('store: non riesco a cancellare la copia ' + n + ' (' + e.message + ')'); }
+    }
+    return gone;
   }
 
   // ---- "Compatta": lo spazio libero torna al disco
