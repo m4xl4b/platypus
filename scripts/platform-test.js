@@ -77,6 +77,19 @@ console.log('collegamenti');
     ok(modes['start.sh'] === '100755' && modes['start.command'] === '100755', `start.sh e start.command sono eseguibili in git (${modes['start.sh']}, ${modes['start.command']})`);
   } else ok(true, 'git non disponibile: modo dei lanciatori non controllato');
   ok(/^@echo off/.test(fs.readFileSync(path.join(ROOT, 'start.cmd'), 'utf8')) && fs.readFileSync(path.join(ROOT, 'start.cmd')).includes(13), 'start.cmd ha le righe in stile Windows (CRLF)');
+  // 2.13.0: "(oppure https://nodejs.org)" dentro un blocco "if ( ... )" chiudeva il blocco, e il messaggio
+  // "Node.js 22.13 or newer is required" usciva anche con Node.js installato
+  const cmdText = fs.readFileSync(path.join(ROOT, 'start.cmd'), 'utf8');
+  ok(!/\(\s*$/m.test(cmdText), 'start.cmd non apre blocchi "( ... )", dove una ")" di un messaggio li chiuderebbe');
+  if (IS_WIN) {
+    // il lanciatore vero, con la riga di avvio sostituita da un echo: con Node.js nel PATH deve arrivare all'avvio
+    const copy = path.join(tmp, 'start-test.cmd');
+    fs.writeFileSync(copy, cmdText.replace(/^cd \/d .*$/m, 'rem cd tolto').replace(/^node scripts\\launch\.js.*$/m, 'echo AVVIO %*').replace(/^pause\r?$/gm, 'echo PAUSA'));
+    const r = spawnSync('cmd.exe', ['/d', '/c', copy, '--demo'], { encoding: 'utf8' });
+    ok(/AVVIO --demo/.test(r.stdout) && !/required|PAUSA/.test(r.stdout), 'Windows: start.cmd con Node.js nel PATH avvia senza chiedere Node.js · ' + r.stdout.trim().replace(/\s+/g, ' ').slice(0, 80));
+    const r2 = spawnSync('cmd.exe', ['/d', '/c', copy], { encoding: 'utf8', env: { ...process.env, PATH: path.join(process.env.SystemRoot || 'C:\\Windows', 'System32') } });
+    ok(/required/.test(r2.stdout) && /PAUSA/.test(r2.stdout) && !/AVVIO/.test(r2.stdout), 'Windows: start.cmd senza Node.js nel PATH chiede Node.js e si ferma');
+  }
 }
 
 // ---------------------------------------------------------------- avvio all'accesso
