@@ -271,7 +271,11 @@ function parseDeclaration(name, spec) {
     out.indexes = spec.indexes.map(ix => {
       const list = Array.isArray(ix) ? ix : [ix];
       if (!list.length) fail('invalid-argument', `declare(${name}): indice vuoto`);
-      return list.map(p => checkPath(p, 'index'));
+      // negli indici solo nomi semplici: finiscono nel testo dell'SQL (sqlite.js)
+      return list.map(p => {
+        if (!checkPath(p, 'index').split('.').every(s => /^[A-Za-z0-9_ -]+$/.test(s))) fail('invalid-argument', `declare(${name}): un indice vuole nomi di campo semplici (lettere, cifre, spazi, "_" e "-"): ${JSON.stringify(p)}`);
+        return p;
+      });
     });
   }
   if (spec.retention !== undefined && spec.retention !== null) {

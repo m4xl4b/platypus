@@ -195,15 +195,17 @@ class Store {
 
 // ---------------------------------------------------------------- backend
 // nome → funzione che apre lo store. Il pacchetto del server (3.0) aggiunge qui `mongo` senza che il motore
-// dipenda da lui; sqlite arriva con S3.
+// dipenda da lui.
 const backends = new Map();
 function registerBackend(name, factory) {
   if (typeof name !== 'string' || !/^[a-z][a-z0-9-]*$/.test(name) || typeof factory !== 'function') fail('invalid-argument', 'registerBackend(nome, funzione)');
   backends.set(name, factory);
 }
 registerBackend('memory', opts => new Store(new (require('./memory').MemoryDriver)(), opts));
+registerBackend('sqlite', opts => new Store(new (require('./sqlite').SqliteDriver)(opts), opts));
 
-// openStore({ backend, dir, clock }): backend 'memory' se non è indicato; dir è la cartella dei dati (per i backend su disco)
+// openStore({ backend, dir, clock }): backend 'memory' se non è indicato; dir è la cartella dei dati (per i backend su
+// disco: sqlite ci tiene platypus.db). Per sqlite anche flushMs e flushDocs (la coda di append) e onError.
 function openStore(opts = {}) {
   const name = opts.backend || 'memory';
   const factory = backends.get(name);
