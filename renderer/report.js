@@ -13,12 +13,23 @@ function today() { const d = new Date(); return d.getFullYear() + '-' + String(d
 function shift(day, n) { const d = new Date(day + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
 function honorBox(title, r, what) { return `<div class="honor"><h3>${esc(title)}</h3>${r ? `<b>${esc(String(r.type).toUpperCase())}</b><div class="dim">${what(r)}</div>` : `<div class="dim">${esc(tr('nessuno'))}</div>`}</div>`; }
 
+// la tendenza della settimana in una riga: ultime 4 settimane contro le 4 prima, tutti i progetti
+const TREND_NAME = () => ({ loops: tr('giri in tondo'), stuck: tr('fasi bloccate'), surprises: tr('sorprese'), claims: tr('affermazioni senza prove') });
+const TREND_WORD = () => ({ fewer: tr('in calo'), more: tr('in aumento'), same: tr('stabili') });
+function trendLine(tr0) {
+  if (!tr0) return '';
+  const N = TREND_NAME(), W = TREND_WORD();
+  const parts = Object.entries(tr0.metrics).filter(([, t]) => t.verdict !== 'not-enough').map(([m, t]) => `${N[m] || m} ${W[t.verdict]}`);
+  if (!parts.length) return tr('Tendenza della settimana: dati insufficienti ({a} sessioni nelle ultime 4 settimane, {b} nelle 4 prima; ne servono {min} per parte).', { a: tr0.recent, b: tr0.before, min: tr0.min });
+  return tr('Tendenza della settimana, tutti i progetti (ultime 4 settimane contro le 4 prima, {a} e {b} sessioni): {list}.', { a: tr0.recent, b: tr0.before, list: parts.join(', ') });
+}
+
 function text() {
   if (!data) return '';
   const t = data.totals;
   const lines = [tr('Report Platypus del {day}', { day: data.day }), '',
     tr('Costo: {cost} · Token: {tokens} · Sessioni: {sessions} · Sottoagenti conclusi: {completed}', { cost: money(t.cost), tokens: tok(t.tokens), sessions: t.sessions, completed: t.completed }),
-    tr('Commit: {commits} · PR: {prs} · Avvisi: {alerts}', { commits: t.commits, prs: t.prs, alerts: t.alerts }), '', tr('Per progetto:')];
+    tr('Commit: {commits} · PR: {prs} · Avvisi: {alerts}', { commits: t.commits, prs: t.prs, alerts: t.alerts }), ...(data.trend ? [trendLine(data.trend)] : []), '', tr('Per progetto:')];
   for (const p of data.projects) lines.push('- ' + tr('{name}: {cost}, {completed} sottoagenti, {commits} commit, {prs} PR', { name: p.name, cost: money(p.cost), completed: p.completed, commits: p.commits, prs: p.prs }));
   if (data.releases.length) { lines.push('', tr('Rilasci:')); for (const r of data.releases) lines.push(`- ${hhmm(r.t)} [${r.project}] ${r.text}${r.url ? ' ' + r.url : ''}`); }
   const h = data.honors;
@@ -40,8 +51,9 @@ async function load(day) {
       <div class="tile"><b>${t.completed}</b><span>${esc(trn('sottoagente concluso', 'sottoagenti conclusi', t.completed))}</span></div>
       <div class="tile"><b>${t.commits} / ${t.prs}</b><span>${esc(tr('commit / PR'))}</span></div>
       <div class="tile"><b>${t.alerts}</b><span>${esc(trn('avviso', 'avvisi', t.alerts))}</span></div>
-    </div>
-    <h2>${esc(tr('PROGETTI'))}</h2>` +
+    </div>` +
+    (data.trend ? `<p class="trend">${esc(trendLine(data.trend))}</p>` : '') +
+    `<h2>${esc(tr('PROGETTI'))}</h2>` +
     (data.projects.length ? `<table><thead><tr><th>${esc(tr('PROGETTO'))}</th><th></th><th>${esc(tr('COSTO'))}</th><th>${esc(tr('TOKEN'))}</th><th>${esc(tr('SESSIONI'))}</th><th>${esc(tr('SOTTOAG.'))}</th><th>${esc(tr('COMMIT'))}</th><th>PR</th></tr></thead><tbody>` +
       data.projects.map(p => `<tr><td>${esc(p.name)}</td><td><span class="tag" style="color:${p.wing === 'cowork' ? '#ffec27' : '#00e436'}">${p.wing === 'cowork' ? 'COWORK' : 'CODE'}</span></td><td class="n">${money(p.cost)}</td><td class="n">${tok(p.tokens)}</td><td class="n">${p.sessions}</td><td class="n">${p.completed}</td><td class="n">${p.commits}</td><td class="n">${p.prs}</td></tr>`).join('') + '</tbody></table>'
       : `<div class="empty">${esc(tr('Nessuna attività registrata in questo giorno (le statistiche partono da quando l\'ufficio è aperto).'))}</div>`) +

@@ -280,6 +280,9 @@ process.on('exit', code => {
     ok(sumS && sumS.surprises >= 1 && sumS.loops >= 1 && Number.isFinite(sumS.claims) && Number.isFinite(sumS.stale) && Number.isFinite(sumS.stuck) && Number.isFinite(sumS.flaky) && sumS.lessons === 0,
       `storico: il riassunto della sessione ha i conteggi (sorprese ${sumS && sumS.surprises}, giri in tondo ${sumS && sumS.loops}, bloccato ${sumS && sumS.stuck}, instabili ${sumS && sumS.flaky}, affermazioni senza prove ${sumS && sumS.claims}, memorie vecchie ${sumS && sumS.stale})`);
     // lo storico nel tempo (S12)
+    const rep = JSON.parse((await get(port, '/api/report')).body);
+    ok(rep.trend && Object.keys(rep.trend.metrics).join() === 'loops,stuck,surprises,claims' && rep.trend.recent >= 1 && rep.trend.min === 5 && rep.trend.metrics.loops.verdict === 'not-enough' && rep.totals,
+      `report giornaliero: la tendenza della settimana (${rep.trend && rep.trend.recent} sessioni nelle ultime 4 settimane: dati insufficienti)`);
     const hy = JSON.parse((await get(port, '/api/history?metric=all&cwd=' + encodeURIComponent(fakeCwd))).body);
     const hy1 = JSON.parse((await get(port, '/api/history?metric=loops&bucket=day')).body);
     const hyBad = await get(port, '/api/history?metric=boh');

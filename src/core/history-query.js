@@ -110,4 +110,15 @@ function trend(result, now = Date.now()) {
   return { verdict, recent, before, better };
 }
 
-module.exports = { query, queryAll, trend, bucketStart, addDays, METRICS, SESSION_METRICS, LOWER_IS_BETTER, MIN_SESSIONS, WINDOW_WEEKS, DAY };
+// La riga di tendenza del report giornaliero: alcune metriche, tutti i progetti, al momento `at` (la fine del giorno del
+// report). { metrics: { metrica: trend }, recent, before } con le sessioni delle due parti
+const REPORT_METRICS = ['loops', 'stuck', 'surprises', 'claims'];
+function reportTrend(store, at) {
+  const from = addDays(bucketStart(at, 'week'), -7 * (2 * WINDOW_WEEKS - 1));
+  const all = queryAll(store, { from, to: at + 1, bucket: 'week', metrics: REPORT_METRICS });
+  const metrics = Object.fromEntries(REPORT_METRICS.map(m => [m, trend(all[m], at)]));
+  const t = metrics.loops;
+  return { metrics, recent: t.recent.sessions, before: t.before.sessions, min: MIN_SESSIONS };
+}
+
+module.exports = { query, queryAll, trend, reportTrend, REPORT_METRICS, bucketStart, addDays, METRICS, SESSION_METRICS, LOWER_IS_BETTER, MIN_SESSIONS, WINDOW_WEEKS, DAY };

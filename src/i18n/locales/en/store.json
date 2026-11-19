@@ -81,5 +81,14 @@
   "LINEE": "LINES",
   "NUMERI": "NUMBERS",
   "settimana del {d}: {v} a sessione ({n} sessioni)": "week of {d}: {v} per session ({n} sessions)",
-  "settimana del {d}: nessuna sessione": "week of {d}: no sessions"
+  "settimana del {d}: nessuna sessione": "week of {d}: no sessions",
+  "giri in tondo": "loops",
+  "fasi bloccate": "stuck phases",
+  "sorprese": "surprises",
+  "affermazioni senza prove": "claims without evidence",
+  "in calo": "down",
+  "in aumento": "up",
+  "stabili": "steady",
+  "Tendenza della settimana: dati insufficienti ({a} sessioni nelle ultime 4 settimane, {b} nelle 4 prima; ne servono {min} per parte).": "Trend of the week: not enough data ({a} sessions in the last 4 weeks, {b} in the 4 before; {min} needed on each side).",
+  "Tendenza della settimana, tutti i progetti (ultime 4 settimane contro le 4 prima, {a} e {b} sessioni): {list}.": "Trend of the week, all projects (last 4 weeks against the 4 before, {a} and {b} sessions): {list}."
 }

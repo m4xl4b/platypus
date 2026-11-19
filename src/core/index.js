@@ -770,7 +770,14 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     if (url.pathname === '/api/stats/honors') return json(res, 200, stats.honors());
     if (url.pathname === '/api/report') {
       const day = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('day') || '') ? url.searchParams.get('day') : undefined;
-      return json(res, 200, stats.report(day));
+      const r = stats.report(day);
+      // la tendenza della settimana (S12), come stava alla fine di quel giorno (o adesso, per oggi)
+      try {
+        history.flush();
+        const end = new Date(r.day + 'T00:00:00'); end.setDate(end.getDate() + 1);
+        r.trend = historyQuery.reportTrend(history.store, Math.min(Date.now(), end.getTime() - 1));
+      } catch { r.trend = null; }
+      return json(res, 200, r);
     }
     if (url.pathname === '/api/archive') {
       try { return json(res, 200, listArchive({ base, liveIds: liveIds() })); } catch (e) { return json(res, 500, { error: e.message }); }
