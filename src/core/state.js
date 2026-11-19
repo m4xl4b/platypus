@@ -747,7 +747,12 @@ class OfficeState extends EventEmitter {
     try { (a.world || (a.world = new AgentWorld())).reply(ts || this.now(), text); } catch {}
   }
   worldEnd(s, a, id, isErr, block, line, ts) {
-    try { if (a.world) a.world.end(id, isErr, block, line, ts || this.now(), s.cwd); } catch {}
+    try {
+      const step = a.world && a.world.open.get(id);
+      if (a.world) a.world.end(id, isErr, block, line, ts || this.now(), s.cwd);
+      // l'azione finita, per lo storico (history.js): chi ascolta ne tiene solo i fatti, mai il testo
+      if (step && step.err !== null) this.emit('step', s, a, step);
+    } catch {}
     try {
       const m = this.mindOf(s, a), act = m.byTool.get(id);
       const tool = act && act.tool;

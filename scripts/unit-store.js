@@ -775,7 +775,78 @@ async function bookTests(ok) {
   }
 }
 
-module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); } };
+// S9: i passi e i riassunti delle sessioni, come li scrive il motore (src/core/history.js)
+async function historyTests(ok) {
+  console.log('store: passi e sessioni');
+  const { History, FLUSH_DOCS } = require(path.join(ROOT, 'src', 'core', 'history'));
+  const { pathKey } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-passi-'));
+  const logs = [];
+  const mk = () => { const h = new History({ dir: path.join(tmp, 'dati'), backend: 'sqlite', log: m => logs.push(m) }); h.keys.exec = async () => null; return h; };
+  const CWD = path.join(tmp, 'Progetto Segreto'), T = 1763500000000;
+  const sess = (id, extra = {}) => ({ id, cwd: CWD, kind: 'code', createdAt: T, lastActivity: T + 5000, ended: false, demo: false, main: { id: 'main', model: 'claude-opus-5-5', effort: 'high' }, subs: new Map([['a1', {}]]),
+    tok: { in: 100, out: 50, cr: 10, cw: 5 }, toolsByType: { Claude: 7, Explore: 2 }, errByType: { Claude: 1 }, ...extra });
+  const step = (id, extra = {}) => ({ id, t: T + 1000, tool: 'Bash', act: 'verify', target: 'cmd:npm', sig: 'run:cd app && CI=1 npm test 2>&1 | tail', err: true, dur: 4200, phase: 'test',
+    fail: { kind: 'test', excerpt: 'FAIL src/a.test.js:12 expected "x" to equal 3' }, ...extra });
+  let h;
+  try {
+    h = mk();
+    const s1 = sess('sess-0001'), main = { id: 'main' };
+    h.recordStep(s1, main, step('toolu_1'));
+    h.recordStep(s1, main, step('toolu_1')); // la stessa azione, riletta all'avvio
+    h.recordStep(s1, { id: 'agent-7' }, step('toolu_2', { act: 'edit', tool: 'Edit', target: 'src/a.js', sig: 'Edit:src/a.js', err: false, fail: null, phase: '' }));
+    h.recordStep(s1, main, step('toolu_3', { act: 'web', tool: 'WebSearch', target: 'web:?come rubare password del vicino', err: false, fail: null }));
+    h.recordStep(s1, main, step('toolu_4', { act: 'web', tool: 'WebFetch', target: 'web:api.example.org/v1/ghp_abcdefghijklmnopqrstuvwxyz012345', err: false, fail: null }));
+    h.recordStep({ ...s1, id: 'demo-1', demo: true }, main, step('toolu_5'));
+    h.recordStep({ ...s1, id: 'no-cwd', cwd: '' }, main, step('toolu_6'));
+    h.recordStep(s1, main, { ...step('toolu_7'), id: undefined });
+    const steps = h.store.collection('steps');
+    const before = steps.count({});
+    const n = h.flush();
+    const s0 = steps.get('sess-0001:toolu_1'), s2 = steps.get('sess-0001:toolu_2');
+    ok(before === 0 && n === 4 && steps.count({}) === 4 && steps.count({ session: 'demo-1' }) === 0 && steps.count({ session: 'no-cwd' }) === 0,
+      'i passi aspettano in coda e vanno nello storico tutti insieme; la stessa azione due volte è un passo solo; la demo e le sessioni senza cartella non lasciano niente');
+    ok(s0.project === pathKey(CWD) && s0.t === T + 1000 && s0.session === 'sess-0001' && s0.agent === 'main' && s0.action === 'verify' && s0.tool === 'Bash' && s0.target === 'cmd:npm' && s0.outcome === 'error' &&
+      s0.cmd === 'npm test' && s0.fail === 'test' && s0.err === 'FAIL <path>:N expected <…> to equal N' && s0.dur === 4200 && s0.phase === 'test' && s2.agent === 'agent-7' && s2.outcome === 'ok' && s2.target === 'src/a.js' && !('err' in s2) && !('cmd' in s2),
+      'un passo: progetto, quando, chi, che cosa, su che cosa, com\'è finita, il cuore del comando e la firma dell\'errore');
+    ok(steps.get('sess-0001:toolu_3').target === 'web:?' && steps.get('sess-0001:toolu_4').target === 'web:api.example.org/v1/[token]', 'di una ricerca resta solo che c\'è stata; un token nell\'indirizzo non passa');
+    // a 500 si scrive subito, senza aspettare
+    for (let i = 0; i < FLUSH_DOCS; i++) h.recordStep(s1, main, step('bulk-' + i, { err: false, fail: null }));
+    ok(h.pending.size === 0 && steps.count({}) === 4 + FLUSH_DOCS, `con ${FLUSH_DOCS} passi in coda si scrive subito, in una volta`);
+    // i riassunti: solo quando cambiano
+    const state = { sessions: new Map([[s1.id, s1], ['demo-1', { ...s1, id: 'demo-1', demo: true }]]), costOf: s => (s.id === 'sess-0001' ? 1.25 : 9) };
+    const w1 = h.summarize(state), w2 = h.summarize(state);
+    s1.toolsByType.Claude = 8; s1.ended = true; s1.endedAt = T + 9000;
+    const w3 = h.summarize(state);
+    h.flush();
+    const sum = h.store.collection('sessions').get('sess-0001');
+    ok(w1 === 1 && w2 === 0 && w3 === 1 && sum.project === pathKey(CWD) && sum.t === T && sum.end === T + 9000 && sum.kind === 'code' && sum.model === 'claude-opus-5-5' && sum.effort === 'high' && sum.agents === 2 &&
+      sum.actions === 10 && sum.errors === 1 && sum.cost === 1.25 && sum.tokens === 165 && h.store.collection('sessions').count({}) === 1,
+      'il riassunto di una sessione: si riscrive solo quando cambia, mai per la demo');
+    // un documento che la guardia rifiuta non fa perdere gli altri
+    h.store.guardMode = 'reject';
+    h.recordStep(s1, main, step('ok-1', { err: false, fail: null }));
+    h.recordStep({ ...s1, id: 'sessione con spazi' }, main, step('bad-1'));
+    h.recordStep(s1, main, step('ok-2', { err: false, fail: null }));
+    const got = h.flush();
+    ok(got === 2 && steps.get('sess-0001:ok-1') && steps.get('sess-0001:ok-2') && !steps.get('sessione con spazi:bad-1') && logs.some(m => /1 documenti non salvati/.test(m)), 'un passo che la guardia rifiuta non fa perdere gli altri, e si scrive nel registro');
+    // alla chiusura la coda va nello storico
+    h.recordStep(s1, main, step('last-1', { err: false, fail: null }));
+    h.stop();
+    h = mk();
+    ok(h.store.collection('steps').get('sess-0001:last-1') !== null, 'alla chiusura la coda va nello storico');
+    let rawBytes = '';
+    h.stop(); h = null;
+    for (const f of fs.readdirSync(path.join(tmp, 'dati'))) if (f.startsWith('platypus.db')) rawBytes += fs.readFileSync(path.join(tmp, 'dati', f)).toString('latin1');
+    const leaks = ['Progetto Segreto', 'rubare', 'ghp_abcdef', 'cd app', 'tail', 'CI=1', 'a.test.js:12'].filter(x => rawBytes.includes(x));
+    ok(leaks.length === 0 && rawBytes.includes('npm test'), 'nel file del database non c\'è la cartella, la ricerca, i token né il comando intero' + (leaks.length ? ': ' + leaks.join(', ') : ''));
+  } finally {
+    if (h) { try { h.stop(); } catch {} }
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); } };
 if (require.main === module) {
   let failed = 0;
   module.exports.run((c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) failed++; })

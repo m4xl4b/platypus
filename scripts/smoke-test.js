@@ -267,6 +267,16 @@ process.on('exit', code => {
   const kindsFk = new Set((fk.lessons || []).map(l => l.kind));
   ok(learned > 0 && kindsFk.has('ghost-path') && kindsFk.has('loop-trap') && kindsFk.has('flaky-command'), `il libro impara da una sessione aperta: ${learned} casi, ${[...kindsFk].join(', ')}`);
   ok(core.learnLive() === 0, 'imparare di nuovo dalla stessa sessione non aggiunge nulla');
+  {
+    // lo storico: i passi della sessione aperta e il suo riassunto (la demo, che gira insieme, non lascia niente)
+    core.history.summarize(core.state); core.history.flush();
+    const hs = core.history.store;
+    const mySteps = hs.collection('steps').find({ session: 'bottega-smoke-0001' });
+    const demoIds = st.sessions.filter(x => x.demo).map(x => x.id);
+    ok(mySteps.length === 4 && mySteps.every(x => x.project && x.outcome === 'error') && mySteps.filter(x => x.cmd === 'npm test' && x.action === 'verify').length === 3 && mySteps.some(x => x.action === 'read' && x.target === 'src/vecchio.ts') && hs.collection('sessions').get('bottega-smoke-0001') !== null &&
+      hs.collection('steps').count({ session: { $in: demoIds } }) === 0 && hs.collection('sessions').count({ _id: { $in: demoIds } }) === 0,
+      `storico: ${mySteps.length} passi e il riassunto della sessione aperta; niente della demo`);
+  }
   // dall'archivio, da sé e in background (senza il bottone): la sessione aperta si salta, quella passata si legge una volta sola
   let fk2 = {};
   for (let k = 0; k < 40; k++) { await sleep(100); fk2 = JSON.parse((await get(port, '/api/bottega?cwd=' + encodeURIComponent(fakeCwd))).body); if (fk2.learning && !fk2.learning.running) break; }

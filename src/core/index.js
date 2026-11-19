@@ -76,6 +76,10 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const state = new OfficeState({ settings: initialSettings });
   // lo storico (store): accanto alle opzioni, in platypus.db. Se non si apre si va avanti in memoria e l'ufficio lo dice
   const history = new History({ dir: path.dirname(settingsPath), settings: initialSettings });
+  // ogni azione finita diventa un passo nello storico; i riassunti delle sessioni ogni minuto e alla chiusura
+  state.on('step', (s, a, step) => { try { history.recordStep(s, a, step); } catch {} });
+  const summaryTimer = setInterval(() => { try { history.summarize(state); } catch {} }, 60000);
+  summaryTimer.unref && summaryTimer.unref();
   const stats = new Stats(state, { store: history.store }); // nello storico, collezione daily
   // il Libro della bottega, nello storico. La cartella di un progetto (lo storico non la tiene) la cerca il motore
   const bottega = new Bottega({ store: history.store, keys: history.keys, cwdOf: projectFolder });
@@ -738,6 +742,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     bottega.stop();
     embedder.stop();
     state.stop();
+    clearInterval(summaryTimer);
+    try { history.summarize(state); } catch {}
     history.stop(); // per ultimo: statistiche, Libro e registro hanno appena salvato
     for (const c of clients) try { c.end(); } catch {}
     server.close();
