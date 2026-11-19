@@ -249,23 +249,15 @@ function project(doc, fields) {
 }
 
 // ---------------------------------------------------------------- dichiarazione di una collezione
-// { fields, indexes, retention, projectField }: qui si controlla la forma; i campi permessi li fa rispettare S6,
-// la conservazione S10. projectField: in quale campo sta la chiave del progetto ('project'; '_id' per `projects`).
+// { fields, indexes, retention, projectField }: qui si controlla la forma. I campi permessi e i loro tipi sono
+// descritti in privacy.js, che li fa rispettare a ogni scrittura; la conservazione è di S10. projectField: in quale campo sta la chiave del progetto ('project'; '_id' per `projects`).
 function parseDeclaration(name, spec) {
   checkName(name);
   if (spec === undefined || spec === null) spec = {};
   if (!isPlain(spec)) fail('invalid-argument', `declare(${name}): la dichiarazione deve essere un oggetto`);
   for (const k of Object.keys(spec)) if (!['fields', 'indexes', 'retention', 'projectField'].includes(k)) fail('invalid-argument', `declare(${name}): voce sconosciuta ${k}`);
   const out = { name, fields: null, indexes: [], retention: null, projectField: 'project' };
-  if (spec.fields !== undefined && spec.fields !== null) {
-    if (!isPlain(spec.fields)) fail('invalid-argument', `declare(${name}): fields deve essere un oggetto { campo: tipo }`);
-    out.fields = {};
-    for (const f of Object.keys(spec.fields)) {
-      if (f.includes('.') || f.includes('$') || !f) fail('invalid-argument', `declare(${name}): nome di campo non valido ${JSON.stringify(f)}`);
-      if (typeof spec.fields[f] !== 'string') fail('invalid-argument', `declare(${name}): il tipo di ${f} deve essere una stringa`);
-      out.fields[f] = spec.fields[f];
-    }
-  }
+  if (spec.fields !== undefined && spec.fields !== null) out.fields = require('./privacy').parseFields(name, spec.fields);
   if (spec.indexes !== undefined && spec.indexes !== null) {
     if (!Array.isArray(spec.indexes)) fail('invalid-argument', `declare(${name}): indexes deve essere un elenco`);
     out.indexes = spec.indexes.map(ix => {

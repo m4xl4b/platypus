@@ -343,7 +343,95 @@ async function projectKeyTests(ok) {
   }
 }
 
-module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); } };
+// S6: la guardia della privacy. Filtro dei segreti, percorsi, e cosa resta davvero scritto nel file del database
+async function privacyTests(ok) {
+  console.log('store: privacy');
+  const { openStore, relPath, scrub, excerpt } = require(path.join(ROOT, 'src', 'core', 'store'));
+  const { ibanOk } = require(path.join(ROOT, 'src', 'core', 'store', 'privacy'));
+
+  // ---------------------------------------------------------- filtro dei segreti
+  const SECRETS = {
+    'token di GitHub': 'ghp_abcdefghijklmnopqrstuvwxyz012345', 'token fine di GitHub': 'github_pat_11ABCDEFG0abcdefghijkl_mnopqrstuvwxyz', 'chiave Anthropic': 'sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz012345',
+    'chiave OpenAI': 'sk-proj-AbCdEfGhIjKlMnOpQrSt', 'chiave AWS': 'AKIAIOSFODNN7EXAMPLE', 'chiave Google': 'AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q', 'token Slack': 'xoxb-123456789012-abcdefghijkl', 'token GitLab': 'glpat-AbCdEfGhIjKlMnOpQrSt',
+    'token npm': 'npm_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789', 'chiave Stripe': 'sk_' + 'live_AbCdEfGhIjKlMnOpQrStUvWx', 'JWT': 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+    'sequenza lunga': 'aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bD1fH3jL5nP7rT9vX2',
+  };
+  const lines = [
+    ...Object.values(SECRETS).map(v => `prima ${v} dopo`),
+    'export DB_PASSWORD=hunter2-molto-segreta', 'password: "frase con spazi segreta"', 'curl -H "Authorization: Bearer abcDEF123456.xyz" https://api.example.org/v1', 'mysql --password hunter2segreta -u root',
+    'app --api-key=XYZ-123-segreta --verbose', 'Server=db;User Id=sa;Password=Sup3rSegreta;Database=x', 'postgres://admin:hunter2segreta@db.internal:5432/app', 'mongodb+srv://utente:paroladordine@cluster0.example.net/test',
+    'https://ghp_abcdefghijklmnopqrstuvwxyz012345@github.com/x/y.git', 'scrivi a mario.rossi@example.com oppure a Luigi.Verdi+test@posta.example.co.uk', 'bonifico su IT60 X054 2811 1010 0000 0123 456 entro venerdì', 'IBAN DE89370400440532013000',
+    'client_secret = \'abc123segreta\'', '-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAsegretissima\n-----END RSA PRIVATE KEY-----',
+  ];
+  const leaked = ['hunter2', 'segreta', 'paroladordine', 'mario.rossi', 'Luigi.Verdi', 'X054', '370400440532', 'MIIE', 'abcDEF123456', ...Object.values(SECRETS)];
+  const cleaned = lines.map(scrub);
+  const bad = cleaned.filter(c => leaked.some(x => c.includes(x)));
+  ok(bad.length === 0, `il filtro toglie token, chiavi, password, stringhe di connessione, e-mail e IBAN (${lines.length} righe di prova)` + (bad.length ? ': ' + JSON.stringify(bad) : ''));
+  ok(scrub('prima ' + SECRETS['token di GitHub'] + ' dopo') === 'prima [token] dopo' && scrub('export DB_PASSWORD=hunter2') === 'export DB_PASSWORD=[secret]' && scrub('postgres://admin:hunter2@db.internal:5432/app') === 'postgres://[credentials]@db.internal:5432/app' &&
+    scrub('scrivi a mario.rossi@example.com') === 'scrivi a [email]' && scrub('su IT60 X054 2811 1010 0000 0123 456 ok') === 'su [iban] ok', 'al posto del segreto resta un segnaposto: si capisce cosa c\'era, non cos\'era');
+  const harmless = ['npm test -- src/core/state.js', 'TS2345: Argument of type string is not assignable to parameter of type number', 'commit 5af13ea1b2c3d4e5f60718293a4b5c6d7e8f9012 su main', 'ENOENT: no such file or directory, open src/a.js',
+    'exit code 1: cargo build --release', 'git push origin dev-2.13-storage', 'AssertionError: expected 3 to equal 4', 'il token di accesso è scaduto', 'tokens: 1500 in, 300 out', 'authors=3 passwordless: true', 'IT12 3456 non è un IBAN', 'node scripts/store-bench.js --n 200000', 'author: Massimiliano', 'https://github.com/m4xl4b/platypus/pull/18'];
+  ok(harmless.every(h => scrub(h) === h), 'le righe innocue (comandi, errori, impronte di commit, indirizzi senza credenziali) restano uguali' + (harmless.every(h => scrub(h) === h) ? '' : ': ' + JSON.stringify(harmless.filter(h => scrub(h) !== h).map(scrub))));
+  ok(ibanOk('IT60X0542811101000000123456') && ibanOk('GB82 WEST 1234 5698 7654 32') && !ibanOk('IT60X0542811101000000123457') && !ibanOk('AB12'), 'IBAN: si riconosce dalla cifra di controllo');
+  ok(excerpt('  uno\n\tdue   tre  ') === 'uno due tre' && excerpt('x'.repeat(500)).length === 200 && excerpt('x'.repeat(500)).endsWith('…') && excerpt(null) === '' && excerpt(`a ${SECRETS.JWT} ${'b'.repeat(300)}`).startsWith('a [token] b') && excerpt(42) === '42',
+    'un estratto: una riga sola, spazi compattati, segreti tolti prima di tagliare, al massimo 200 caratteri');
+
+  // ---------------------------------------------------------- percorsi
+  ok(relPath('/home/max/proj/src/a.js', '/home/max/proj') === 'src/a.js' && relPath('/home/max/proj/src/../lib/./b.js', '/home/max/proj/') === 'lib/b.js' && relPath('/home/max/proj', '/home/max/proj') === '' && relPath('src\\ui\\c.js', '/qualsiasi') === 'src/ui/c.js' &&
+    relPath('./src//a.js') === 'src/a.js' && relPath('', '/r') === '' && relPath(null) === '', 'percorsi: dentro il progetto diventano relativi, con le barre dritte');
+  ok(relPath('C:\\Dev\\Mio Progetto\\src\\a.js', 'c:/dev/mio progetto') === 'src/a.js' && relPath('c:/dev/mio progetto/SRC/A.js', 'C:\\Dev\\Mio Progetto\\') === 'SRC/A.js', 'percorsi di Windows: lettere del disco, barre e maiuscole della radice non contano');
+  const out = [relPath('/home/max/.ssh/id_rsa', '/home/max/proj'), relPath('C:\\Users\\mario\\Documenti\\segreto.txt', 'C:\\Dev\\Proj'), relPath('/home/max/proj-altro/a.js', '/home/max/proj'), relPath('../../fuori/b.js', '/r'), relPath('/home/max/proj/../x.js', '/home/max/proj'),
+    relPath('~/note.txt'), relPath('\\\\server\\condivisa\\c.txt'), relPath('file:///etc/passwd'), relPath('/etc/passwd')];
+  ok(out.every(o => /^ext:[0-9a-f]{10}\/[^/\\]+$/.test(o)) && out[0].endsWith('/id_rsa') && out[1].endsWith('/segreto.txt') && !out.join(' ').match(/max|mario|Users|home|server|etc|Documenti|fuori/) &&
+    relPath('/home/max/.ssh/id_rsa', '/a') === relPath('/home/max/.ssh/id_rsa', '/b') && relPath('/x/id_rsa') !== relPath('/y/id_rsa') && relPath(out[0], '/r') === out[0],
+    'percorsi fuori dal progetto: impronta e nome del file. Lo stesso file ha la stessa impronta, file diversi con lo stesso nome no');
+
+  // ---------------------------------------------------------- nel file del database, così com'è
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-privacy-'));
+  try {
+    const dir = path.join(tmp, 'db');
+    const store = openStore({ backend: 'sqlite', dir, guard: 'drop', requireFields: true, onGuard() {} });
+    store.declare('steps', { fields: { session: 'id', action: 'string', target: 'path', err: 'excerpt', outcome: 'string', meta: { phase: 'string' }, counts: { '*': 'number' }, files: ['path'] }, indexes: [['project', 't'], 'action'] });
+    const steps = store.collection('steps');
+    const FORBIDDEN = {
+      prompt: 'PROMPT-VIETATO: riscrivi tutto il modulo ordini', reply: 'RISPOSTA-VIETATA: certo, ecco il codice', toolOutput: 'USCITA-VIETATA: 42 righe di log', fileContent: 'CONTENUTO-VIETATO: const x = 1',
+      credentials: { user: 'UTENTE-VIETATO', password: 'PASSWORD-VIETATA' }, email: 'vietata@example.com', cwd: 'C:\\Users\\mario-vietato\\progetto', env: { HOME: '/home/casa-vietata' }, text: ['RIGA-VIETATA-1', 'RIGA-VIETATA-2'],
+    };
+    const doc = {
+      project: '0123456789abcdef', t: 1700000000000, session: 'sess-0001', action: 'run', outcome: 'error',
+      target: 'C:\\Users\\mario-vietato\\Desktop\\conti.xlsx',
+      err: `connessione a postgres://admin:PASSWORD-VIETATA@db-interno.example.net/app fallita per vietata@example.com, token ${'ghp_' + 'VIETATO'.repeat(4)}0123 IBAN IT60X0542811101000000123456`,
+      meta: { phase: 'test', prompt: FORBIDDEN.prompt }, counts: { ok: 1, testo: 'CONTEGGIO-VIETATO' }, files: ['src/a.js', '/home/casa-vietata/.ssh/id_rsa', 7],
+      action2: 'AZIONE-NON-DICHIARATA', ...FORBIDDEN,
+    };
+    const a1 = steps.put({ _id: 'put-1', ...doc });
+    const a2 = steps.append(doc);
+    steps.put({ _id: 'patch-1', project: doc.project, t: 1, action: 'edit' });
+    steps.patch('patch-1', { ...FORBIDDEN, target: doc.target, err: doc.err, outcome: 'TESTO-VIETATO-SU-PIU-RIGHE\nseconda riga' });
+    store.transaction(() => { steps.append({ ...doc, _id: 'tx-1' }); });
+    const file = path.join(tmp, 'f.jsonl');
+    fs.writeFileSync(file, JSON.stringify({ _id: 'import-1', ...doc }) + '\n');
+    store.import('steps', file);
+    store.flush();
+    const saved = steps.get(a2);
+    ok(steps.count({}) === 5 && Object.keys(saved).sort().join() === '_id,action,counts,err,files,meta,outcome,project,session,t,target' && JSON.stringify(saved.meta) === '{"phase":"test"}' && JSON.stringify(saved.counts) === '{"ok":1}' &&
+      saved.files.length === 2 && saved.files[0] === 'src/a.js' && /^ext:[0-9a-f]{10}\/id_rsa$/.test(saved.files[1]) && /^ext:[0-9a-f]{10}\/conti\.xlsx$/.test(saved.target) &&
+      saved.err === 'connessione a postgres://[credentials]@db-interno.example.net/app fallita per [email], token [token] IBAN [iban]' && a1._id === 'put-1' && steps.get('patch-1').outcome === undefined,
+      'un documento pieno di campi vietati e di segreti: restano solo i campi dichiarati, puliti (put, append, patch, transazione, import)');
+    const exported = fs.readFileSync(store.export('steps', path.join(tmp, 'export')).file, 'latin1');
+    store.close();
+    let rawBytes = '';
+    for (const f of fs.readdirSync(dir)) rawBytes += fs.readFileSync(path.join(dir, f)).toString('latin1') + fs.readFileSync(path.join(dir, f)).toString('utf16le');
+    const words = ['VIETAT', 'vietat', 'mario', 'casa-', 'PASSWORD', 'ghp_', 'IT60X', 'admin:', 'Users', 'Desktop', '.ssh/', 'NON-DICHIARATA', 'seconda riga'];
+    const found = words.filter(w => rawBytes.includes(w) || exported.includes(w));
+    ok(found.length === 0 && rawBytes.includes('/conti.xlsx') && rawBytes.includes('db-interno.example.net') && rawBytes.includes('sess-0001') && fs.readdirSync(dir).length >= 1,
+      'leggendo il file del database così com\'è (e l\'esportazione) non si trova nessuna di quelle stringhe' + (found.length ? ': ' + found.join(', ') : ''));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); } };
 if (require.main === module) {
   let failed = 0;
   module.exports.run((c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) failed++; })

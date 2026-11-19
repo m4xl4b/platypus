@@ -76,6 +76,8 @@ function shellEvents(port, headers = {}) {
 
 // mai nei dati veri: le prove partono solo con PLATYPUS_DATA_DIR in una cartella temporanea
 require('./test-guard').requireTempDataDir('npm test');
+// nelle prove lo store rifiuta i campi non dichiarati invece di scartarli: un campo dimenticato si vede subito
+if (!process.env.PLATYPUS_STORE_GUARD) process.env.PLATYPUS_STORE_GUARD = 'reject';
 
 (async () => {
   console.log(`Platypus smoke test · ${process.platform} ${process.arch} · Node ${process.versions.node}`);

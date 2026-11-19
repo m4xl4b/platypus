@@ -220,6 +220,45 @@ async function run(ok, backend = process.env.PLATYPUS_STORE_BACKEND || 'memory')
       'import di un file con una riga sbagliata: un errore, e niente viene importato');
     ok(await throwsCode(() => store.export('non_dichiarata', outDir), 'undeclared-collection') && await throwsCode(() => store.import('non_dichiarata', ex.file), 'undeclared-collection'), 'export e import di una collezione non dichiarata: un errore');
 
+    // ---------------------------------------------------------- solo i campi dichiarati
+    const FIELDS = { kind: 'string', n: 'number', flag: 'boolean', who: 'id', file: 'path', line: 'excerpt', tags: ['string'], meta: { phase: 'string', count: 'number' }, counts: { '*': 'number' } };
+    const good = { _id: 'g1', project: 'p1', t: 5, kind: 'edit', n: 1, flag: true, who: 'sess-01:main', file: 'src/a.js', line: 'npm test', tags: ['a', 'b'], meta: { phase: 'build', count: 2 }, counts: { ok: 3, error: 1 }, nothing: null };
+    const strict = await fresh({ guard: 'reject' });
+    await strict.declare('g', { fields: { ...FIELDS, nothing: 'string' } });
+    const g = await strict.collection('g');
+    ok(JSON.stringify(await g.put(good)) === JSON.stringify(good) && JSON.stringify(await g.get('g1')) === JSON.stringify(good), 'campi dichiarati: un documento in regola passa così com\'è (tipi, oggetti, elenchi, null)');
+    const refused = [
+      { extra: 1 }, { prompt: 'testo' }, { n: 'uno' }, { flag: 1 }, { kind: 5 }, { kind: 'riga\ndue' }, { kind: 'x'.repeat(301) }, { who: 'con spazi' }, { tags: 'a' }, { tags: [1] },
+      { meta: { phase: 'x', altro: 1 } }, { meta: 'x' }, { counts: { ok: 'tre' } }, { file: 7 }, { line: ['x'] },
+    ];
+    let allRejected = true;
+    for (const bad of refused) {
+      for (const call of [() => g.put({ ...good, _id: 'g2', ...bad }), () => g.append({ ...good, _id: 'g3', ...bad }), () => g.patch('g1', bad)]) {
+        if (!await throwsCode(call, 'undeclared-field')) { allRejected = false; ok(false, `guardia 'reject': accettato ${JSON.stringify(bad).slice(0, 60)}`); }
+      }
+    }
+    await strict.flush();
+    ok(allRejected && await g.count({}) === 1 && JSON.stringify(await g.get('g1')) === JSON.stringify(good), `guardia 'reject': un campo non dichiarato o del tipo sbagliato è un errore, in put, append e patch (${refused.length} casi), e non resta scritto niente`);
+    const seen = [];
+    const loose = await fresh({ guard: 'drop', onGuard: m => seen.push(m) });
+    await loose.declare('g', { fields: FIELDS });
+    const gl = await loose.collection('g');
+    const SECRET = 'S3GRETISSIMO';
+    const dropped = await gl.put({ ...good, _id: 'd1', nothing: null, extra: SECRET, prompt: `testo lungo ${SECRET}`, n: SECRET, tags: ['ok', 5, 'due'], meta: { phase: 'build', altro: SECRET }, counts: { a: 1, b: SECRET } });
+    await gl.put({ _id: 'd2', extra: SECRET });
+    ok(JSON.stringify(dropped) === JSON.stringify({ ...good, _id: 'd1', n: undefined, nothing: undefined, tags: ['ok', 'due'], meta: { phase: 'build' }, counts: { a: 1 } }) && JSON.stringify(await gl.get('d1')) === JSON.stringify(dropped) && JSON.stringify(await gl.get('d2')) === '{"_id":"d2"}',
+      'guardia \'drop\': quello che non è dichiarato viene scartato, il resto si salva');
+    ok(seen.length === 7 && seen.includes('g.extra: non dichiarato, non salvato') && seen.includes('g.n: tipo, non salvato') && seen.includes('g.meta.altro: non dichiarato, non salvato') && !seen.join(' ').includes(SECRET),
+      'guardia \'drop\': ogni campo scartato si segnala una volta sola, con il nome e mai con il valore');
+    const paths = await gl.put({ _id: 'd3', file: 'C:\\Users\\mario\\progetto\\src\\a.js', line: `  export TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123 \n mario.rossi@example.com  ${'x'.repeat(400)}` });
+    ok(/^ext:[0-9a-f]{10}\/a\.js$/.test(paths.file) && !paths.line.includes('ghp_') && !paths.line.includes('mario') && paths.line.length <= 200 && !paths.line.includes('\n'),
+      'un percorso assoluto diventa impronta e nome del file; un estratto perde i segreti, sta su una riga ed è corto');
+    ok(await throwsCode(() => loose.declare('x', { fields: { a: 'testo' } }), 'invalid-argument') && await throwsCode(() => loose.declare('x', { fields: { a: {} } }), 'invalid-argument') && await throwsCode(() => loose.declare('x', { fields: { a: ['string', 'number'] } }), 'invalid-argument') &&
+      await throwsCode(() => loose.declare('x', { fields: { 'a.b': 'string' } }), 'invalid-argument') && await throwsCode(() => loose.declare('x', { fields: { '*': 'string' } }), 'invalid-argument') && await throwsCode(() => open({ guard: 'boh' }), 'invalid-argument'),
+      'dichiarazioni dei campi non valide: un errore');
+    const must = await fresh({ requireFields: true });
+    ok(await throwsCode(() => must.declare('x', {}), 'invalid-argument') && (await must.declare('x', { fields: { a: 'number' } })) === undefined && (await must.info()).collections[0].guarded === true, 'con requireFields ogni collezione deve dichiarare i suoi campi');
+
     // ---------------------------------------------------------- info, store separati, chiusura
     const info = await store.info();
     const fi = info.collections.find(c => c.name === 'things');
@@ -232,7 +271,7 @@ async function run(ok, backend = process.env.PLATYPUS_STORE_BACKEND || 'memory')
       'dopo close lo store rifiuta ogni chiamata (chiuderlo due volte va bene); gli altri store restano aperti');
   } finally {
     for (const s of stores) { try { await s.close(); } catch {} }
-    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 
