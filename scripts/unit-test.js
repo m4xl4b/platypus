@@ -448,7 +448,8 @@ function bottegaTests(ok) {
   const recent = Date.now() - 3 * 86400000; // i passi finti partono dal 1970: li spostiamo a tre giorni fa
   const cases = bt.digest(sess, [a, b]).map(c => ({ ...c, t: recent + c.t }));
   const kinds = new Set(cases.map(c => c.kind));
-  for (const k of bt.KINDS) ok(kinds.has(k), `dai fatti della sessione: ${k}`);
+  // le cicatrici (2.14) nascono da un'azione rischiosa segnata dal motore: hanno le loro prove in scarTests
+  for (const k of bt.KINDS.filter(k => k !== 'scar')) ok(kinds.has(k), `dai fatti della sessione: ${k}`);
   ok(cases.some(c => c.kind === 'known-fix' && /→ src\/auth\/refresh\.ts$/.test(c.key)), 'correzione nota: schema d\'errore → file corretto');
   ok(cases.some(c => c.kind === 'loop-trap' && c.key === 'npx tsc --noEmit'), 'trappola: il comando intero, non la sua etichetta');
   // il libro, in una cartella temporanea
@@ -885,6 +886,162 @@ async function fearStoreTests(ok) {
   }
 }
 
+// 2.14, R4: le cicatrici. Dopo un'azione rischiosa, i segni di un danno; poi la lezione nel Libro e il Nonno
+async function scarTests(ok) {
+  const { OfficeState } = require(path.join(ROOT, 'src', 'core', 'state'));
+  const { History } = require(path.join(ROOT, 'src', 'core', 'history'));
+  const fear = require(path.join(ROOT, 'src', 'core', 'fear'));
+  const bt = require(path.join(ROOT, 'src', 'core', 'bottega'));
+  const i18n = require(path.join(ROOT, 'src', 'i18n'));
+  const iso = t => new Date(t).toISOString();
+  const cwd = '/home/u/proj';
+  let seq = 0;
+  // una sessione finta: scrive righe di transcript e restituisce lo stato
+  const session = () => {
+    let now = Date.parse('2026-11-19T10:00:00Z') + (++seq) * 3600000, n = 0;
+    const st = new OfficeState({ clock: () => now, settings: {} });
+    const S = 'sess-scar-' + seq;
+    const line = (type, content) => ({ type, timestamp: iso(now += 1000), cwd, gitBranch: 'feature/x', message: { role: type, content, ...(type === 'assistant' ? { id: 'm' + (++n), usage: { input_tokens: 1, output_tokens: 1 } } : {}) } });
+    const api = {
+      st, S,
+      say: text => st.applyTranscriptLine(S, null, line('user', text)),
+      use: (id, name, input) => st.applyTranscriptLine(S, null, line('assistant', [{ type: 'tool_use', id, name, input }])),
+      res: (id, content = 'ok', isErr = false) => st.applyTranscriptLine(S, null, line('user', [{ type: 'tool_result', tool_use_id: id, content, is_error: isErr }])),
+      bash: (id, command, out, isErr) => { api.use(id, 'Bash', { command }); api.res(id, out, isErr); },
+      read: (id, file, out, isErr) => { api.use(id, 'Read', { file_path: cwd + '/' + file }); api.res(id, out || 'contenuto', isErr); },
+      get s() { return st.sessions.get(S); },
+      get agents() { const s = st.sessions.get(S); return [{ id: 'main', name: 'Claude', world: s.main.world, mind: s.main.mind }]; },
+      step: id => st.sessions.get(S).main.world.steps.find(x => x.id === id),
+    };
+    return api;
+  };
+  const stops = [];
+  try {
+    // 1. nessun segno: nessuna cicatrice
+    let x = session(); stops.push(x.st);
+    x.say('pulisci i file generati');
+    x.bash('a1', 'rm -rf data/export', 'ok');
+    x.bash('a2', 'npm test', 'ok');
+    ok(fear.scars(x.s, x.agents).length === 0, 'cicatrici: un\'azione rischiosa senza segni di danno non lascia cicatrici');
+
+    // 2. file che conosceva e che dopo non c'è più (fantasma), più un errore sul bersaglio
+    x = session(); stops.push(x.st);
+    x.say('riordina la cartella data');
+    x.read('b1', 'data/export/report.csv');
+    x.bash('b2', 'rm -rf data/export', 'ok');
+    x.read('b3', 'data/export/report.csv', 'File does not exist.', true);
+    let sc = fear.scars(x.s, x.agents);
+    ok(sc.length === 1 && sc[0].step.id === 'b2' && sc[0].signs.includes('ghost') && sc[0].signs.includes('error') && sc[0].evidence.join() === 'b3' && sc[0].key === 'rm -r <percorso> → data/export' && !sc[0].probable,
+      'cicatrici: dopo rm -rf un file già letto non c\'è più e la lettura fallisce → danno, con il passo come prova');
+    // un file mai visto prima che "non esiste" non è un danno di questa azione
+    x = session(); stops.push(x.st);
+    x.say('riordina');
+    x.bash('c1', 'rm -rf data/export', 'ok');
+    x.read('c2', 'src/mai-esistito.ts', 'File does not exist.', true);
+    ok(fear.scars(x.s, x.agents).length === 0, 'cicatrici: un percorso inventato altrove non è un danno dell\'azione');
+
+    // 3. tentativo di recupero dopo git reset --hard
+    x = session(); stops.push(x.st);
+    x.say('sistema il test');
+    x.bash('d1', 'git reset --hard HEAD~2', 'HEAD is now at abc');
+    x.bash('d2', 'git reflog', 'abc HEAD@{0}: reset');
+    x.bash('d3', 'git reset --hard HEAD@{1}', 'ok');
+    sc = fear.scars(x.s, x.agents);
+    ok(sc.length === 1 && sc[0].step.id === 'd1' && sc[0].signs.join() === 'recovery' && sc[0].evidence.join() === 'd2,d3' && sc[0].key === 'git reset --hard <ref> → *', 'cicatrici: git reflog e un reset a HEAD@{1} dopo un reset --hard sono un tentativo di recupero');
+    // il recupero oltre le 8 azioni seguenti non conta più
+    x = session(); stops.push(x.st);
+    x.say('sistema il test');
+    x.bash('e1', 'git reset --hard HEAD~2', 'ok');
+    for (let i = 0; i < 8; i++) x.bash('ee' + i, 'npm test', 'ok');
+    x.bash('e2', 'git reflog', 'abc');
+    ok(fear.scars(x.s, x.agents).length === 0, 'cicatrici: si guardano solo le 8 azioni seguenti');
+
+    // 4. l'utente se ne accorge (lessicale: probabile)
+    x = session(); stops.push(x.st);
+    x.say('pulisci il repository');
+    x.bash('f1', 'git clean -fdx', 'Removing notes.md');
+    x.say('hai cancellato i miei appunti! ripristina notes.md');
+    sc = fear.scars(x.s, x.agents);
+    ok(sc.length === 1 && sc[0].signs.join() === 'user' && sc[0].probable === true && sc[0].evidence.length === 0, 'cicatrici: «hai cancellato… ripristina» nel messaggio dopo è un segno, da solo "probabile"');
+    x = session(); stops.push(x.st);
+    x.say('pulisci il repository');
+    x.bash('g1', 'git clean -fdx', 'ok');
+    x.say('perfetto, ora aggiungi i test');
+    ok(fear.scars(x.s, x.agents).length === 0, 'cicatrici: un messaggio contento non è un segno');
+    for (const t of ['you deleted my config', 'undo that please', 'where did the uploads folder go? where is it', 'dov\'è finita la cartella?', 'che fine ha fatto il file', 'rimetti com\'era', 'bring it back']) {
+      x = session(); stops.push(x.st);
+      x.say('pulisci'); x.bash('h1', 'git clean -fd', 'ok'); x.say(t);
+      ok(fear.scars(x.s, x.agents).length === 1, 'cicatrici: «' + t + '» è un segno');
+    }
+    // un'azione di livello 1 o ancora in corso non lascia cicatrici
+    x = session(); stops.push(x.st);
+    x.say('aggiungi lodash');
+    x.bash('i1', 'npm install lodash', 'ok');
+    x.use('i2', 'Bash', { command: 'git clean -fd' });
+    x.say('hai cancellato tutto, ripristina');
+    ok(fear.scars(x.s, x.agents).length === 0, 'cicatrici: non per il livello 1, né per un\'azione ancora in corso');
+
+    // 5. dal danno allo storico e al Libro
+    x = session(); stops.push(x.st);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-scar-'));
+    const h = new History({ dir: path.join(tmp, 'dati'), backend: 'memory', log() {} });
+    h.keys.exec = async () => null;
+    x.st.on('risk', (s, a, step) => h.recordRisk(s, a, step));
+    try {
+      x.say('sistema il test');
+      x.read('k0', 'data/export/report.csv');
+      x.bash('k1', 'rm -rf data/export', 'ok');
+      x.read('k2', 'data/export/report.csv', 'File does not exist.', true);
+      h.flush();
+      ok(!h.store.collection('risks').get(x.S + ':k1').outcome, 'cicatrici: appena scritto, l\'evento non ha ancora un esito');
+      const fresh = fear.markScars(x.s, x.agents);
+      for (const s of fresh) h.recordRisk(x.s, { id: s.agent }, s.step);
+      h.flush();
+      const doc = h.store.collection('risks').get(x.S + ':k1');
+      ok(fresh.length === 1 && doc.outcome === 'damage' && doc.evidence.join() === x.S + ':k2' && doc.at > doc.t && doc.level === 2 && doc.missed === true && x.step('k1').risk.outcome === 'damage', 'cicatrici: l\'evento nello storico prende esito "damage", con i passi come prova');
+      ok(fear.markScars(x.s, x.agents).length === 0, 'cicatrici: lo stesso danno non viene segnato due volte');
+      ok(fear.queryRisks(h.store, {})[0].outcome === 'damage' && !JSON.stringify(h.store.collection('risks').find({})).includes('does not exist'), 'cicatrici: l\'esito si legge da /api/risks; nessun testo dell\'errore nello storico');
+
+      // nel Libro: una lezione di tipo "scar", forte dal primo caso
+      const book = new bt.Bottega({});
+      const cases = bt.digest(x.s, x.agents);
+      const scase = cases.find(c => c.kind === 'scar');
+      ok(scase && scase.key === 'rm -r <percorso> → data/export' && scase.excerpt === 'backup,asked', 'cicatrici: il caso per il Libro ha la forma, il bersaglio e le prudenze mancate (aveva guardato: manca la copia e la richiesta)');
+      book.learn(cwd, cases);
+      book.learn(cwd, bt.digest(x.s, x.agents)); // riletto ogni minuto: non conta due volte
+      const now = x.step('k1').t + 60000;
+      const lesson = book.view(cwd, now).lessons.find(l => l.kind === 'scar');
+      ok(lesson && lesson.count === 1 && lesson.level === 'lesson' && /Cicatrice: rm -r <percorso> su data\/export/.test(lesson.title) && /probabile/.test(lesson.detail) && /prima: fai un commit o una copia e chiedi all'utente\./.test(lesson.detail), 'cicatrici: nel Libro è una lezione dal primo caso, con il consiglio: ' + (lesson && lesson.title));
+      // decade più piano: dopo 60 giorni una cicatrice è ancora una lezione, una lezione normale con lo stesso peso no
+      const DAY = 86400000, L = (kind, count) => ({ kind, key: 'k', count, sessions: ['s'], last: 0, pinned: false });
+      ok(Math.abs(bt.weightOf(L('scar', 1), 90 * DAY) - 0.5) < 1e-9 && Math.abs(bt.weightOf(L('ghost-path', 1), 30 * DAY) - 0.5) < 1e-9 && bt.SCAR_HALF_LIFE === 90 * DAY, 'cicatrici: il peso si dimezza in 90 giorni invece di 30');
+      ok(book.view(cwd, now + 60 * DAY).lessons.find(l => l.kind === 'scar').level === 'lesson' && book.view(cwd, now + 120 * DAY).lessons.find(l => l.kind === 'scar').level === 'observation', 'cicatrici: dopo 60 giorni è ancora una lezione, dopo 120 è un\'osservazione');
+
+      // il Nonno: stessa forma, stesso bersaglio; e le cicatrici prima delle altre lezioni
+      const y = session(); stops.push(y.st);
+      y.say('pulisci');
+      y.use('n1', 'Bash', { command: 'rm -rf data/export' });
+      const lessons = book.view(cwd, y.step('n1').t).lessons.concat([{ id: 'zz', kind: 'slow-step', key: 'rm -rf data/export', level: 'lesson', weight: 99, evidence: [{ t: 0, agent: 'A' }], count: 3 }]);
+      const hint = bt.hints(y.s, y.agents, lessons, y.step('n1').t + 1000);
+      ok(hint.length === 1 && hint[0].kind === 'scar' && /Qui rm -r <percorso> ha già distrutto del lavoro su data\/export/.test(hint[0].text) && /Stavolta, prima: fai un commit o una copia/.test(hint[0].text), 'Nonno: racconta la cicatrice, e prima di una lezione più pesante: ' + (hint[0] && hint[0].text));
+      const z = session(); stops.push(z.st);
+      z.say('pulisci');
+      z.use('o1', 'Bash', { command: 'rm -rf data/other' });
+      ok(bt.hints(z.s, z.agents, book.view(cwd, z.step('o1').t).lessons, z.step('o1').t + 1000).length === 0, 'Nonno: la cicatrice su un\'altra cartella non c\'entra');
+      // le righe per il CLAUDE.md e per l'inizio sessione: la cicatrice prima, e in inglese
+      const lines = bt.lessonLines(lessons.map(l => ({ ...l, pinned: !!l.pinned })));
+      ok(/^Qui `rm -r <percorso>` ha già distrutto del lavoro su `data\/export`\. Prima di rifarlo: fai un commit o una copia e chiedi all'utente\.$/.test(lines[0]), 'cicatrici: è la prima riga tra le lezioni per l\'agente: ' + lines[0]);
+      const en = i18n.withLang('en', () => ({ v: book.view(cwd, now).lessons.find(l => l.kind === 'scar'), line: bt.lessonLines(book.view(cwd, now).lessons)[0] }));
+      ok(/^Scar: /.test(en.v.title) && /already destroyed work on `data\/export`/.test(en.line) && /Before doing it again: make a commit or a copy and ask the user\.$/.test(en.line), 'cicatrici: testi in inglese: ' + en.line);
+      // dimenticarla funziona come per le altre lezioni
+      ok(book.act(cwd, 'forget', lesson.id) && !book.view(cwd, now).lessons.some(l => l.kind === 'scar') && book.learn(cwd, bt.digest(x.s, x.agents)) === 0, 'cicatrici: "Dimentica" la toglie e i casi già visti non la riportano');
+      book.stop();
+    } finally { try { h.stop(); } catch {} fs.rmSync(tmp, { recursive: true, force: true }); }
+  } finally {
+    for (const st of stops) { try { st.stop && st.stop(); } catch {} }
+  }
+}
+
 function run(ok) {
   console.log('libro della bottega');
   bottegaTests(ok);
@@ -906,7 +1063,7 @@ function run(ok) {
   alertTests(ok);
 }
 
-module.exports = { run, riskTests, prudenceTests, fearStoreTests };
+module.exports = { run, riskTests, prudenceTests, fearStoreTests, scarTests };
 
 if (require.main === module) {
   require('./test-guard').requireTempDataDir('unit-test'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea

@@ -59,5 +59,17 @@
   "rimettere in produzione la versione di prima": "deploy the previous version again",
   "cancella un repository o una release su GitHub": "deletes a repository or a release on GitHub",
   "uno strumento esterno che manda, pubblica, paga o cancella": "an external tool that sends, publishes, pays or deletes",
-  "ha letto dei segreti e ora chiama la rete": "it read secrets and now calls the network"
+  "ha letto dei segreti e ora chiama la rete": "it read secrets and now calls the network",
+  "guarda che cosa c'è": "look at what is there",
+  "fai un commit o una copia": "make a commit or a copy",
+  "provala a vuoto": "try a dry run",
+  "parti da un albero di lavoro pulito": "start from a clean working tree",
+  "chiedi all'utente": "ask the user",
+  "Qui {cmd} ha già distrutto del lavoro su {file} ({when}). Stavolta, prima: {advice}.": "Here {cmd} already destroyed work on {file} ({when}). This time, first: {advice}.",
+  "Qui {cmd} ha già distrutto del lavoro ({when}). Stavolta, prima: {advice}.": "Here {cmd} already destroyed work ({when}). This time, first: {advice}.",
+  "Qui `{cmd}` ha già distrutto del lavoro su `{file}`. Prima di rifarlo: {advice}.": "Here `{cmd}` already destroyed work on `{file}`. Before doing it again: {advice}.",
+  "Qui `{cmd}` ha già distrutto del lavoro. Prima di rifarlo: {advice}.": "Here `{cmd}` already destroyed work. Before doing it again: {advice}.",
+  "Cicatrice: {cmd} su {file}": "Scar: {cmd} on {file}",
+  "Cicatrice: {cmd}": "Scar: {cmd}",
+  "Dopo questa azione si sono visti i segni di un danno (probabile). La prossima volta, prima: {advice}.": "After this action there were signs of damage (probable). Next time, first: {advice}."
 }

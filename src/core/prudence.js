@@ -150,6 +150,16 @@ function assess({ risk, action, steps, prompt, hints } = {}) {
   return { score, present: here, missing: counts.filter(k => !present.has(k)), probable };
 }
 
+// le prudenze mancanti dette in parole, nella lingua di adesso ("fai un commit o una copia")
+function adviceFor(kinds) {
+  const { tr } = require('../i18n');
+  const text = {
+    looked: () => tr('guarda che cosa c\'è'), backup: () => tr('fai un commit o una copia'), dryrun: () => tr('provala a vuoto'),
+    clean: () => tr('parti da un albero di lavoro pulito'), asked: () => tr('chiedi all\'utente'),
+  };
+  return (Array.isArray(kinds) ? kinds : String(kinds || '').split(',')).map(k => String(k).trim()).filter(k => text[k]).map(k => text[k]());
+}
+
 // paura mancata: un'azione di livello 2 o più senza abbastanza prudenza
 const missedFear = (risk, prudence) => !!risk && risk.level >= 2 && (!prudence || prudence.score < MISSED_BELOW);
 
@@ -163,4 +173,4 @@ function gitStatusClean(cmd, text) {
   return null;
 }
 
-module.exports = { assess, missedFear, gitStatusClean, WEIGHT, WINDOW, MISSED_BELOW };
+module.exports = { assess, missedFear, gitStatusClean, adviceFor, WEIGHT, WINDOW, MISSED_BELOW };

@@ -115,6 +115,7 @@ process.on('exit', code => {
   for (const backend of ['memory', 'sqlite']) await require('./store-conformance').run(ok, backend);
   await require('./unit-store').run(ok);
   await require('./unit-test').fearStoreTests(ok); // 2.14: le azioni rischiose nello storico
+  await require('./unit-test').scarTests(ok); // 2.14: le cicatrici
   await require('./unit-concurrency').run(ok); // processi veri: due che scrivono, uno ucciso, due motori
 
   console.log('motore');

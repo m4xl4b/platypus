@@ -17,10 +17,14 @@ const surprise = require('./surprise');
 const { isTestCommand } = require('./releases');
 
 const HALF_LIFE = 30 * 86400000;   // il peso si dimezza ogni 30 giorni senza nuovi casi
+const SCAR_HALF_LIFE = 90 * 86400000; // le cicatrici (2.14) si dimenticano più piano
+const SCAR_WEIGHT = 0.5;           // una cicatrice è una lezione già al primo caso, finché pesa almeno così
 const LESSON_WEIGHT = 1.5;         // sotto questa soglia (o con un caso solo) è un'osservazione
 const MAX_LESSONS = 300, MAX_EVIDENCE = 8;
 const SLOW_MS = 5 * 60000;         // un comando che ci mette più di così è "lento"
-const KINDS = ['flaky-command', 'fragile-file', 'known-fix', 'loop-trap', 'stale-trap', 'ghost-path', 'slow-step'];
+const KINDS = ['flaky-command', 'fragile-file', 'known-fix', 'loop-trap', 'stale-trap', 'ghost-path', 'slow-step', 'scar'];
+// una lezione (forte) o un'osservazione: le cicatrici contano dal primo caso
+const isStrong = (l, weight) => !!l.pinned || (l.kind === 'scar' ? weight >= SCAR_WEIGHT : l.count > 1 && weight >= LESSON_WEIGHT);
 
 // chiave del progetto: la cartella normalizzata (minuscole dove i percorsi non distinguono le maiuscole)
 function normDir(cwd) {
@@ -95,6 +99,8 @@ function digest(session, agents, now = Date.now()) {
   const g = grounding.checkStale(session, agents, session.cwd, { disk: false });
   for (const x of g.stale) add('stale-trap', x.key, x.changedAt || x.readAt, x.agentName, x.changedBy ? tr('cambiato da {who}', { who: x.changedBy }) : '');
   for (const x of g.blindEdits) add('stale-trap', x.key, x.t, x.agentName, x.caught ? tr('modifica fermata da Claude Code') : tr('modifica alla cieca'));
+  // cicatrici (2.14): un'azione rischiosa dopo la quale si vedono i segni di un danno. La prova è l'elenco delle prudenze mancate
+  try { for (const sc of require('./fear').scars(session, agents)) add('scar', sc.key, sc.t, sc.agentName, sc.missing.join(',')); } catch {}
   return out;
 }
 
@@ -335,7 +341,7 @@ class Bottega {
     const lessons = Object.values(b.lessons).map(l => {
       const weight = weightOf(l, now);
       const { seen, ...rest } = l;
-      return { ...rest, weight: Math.round(weight * 100) / 100, level: l.pinned || (l.count > 1 && weight >= LESSON_WEIGHT) ? 'lesson' : 'observation', ...describe(l) };
+      return { ...rest, weight: Math.round(weight * 100) / 100, level: isStrong(l, weight) ? 'lesson' : 'observation', ...describe(l) };
     }).sort((x, y) => (y.pinned - x.pinned) || (y.weight - x.weight));
     const job = b.job ? { running: b.job.running, total: b.job.total, done: b.job.done, cases: b.job.cases, error: b.job.error } : null;
     return { key: b.key, name: b.name, cwd: b.cwd, mute: !!b.mute, learnedSessions: Object.keys(b.learned || {}).length, learning: job, lessons };
@@ -362,7 +368,7 @@ class Bottega {
       if (!g.lessons.length) continue;
       const cwd = g.cwd || this.cwdOf(key) || '';
       if (!cwd) continue;
-      const strong = g.lessons.filter(l => !l.ignored && (l.pinned || (l.count > 1 && weightOf(l, now) >= LESSON_WEIGHT))).length;
+      const strong = g.lessons.filter(l => !l.ignored && isStrong(l, weightOf(l, now))).length;
       out.push({ key, name: g.name || dirName(cwd), cwd, lessons: g.lessons.length, strong, last: Math.max(...g.lessons.map(l => l.last || 0)) });
     }
     return out.sort((x, y) => y.last - x.last);
@@ -429,9 +435,12 @@ function hints(session, agents, lessons, now = Date.now()) {
       if (cur.act === 'edit' && (l.kind === 'fragile-file' || l.kind === 'stale-trap')) return l.key === cur.target;
       if ((cur.act === 'read' || cur.act === 'search') && l.kind === 'ghost-path') return l.key === cur.target;
       if (l.kind === 'known-fix' && cur.err && cur.fail) return l.key.split(' → ')[0] === errorPattern(cur.fail.excerpt);
+      // una cicatrice: la stessa forma di comando, sullo stesso bersaglio (o su tutto il progetto)
+      if (l.kind === 'scar' && cur.risk) { const [shape, target] = l.key.split(' → '); return shape === cur.risk.shape && (target === '*' || !cur.risk.target || target === cur.risk.target); }
       return false;
     };
-    const l = strong.filter(match).sort((x, y) => y.weight - x.weight)[0];
+    // il Nonno racconta prima le cicatrici
+    const l = strong.filter(match).sort((x, y) => ((y.kind === 'scar') - (x.kind === 'scar')) || (y.weight - x.weight))[0];
     if (l) out.push({ agent: a.id, agentName: a.name, lessonId: l.id, kind: l.kind, weight: l.weight, text: elderLine(l) });
   }
   return out;
@@ -451,6 +460,7 @@ function elderLine(l) {
     case 'stale-trap': return tr('{file} lo toccano in tanti: rileggilo prima di cambiarlo.', { file: l.key });
     case 'ghost-path': return tr('{file} non c\'è: l\'avete già cercato ({when}), forse ha cambiato nome.', { file: l.key, when });
     case 'known-fix': return tr('Quell\'errore l\'ha già sistemato {who} in {file} ({when}).', { who, file, when, pat });
+    case 'scar': { const s = scarParts(l); return s.where ? tr('Qui {cmd} ha già distrutto del lavoro su {file} ({when}). Stavolta, prima: {advice}.', { cmd: s.shape, file: s.where, when, advice: s.advice }) : tr('Qui {cmd} ha già distrutto del lavoro ({when}). Stavolta, prima: {advice}.', { cmd: s.shape, when, advice: s.advice }); }
     default: return l.key;
   }
 }
@@ -461,7 +471,7 @@ const MAX_CLAUDEMD = 8;
 // le stesse nel CLAUDE.md e nel messaggio di inizio sessione
 function lessonLines(lessons, max = MAX_CLAUDEMD) {
   const pick = lessons.filter(l => !l.ignored && (l.pinned || l.level === 'lesson'))
-    .sort((x, y) => (y.pinned - x.pinned) || (y.weight - x.weight)).slice(0, max);
+    .sort((x, y) => (y.pinned - x.pinned) || ((y.kind === 'scar') - (x.kind === 'scar')) || (y.weight - x.weight)).slice(0, max); // le cicatrici prima
   const line = l => {
     const [pat, file] = l.key.split(' → ');
     switch (l.kind) {
@@ -472,6 +482,7 @@ function lessonLines(lessons, max = MAX_CLAUDEMD) {
       case 'stale-trap': return tr('`{file}` lo modificano più agenti insieme: rileggilo prima di cambiarlo.', { file: l.key });
       case 'ghost-path': return tr('`{file}` non esiste (forse è stato spostato o rinominato): non cercarlo.', { file: l.key });
       case 'known-fix': return tr('L\'errore «{pat}» di solito si sistema in `{file}`.', { pat, file });
+      case 'scar': { const s = scarParts(l); return s.where ? tr('Qui `{cmd}` ha già distrutto del lavoro su `{file}`. Prima di rifarlo: {advice}.', { cmd: s.shape, file: s.where, advice: s.advice }) : tr('Qui `{cmd}` ha già distrutto del lavoro. Prima di rifarlo: {advice}.', { cmd: s.shape, advice: s.advice }); }
       default: return l.title || l.key;
     }
   };
@@ -492,7 +503,16 @@ function renderSection(lessons, name) {
 // peso: cresce con i casi e con le sessioni diverse, si dimezza ogni 30 giorni dall'ultimo caso
 function weightOf(l, now = Date.now()) {
   const base = (1 + Math.log2(Math.max(1, l.count))) * (1 + 0.5 * (Math.max(1, l.sessions.length) - 1));
-  return l.pinned ? base : base * Math.pow(0.5, Math.max(0, now - l.last) / HALF_LIFE);
+  return l.pinned ? base : base * Math.pow(0.5, Math.max(0, now - l.last) / (l.kind === 'scar' ? SCAR_HALF_LIFE : HALF_LIFE));
+}
+// una cicatrice in pezzi: la forma del comando, dove (se c'è un bersaglio) e che cosa fare la prossima volta.
+// Le prudenze mancate stanno nella prova più recente, come sigle ("backup,looked"): prudence.js le dice in parole
+function scarParts(l) {
+  const [shape, target] = String(l.key).split(' → ');
+  const kinds = ((l.evidence || []).find(e => e && e.excerpt) || {}).excerpt || '';
+  let advice = [];
+  try { advice = require('./prudence').adviceFor(kinds); } catch {}
+  return { shape, where: target && target !== '*' ? target : '', advice: advice.length ? advice.slice(0, 2).join(tr(' e ')) : tr('guarda che cosa c\'è') };
 }
 
 function describe(l) {
@@ -504,10 +524,11 @@ function describe(l) {
     case 'known-fix': { const [pat, file] = l.key.split(' → '); return { title: tr('Errore già visto: si sistema in {file}', { file }), detail: tr('Lo schema «{pat}» è stato corretto più volte modificando lo stesso file.', { pat }) + ' ' + seen }; }
     case 'loop-trap': return { title: tr('Trappola: {cmd}', { cmd: l.key }), detail: tr('Gli agenti rilanciano lo stesso comando senza cambiare nulla e girano in tondo.') + ' ' + seen };
     case 'stale-trap': return { title: tr('File conteso: {file}', { file: l.key }), detail: tr('Ci lavorano più agenti insieme: diventa spesso un ricordo scaduto. Rileggerlo prima di modificarlo.') + ' ' + seen };
+    case 'scar': { const s = scarParts(l); return { title: s.where ? tr('Cicatrice: {cmd} su {file}', { cmd: s.shape, file: s.where }) : tr('Cicatrice: {cmd}', { cmd: s.shape }), detail: tr('Dopo questa azione si sono visti i segni di un danno (probabile). La prossima volta, prima: {advice}.', { advice: s.advice }) + ' ' + seen }; }
     case 'ghost-path': return { title: tr('Percorso che non esiste: {file}', { file: l.key }), detail: tr('Gli agenti lo cercano ma non c\'è: forse è stato spostato o rinominato.') + ' ' + seen };
     case 'slow-step': return { title: tr('Passo lento: {cmd}', { cmd: l.key }), detail: tr('Resta appeso a lungo: meglio lanciarlo in background o con un limite di tempo.') + ' ' + seen };
     default: return { title: l.key, detail: seen };
   }
 }
 
-module.exports = { Bottega, digest, hints, elderLine, renderSection, lessonLines, sameCmd, cmdCore, projectKey, normDir, errorPattern, weightOf, KINDS, HALF_LIFE, LESSON_WEIGHT };
+module.exports = { Bottega, digest, hints, elderLine, renderSection, lessonLines, sameCmd, cmdCore, projectKey, normDir, errorPattern, weightOf, isStrong, KINDS, HALF_LIFE, SCAR_HALF_LIFE, SCAR_WEIGHT, LESSON_WEIGHT };

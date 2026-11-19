@@ -102,9 +102,13 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const ARCHIVE_EVERY = 6 * 3600000, archived = new Map();
   function learnLive() {
     let n = 0;
-    if (!state.settings.bottegaLearn) return 0;
+    const learning = !!state.settings.bottegaLearn;
     for (const s of state.sessions.values()) {
-      if (s.demo || !s.cwd) continue;
+      if (!s.cwd) continue;
+      // le cicatrici (2.14): il danno visto dopo un'azione rischiosa va sul passo (anche nella demo, per l'ufficio)
+      // e nel suo evento nello storico (la demo non scrive: recordRisk la salta). Vale anche se il Libro non impara
+      try { const agents = agentsOf(s); for (const sc of fear.markScars(s, agents)) history.recordRisk(s, { id: sc.agent }, sc.step); } catch {}
+      if (s.demo || !learning) continue;
       try { const agents = agentsOf(s); if (agents.length) n += bottega.learn(s.cwd, digest(s, agents)); } catch {}
       const key = projectKey(s.cwd);
       if (Date.now() - (archived.get(key) || 0) < ARCHIVE_EVERY) continue;

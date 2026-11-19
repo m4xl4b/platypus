@@ -99,6 +99,8 @@ class History {
     if (r.shape) doc.shape = String(r.shape);
     if (r.target) doc.target = String(r.target);
     if (r.feedbackGroup) doc.feedbackGroup = String(r.feedbackGroup);
+    // com'è finita (le cicatrici, R4): i segni sono rimandi ad altri passi, mai testo
+    if (r.outcome) { doc.outcome = String(r.outcome); doc.at = Number(r.at) || step.t; doc.evidence = (r.evidence || []).map(String).slice(0, 8); }
     this.queue('risks', doc, { merge: true });
   }
 
@@ -144,7 +146,8 @@ class History {
   // ---- la coda: in memoria, poi nello storico in una transazione sola
   // merge: i campi nuovi si aggiungono a quelli già scritti invece di sostituire il documento
   queue(coll, doc, { merge = false } = {}) {
-    this.pending.set(coll + '\n' + doc._id, { coll, doc, merge });
+    const k = coll + '\n' + doc._id, prev = merge ? this.pending.get(k) : null;
+    this.pending.set(k, { coll, doc: prev ? { ...prev.doc, ...doc } : doc, merge });
     if (this.pending.size >= FLUSH_DOCS) return this.flush();
     if (!this.timer) {
       this.timer = setTimeout(() => { this.timer = null; this.flush(); }, FLUSH_MS);
