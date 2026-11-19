@@ -83,6 +83,7 @@ class Store {
     this.colls = new Map();
     this.depth = 0;
     this.closed = false;
+    this.fallback = null; // se questo store è un ripiego: perché (vedi openStoreSafe)
   }
   use() {
     if (this.closed) fail('closed', 'lo store è chiuso');
@@ -183,6 +184,7 @@ class Store {
     return {
       backend: this.backend,
       persistent: !!d.persistent,
+      fallback: this.fallback ? C.clone(this.fallback) : null,
       ...d.info(),
       collections: [...this.decls.values()].map(decl => ({ name: decl.name, count: d.count(decl.name, all), indexes: C.clone(decl.indexes), retention: C.clone(decl.retention) })),
     };
@@ -213,4 +215,52 @@ function openStore(opts = {}) {
   return factory({ ...opts, backend: name });
 }
 
-module.exports = { openStore, registerBackend, Store, Collection, StoreError, ulid: C.ulid, ulidTime: C.ulidTime };
+// ---------------------------------------------------------------- quando il database non si apre (S4)
+// I motivi per cui si ripiega sulla memoria invece di fermarsi. Gli altri errori (un nome di backend sbagliato,
+// un'opzione non valida) sono errori di chi scrive il codice e restano errori.
+const FALLBACK_CODES = ['corrupt', 'unopenable', 'newer-schema', 'migration-failed', 'backend-unavailable'];
+
+// mette da parte un database rovinato: platypus.db → platypus.db.broken-<data>. Restituisce il nuovo nome, o null
+function setAside(file, when) {
+  const d = new Date(when), p = n => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  let target = `${file}.broken-${stamp}`;
+  for (let k = 2; fs.existsSync(target); k++) target = `${file}.broken-${stamp}-${k}`;
+  try { fs.renameSync(file, target); } catch { return null; }
+  for (const ext of ['-wal', '-shm']) { try { fs.renameSync(file + ext, target + ext); } catch {} }
+  return target;
+}
+
+// Come openStore, ma non si ferma mai per colpa del database: se non si apre, restituisce uno store in memoria
+// con `fallback` = { code, detail, brokenFile, wanted }. Platypus continua a funzionare senza storico, e lo dice
+// (fallbackReason dà la frase da mostrare). Un database rovinato viene messo da parte: al prossimo avvio se ne
+// crea uno nuovo.
+function openStoreSafe(opts = {}) {
+  try { return openStore(opts); }
+  catch (e) {
+    if (!(e instanceof StoreError) || !FALLBACK_CODES.includes(e.code)) throw e;
+    const fallback = { code: e.code, detail: e.message, brokenFile: null, wanted: opts.backend || 'memory' };
+    if (e.code === 'corrupt' && opts.dir) fallback.brokenFile = setAside(path.join(opts.dir, 'platypus.db'), (typeof opts.clock === 'function' ? opts.clock : Date.now)());
+    const store = openStore({ ...opts, backend: 'memory' });
+    store.fallback = fallback;
+    return store;
+  }
+}
+
+// la frase per l'avviso nell'ufficio: «storico non disponibile: <motivo>», nella lingua in uso
+function fallbackReason(fallback) {
+  if (!fallback) return '';
+  const { tr } = require('../../i18n');
+  const why = {
+    corrupt: fallback.brokenFile
+      ? tr('il database era rovinato: l\'ho messo da parte come {file}', { file: path.basename(fallback.brokenFile) })
+      : tr('il database è rovinato'),
+    unopenable: tr('non riesco ad aprire o a scrivere il database'),
+    'newer-schema': tr('il database è stato scritto da un Platypus più recente di questo'),
+    'migration-failed': tr('l\'aggiornamento del database non è riuscito'),
+    'backend-unavailable': tr('questo Node.js non ha SQLite: serve la 22.13 o più recente'),
+  }[fallback.code] || tr('non riesco ad aprire o a scrivere il database');
+  return tr('storico non disponibile: {reason}', { reason: why });
+}
+
+module.exports = { openStore, openStoreSafe, fallbackReason, registerBackend, Store, Collection, StoreError, ulid: C.ulid, ulidTime: C.ulidTime };

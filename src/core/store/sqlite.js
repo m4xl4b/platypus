@@ -11,13 +11,18 @@
 //     JavaScript, con la stessa funzione di memory.js: più lento, ma uguale e senza rischi;
 //   - coda di scrittura per append: le righe aspettano in memoria e vanno su disco in una sola transazione al
 //     massimo ogni 2 s, o quando sono 500, o alla chiusura. Ogni lettura e ogni altra scrittura la svuota prima,
-//     quindi chi legge vede sempre tutto.
+//     quindi chi legge vede sempre tutto;
+//   - all'apertura (S4): PRAGMA quick_check, le migrazioni dello schema (migrations.js) e una scrittura di prova.
+//     Se qualcosa non va il costruttore lancia uno StoreError con il motivo nel codice: 'corrupt' (file rovinato),
+//     'unopenable' (non si apre o non si scrive), 'newer-schema', 'migration-failed'. Chi apre lo store con
+//     openStoreSafe (index.js) a quel punto ripiega sulla memoria: niente si ferma.
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { matches, comparator, project, fail, StoreError } = require('./common');
 const { loadSqlite } = require('./sqlite-load');
+const { migrate, setMeta, schemaVersion } = require('./migrations');
 
 const FLUSH_MS = 2000, FLUSH_DOCS = 500, STMT_CACHE = 200;
 const SAFE_SEGMENT = /^[A-Za-z0-9_ -]+$/;
@@ -109,10 +114,23 @@ class SqliteDriver {
     if (typeof opts.dir !== 'string' || !opts.dir) fail('invalid-argument', 'il backend sqlite vuole la cartella dei dati (dir)');
     this.name = 'sqlite';
     this.persistent = true;
-    fs.mkdirSync(opts.dir, { recursive: true, mode: 0o700 });
     this.file = path.join(opts.dir, 'platypus.db');
-    this.db = new sqlite.DatabaseSync(this.file);
-    this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=3000; PRAGMA foreign_keys=ON;');
+    this.db = null;
+    try {
+      fs.mkdirSync(opts.dir, { recursive: true, mode: 0o700 });
+      this.db = new sqlite.DatabaseSync(this.file);
+      this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=3000; PRAGMA foreign_keys=ON;');
+      const check = this.db.prepare('PRAGMA quick_check').all().map(r => Object.values(r)[0]);
+      if (check[0] !== 'ok') fail('corrupt', `quick_check: ${check.slice(0, 3).join('; ')}`);
+      this.migration = migrate(this.db, this.file, opts.migrations);
+      setMeta(this.db, 'lastOpen', Date.now()); // una scrittura vera: un file o una cartella di sola lettura si scoprono qui
+    } catch (e) {
+      try { if (this.db) this.db.close(); } catch {}
+      this.db = null;
+      if (e instanceof StoreError) throw e;
+      const msg = String(e && e.message || e);
+      fail(/not a database|malformed|corrupt/i.test(msg) ? 'corrupt' : 'unopenable', msg);
+    }
     this.stmts = new Map();
     this.inTx = false;
     this.queue = [];       // righe di append che aspettano: { name, doc }
@@ -271,7 +289,7 @@ class SqliteDriver {
   info() {
     let size = 0;
     for (const f of [this.file, this.file + '-wal']) { try { size += fs.statSync(f).size; } catch {} }
-    return { file: this.file, sizeBytes: size };
+    return { file: this.file, sizeBytes: size, schemaVersion: schemaVersion(this.db) };
   }
   close() {
     if (!this.db) return;

@@ -1,0 +1,9 @@
+{
+  "storico non disponibile: {reason}": "history not available: {reason}",
+  "il database era rovinato: l'ho messo da parte come {file}": "the database was damaged: I set it aside as {file}",
+  "il database è rovinato": "the database is damaged",
+  "non riesco ad aprire o a scrivere il database": "the database cannot be opened or written",
+  "il database è stato scritto da un Platypus più recente di questo": "the database was written by a newer Platypus than this one",
+  "l'aggiornamento del database non è riuscito": "the database update failed",
+  "questo Node.js non ha SQLite: serve la 22.13 o più recente": "this Node.js has no SQLite: 22.13 or newer is needed"
+}

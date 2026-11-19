@@ -36,6 +36,16 @@ With 100,000 steps the same queries take 0.33 ms, 1.30 ms, 0.15 ms and 7 ms, ing
 
 For comparison, the `memory` backend with 100,000 steps: ingest at 216,000 steps per second, and 8 ms for the 100 most recent steps of a project (it has no indexes: every query reads everything).
 
+## S4 · Opening the database, 2026-11-19
+
+Same machine and data. At start-up the store runs `PRAGMA quick_check`, reads the schema version and makes one small write.
+
+| Measure | Result |
+|---|---|
+| Reopening the database with one million steps (355 MB), file already in the system cache | **600 ms** |
+
+The time grows with the size of the file, because `quick_check` reads every page. It was not measured with a cold cache, where it can only be slower. The engine must therefore not wait for the store before it starts serving the office (see S9).
+
 ## What the numbers say
 
 - **Both targets are met with a wide margin.** Ingest is 12 times the target; the query the office needs is 100 times faster than the target.

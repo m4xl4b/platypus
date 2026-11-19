@@ -83,9 +83,16 @@ try {
     findErrors100Ms: errors.median, findAllMs: all.median, findAllFieldsMs: fields.median, findSessionMs: session.median, sessionSteps: session.last,
   });
 
-  // ---------------------------------------------------------- peso
+  // ---------------------------------------------------------- peso, e quanto ci mette a riaprirsi
   const info = store.info();
   store.close();
+  if (info.file) {
+    // all'avvio lo store controlla il file (PRAGMA quick_check) e la versione dello schema: il motore aspetta questo tempo
+    const r0 = process.hrtime.bigint();
+    const again = openStore({ backend: BACKEND, dir: tmp });
+    out.reopenMs = ms(r0);
+    again.close();
+  }
   if (info.file) {
     out.sizeBytes = fs.statSync(info.file).size;
     out.bytesPerStep = Math.round(out.sizeBytes / N);
@@ -110,6 +117,7 @@ else {
   console.log(`    leggerli tutti, solo t e outcome         ${f(out.findAllFieldsMs)} ms`);
   console.log(`    leggerli tutti, interi                   ${f(out.findAllMs)} ms`);
   console.log(`  i passi di una sessione (${out.sessionSteps})               ${f(out.findSessionMs)} ms`);
+  if (out.reopenMs !== undefined) console.log(`  riaprirlo (controllo del file all'avvio)    ${f(out.reopenMs)} ms`);
   if (out.sizeBytes) console.log(`  peso del database                          ${(out.sizeBytes / 1048576).toFixed(0)} MB, ${out.bytesPerStep} byte a passo, ${out.mbPerMillion} MB per milione di passi`);
 }
 if (args.includes('--check') && !(out.ingestOk && out.findOk)) process.exit(1);
