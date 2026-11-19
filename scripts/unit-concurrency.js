@@ -85,22 +85,26 @@ async function run(ok) {
       const path = require('path'); const [root, dir] = process.argv.slice(1);
       const { DatabaseSync } = require(path.join(root, 'src/core/store/sqlite-load')).loadSqlite();
       const db = new DatabaseSync(path.join(dir, 'platypus.db'));
+      db.exec('PRAGMA busy_timeout = 10000'); // senza, BEGIN IMMEDIATE fallisce subito se il file è un attimo occupato
       db.exec('BEGIN IMMEDIATE'); process.stdout.write('held\\n');
       setTimeout(() => { db.exec('COMMIT'); db.close(); process.stdout.write('released\\n'); }, 4500);`, [d2]);
     kids.push(holder.proc);
     // un solo ascoltatore che accumula: prima un "held" arrivato a un'attesa già scaduta andava perso (CI di macOS)
     let heldOut = '';
     holder.proc.stdout.on('data', d => { heldOut += d; });
-    for (let i = 0; i < 100 && !/held/.test(heldOut); i++) await sleep(50);
+    // i runner macOS della CI possono metterci più di 5 s a far partire il processo: si aspetta fino a 30 s
+    for (let i = 0; i < 600 && !/held/.test(heldOut); i++) await sleep(50);
+    const held = /held/.test(heldOut);
     const sess = { id: 'sess-occupata', cwd: path.join(tmp, 'progetto'), demo: false };
     for (let i = 0; i < 30; i++) h.recordStep(sess, { id: 'main' }, { id: 'u' + i, t: 1000 + i, tool: 'Read', act: 'read', target: 'src/a' + i + '.js', sig: 'Read', err: false, dur: 1, phase: '' });
     const first = h.flush(); // il database è occupato: la coda resta
     const kept = h.pending.size, busy = h.busy || 0;
-    await holder.done;
+    const hold = await holder.done;
     const second = h.flush();
     const saved = h.store.collection('steps').count({ session: 'sess-occupata' });
     h.stop();
-    ok(first === 0 && kept === 30 && busy >= 1 && second === 30 && saved === 30, `database occupato da un altro processo per 4,5 s: la coda non perde niente (${kept} passi tenuti, poi ${saved} scritti)`);
+    ok(held && first === 0 && kept === 30 && busy >= 1 && second === 30 && saved === 30, `database occupato da un altro processo per 4,5 s: la coda non perde niente (${kept} passi tenuti, poi ${saved} scritti)` +
+      (held && hold.code === 0 ? '' : ` · l'altro processo: ${held ? 'ha tenuto il blocco' : 'non ha mai tenuto il blocco'}, uscito con ${hold.code}: ${hold.out.trim().replace(/\s+/g, ' ').slice(0, 300)}`));
 
     // ---------------------------------------------------------- aprire lo storico mentre un altro processo lo tiene chiuso
     // più a lungo dell'attesa di SQLite (3 s): l'apertura riprova invece di ripiegare sulla memoria (visto sulla CI)
