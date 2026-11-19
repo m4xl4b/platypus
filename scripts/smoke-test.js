@@ -114,6 +114,7 @@ process.on('exit', code => {
   // lo store: le stesse prove per ogni backend
   for (const backend of ['memory', 'sqlite']) await require('./store-conformance').run(ok, backend);
   await require('./unit-store').run(ok);
+  await require('./unit-concurrency').run(ok); // processi veri: due che scrivono, uno ucciso, due motori
 
   console.log('motore');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-test-'));

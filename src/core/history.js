@@ -21,6 +21,8 @@ const { retentionFromSettings } = require('./retention');
 // le copie di sicurezza accanto a platypus.db: prima delle migrazioni, database messi da parte (con -wal e -shm), file della 2.12
 const BACKUP_RE = /^(platypus\.db\.(bak-\d+|broken-[\d-]+)(-wal|-shm)?|legacy-\d{8})$/;
 const FLUSH_MS = 2000, FLUSH_DOCS = 500;
+// il database è tenuto da un altro processo più a lungo dell'attesa di SQLite (busy_timeout, 3 s)
+const isBusy = e => !!e && (e.errcode === 5 || e.errcode === 6 || /database is locked|SQLITE_BUSY|database table is locked/i.test(String(e.message)));
 const COUNT_MS = 5 * 60000; // i conteggi pesanti di una sessione, al massimo ogni 5 minuti
 const COUNT_FIELDS = ['surprises', 'loops', 'stuck', 'flaky', 'claims', 'stale', 'lessons']; // come la coda di sqlite.js: al massimo ogni 2 s, o a 500 documenti
 
@@ -142,6 +144,13 @@ class History {
     const put = x => this.store.collection(x.coll).put(x.doc);
     try { this.store.transaction(() => { for (const x of batch) put(x); }); return batch.length; }
     catch (e) {
+      // un altro Platypus tiene il database (una compattazione, un "Dimentica"): niente va perso, si riprova tra poco
+      if (isBusy(e)) {
+        for (const x of batch) { const k = x.coll + '\n' + x.doc._id; if (!this.pending.has(k)) this.pending.set(k, x); }
+        this.busy = (this.busy || 0) + 1;
+        if (!this.timer) { this.timer = setTimeout(() => { this.timer = null; this.flush(); }, FLUSH_MS); if (this.timer.unref) this.timer.unref(); }
+        return 0;
+      }
       // uno sbagliato non deve far perdere gli altri: si riprova uno per uno e si scrive nel registro chi non entra
       let n = 0, bad = 0;
       for (const x of batch) { try { put(x); n++; } catch { bad++; } }
@@ -254,4 +263,4 @@ class History {
   }
 }
 
-module.exports = { History, FLUSH_MS, FLUSH_DOCS, COUNT_MS, COUNT_FIELDS };
+module.exports = { History, FLUSH_MS, FLUSH_DOCS, COUNT_MS, COUNT_FIELDS, isBusy };

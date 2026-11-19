@@ -124,7 +124,8 @@ class SqliteDriver {
     try {
       fs.mkdirSync(opts.dir, { recursive: true, mode: 0o700 });
       this.db = new sqlite.DatabaseSync(this.file);
-      this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=3000; PRAGMA foreign_keys=ON;');
+      // busy_timeout per primo: anche il passaggio a WAL deve aspettare un altro Platypus che sta aprendo lo stesso file (S13)
+      this.db.exec('PRAGMA busy_timeout=3000; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;');
       const limit = Number.isFinite(opts.checkLimit) ? opts.checkLimit : CHECK_LIMIT;
       let size = 0;
       try { size = fs.statSync(this.file).size; } catch {}
