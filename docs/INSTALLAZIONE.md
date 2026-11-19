@@ -196,12 +196,12 @@ Poi una volta `npm run tauri:build` (la prima compilazione richiede alcuni minut
 
 ### Il Libro della bottega
 
-Le lezioni che Platypus deduce dalle tue sessioni stanno in `~/.platypus/bottega`, un file JSON per cartella di progetto (il nome del file è una chiave calcolata dalla cartella). Niente esce dal computer.
+Le lezioni che Platypus deduce dalle tue sessioni stanno nel database dello storico, `~/.platypus/platypus.db`, sotto una chiave del progetto: il remote `origin` del suo repository git senza credenziali, oppure la cartella se non c'è un remote. Due copie dello stesso repository hanno un libro solo. Il database non tiene mai la cartella del progetto, il testo delle tue richieste né l'uscita dei comandi. Niente esce dal computer.
 
 Il libro impara dalle sessioni aperte una volta al minuto e, quando un progetto ha una sessione aperta, rilegge da sé in background le sue sessioni passate (al massimo ogni 6 ore; una sessione già letta e non cambiata si salta).
 
 - Per dimenticare una lezione: apri il Libro (LIBRO sul tabellone del piano, oppure BOTTEGA nell'atrio) e premi DIMENTICA.
-- Per dimenticare il libro di un progetto, o tutti: chiudi Platypus e cancella il suo file, oppure l'intera cartella `~/.platypus/bottega`.
+- Per dimenticare tutti i libri, e il resto dello storico: chiudi Platypus e cancella `~/.platypus/platypus.db` (con `platypus.db-wal` e `platypus.db-shm` accanto, se ci sono). Fino alla 2.12 i libri erano file in `~/.platypus/bottega`: la 2.13 non li legge né li scrive più.
 - Per non farlo più imparare: OPZ → *Il Libro della bottega impara dalle sessioni*. Il Nonno ha un suo interruttore lì accanto.
 - Se hai aggiunto la sezione del libro al `CLAUDE.md` di un progetto, sta tra `<!-- platypus:bottega:start -->` e `<!-- platypus:bottega:end -->`: cancella quelle righe per toglierla. La versione precedente del file è in `CLAUDE.md.platypus-backup`.
 

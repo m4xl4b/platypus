@@ -75,4 +75,30 @@ class FileFeedbackLog {
   }
 }
 
-module.exports = { FileFeedbackLog, MAX_BYTES };
+
+// il Libro della bottega come lo scriveva la 2.12: un file JSON per cartella, <cartella>/<chiave>.json, con la cartella dentro
+const { Bottega, projectKey: folderKey } = require('../src/core/bottega');
+class FileBottega extends Bottega {
+  constructor(dir) { super({}); this.dir = dir; }
+  keyOf(cwd) { return folderKey(cwd); }
+  loadBook(key, cwd) {
+    const b = super.loadBook(key, cwd), fresh = b.name;
+    try { Object.assign(b, JSON.parse(fs.readFileSync(path.join(this.dir, key + '.json'), 'utf8')), { key }); } catch {}
+    b.strays = new Set();
+    b.dirty = false;
+    if (fresh && b.name !== fresh) { b.name = fresh; b.dirty = true; }
+    return b;
+  }
+  save() {
+    for (const b of this.books.values()) {
+      if (!b.dirty || b.demo) continue;
+      b.dirty = false;
+      const { dirty, job, demo, strays, ...data } = b;
+      if (!data.mute) delete data.mute;
+      fs.mkdirSync(this.dir, { recursive: true });
+      fs.writeFileSync(path.join(this.dir, b.key + '.json'), JSON.stringify(data));
+    }
+  }
+}
+
+module.exports = { FileFeedbackLog, FileBottega, MAX_BYTES };

@@ -404,6 +404,20 @@ function surpriseTests(ok) {
 }
 
 // Libro della bottega (C1): chiave del progetto, casi dedotti dai fatti, peso, azioni, salvataggio
+// un Libro come lo crea il motore: nello storico (sqlite nella cartella di prova), chiavi senza git.
+// stop() chiude anche lo store, così un Libro nuovo sulla stessa cartella rilegge quello che è stato salvato
+function storeBook(dir, cwdOf) {
+  const { openStore } = require(path.join(__dirname, '..', 'src', 'core', 'store'));
+  const { declareCollections } = require(path.join(__dirname, '..', 'src', 'core', 'store', 'collections'));
+  const { ProjectKeys } = require(path.join(__dirname, '..', 'src', 'core', 'store', 'project-key'));
+  const { Bottega } = require(path.join(__dirname, '..', 'src', 'core', 'bottega'));
+  const store = declareCollections(openStore({ backend: 'sqlite', dir: path.join(dir, 'db'), requireFields: true }));
+  const book = new Bottega({ store, keys: new ProjectKeys({ store, exec: async () => null }), cwdOf, log() {} });
+  const stop = book.stop.bind(book);
+  book.stop = () => { stop(); store.close(); };
+  return book;
+}
+
 function bottegaTests(ok) {
   const bt = require(path.join(ROOT, 'src', 'core', 'bottega'));
   ok(bt.projectKey('C:\\Progetti\\Portale\\') === bt.projectKey('c:/progetti/portale'), 'chiave del progetto: stessa cartella scritta in modi diversi');
@@ -440,7 +454,7 @@ function bottegaTests(ok) {
   // il libro, in una cartella temporanea
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-bottega-'));
   try {
-    const book = new bt.Bottega(dir);
+    const book = storeBook(dir);
     const n1 = book.learn('/p', cases);
     ok(n1 === cases.length && book.learn('/p', cases) === 0, 'gli stessi casi non contano due volte');
     const cases2 = bt.digest({ id: 's2', cwd: '/p', kind: 'code' }, [a, b]).map(c => ({ ...c, sid: 's2', t: recent + c.t + 86400000 }));
@@ -448,7 +462,7 @@ function bottegaTests(ok) {
     let v = book.view('/p');
     const flaky = v.lessons.find(l => l.kind === 'flaky-command');
     ok(flaky && flaky.sessions.length === 2 && flaky.level === 'lesson' && /npm run test:e2e/.test(flaky.title), `lezione da due sessioni: «${flaky && flaky.title}» (peso ${flaky && flaky.weight})`);
-    const once = new bt.Bottega(dir);
+    const once = storeBook(dir);
     once.learn('/q', [{ kind: 'ghost-path', key: 'src/old.ts', sid: 'x', t: Date.now(), agent: 'A', excerpt: '' }]);
     ok(once.view('/q').lessons[0].level === 'observation', 'un caso solo resta un\'osservazione');
     const l0 = { count: 4, sessions: ['a', 'b'], last: Date.now() - 60 * 86400000, pinned: false };
@@ -460,13 +474,13 @@ function bottegaTests(ok) {
     ok(book.act('/p', 'forget', ghost.id) && !book.view('/p').lessons.some(l => l.id === ghost.id), 'dimenticata');
     ok(!book.act('/p', 'boh', flaky.id), 'azione sconosciuta: rifiutata');
     book.stop(); once.stop();
-    const again = new bt.Bottega(dir);
+    const again = storeBook(dir);
     v = again.view('/p');
     ok(v.lessons.length > 0 && v.lessons.length === book.view('/p').lessons.length, `salvato su disco e riletto (${v.lessons.length} lezioni)`);
     ok(v.lessons.find(l => l.id === flaky.id).ignored && !v.lessons.some(l => l.id === ghost.id), 'riletto con fissate, ignorate e dimenticate');
-    ok(fs.readdirSync(dir).every(f => /^[0-9a-f]{16}\.json$/.test(f)), 'un file per progetto, con la chiave come nome');
+    ok(again.store.collection('lessons').count({ project: bt.projectKey('/p') }) === v.lessons.length && !fs.readdirSync(dir).some(f => f.endsWith('.json')), 'nello storico: una lezione per documento, sotto la chiave del progetto; nessun file per progetto');
     again.stop();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
 // il Nonno (C2): l'azione in corso di un agente contro le lezioni forti del libro
@@ -567,7 +581,7 @@ function bottegaNameTests(ok) {
   const bt = require(path.join(ROOT, 'src', 'core', 'bottega'));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-bname-'));
   try {
-    const b1 = new bt.Bottega(dir);
+    const b1 = storeBook(dir);
     const win = 'C:\\Users\\me\\MyShop';
     const les = { kind: 'ghost-path', key: 'src/old.ts', sid: 'x', t: Date.now(), agent: 'A', excerpt: '' };
     b1.learn(win, [les]);
@@ -576,17 +590,17 @@ function bottegaNameTests(ok) {
     ok(bt.renderSection([{ level: 'lesson', pinned: true, weight: 1, kind: 'ghost-path', key: 'a.ts' }], b1.view(win).name).includes('(MyShop)'), 'titolo del CLAUDE.md con le maiuscole');
     b1.stop();
     // un libro già salvato col nome in minuscolo: alla prossima apertura prende quello giusto
-    const f = path.join(dir, bt.projectKey(win) + '.json');
-    const saved = JSON.parse(fs.readFileSync(f, 'utf8'));
-    saved.name = 'myshop';
-    fs.writeFileSync(f, JSON.stringify(saved));
-    const b2 = new bt.Bottega(dir);
+    const K = bt.projectKey(win);
+    const b2 = storeBook(dir, key => (key === K ? win : ''));
+    b2.store.collection('projects').patch(K, { name: 'myshop' });
     ok(b2.list()[0].name === 'myshop', 'elenco: il nome vecchio finché non si apre con la cartella');
     const v = b2.view(win);
     ok(v.name === 'MyShop' && v.lessons.length === 1 && v.key === bt.projectKey(win), 'libro vecchio: nome corretto, stessa chiave, lezioni intatte');
     b2.stop();
-    ok(JSON.parse(fs.readFileSync(f, 'utf8')).name === 'MyShop', 'il nome corretto viene salvato');
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    const b3 = storeBook(dir);
+    ok(b3.store.collection('projects').get(K).name === 'MyShop', 'il nome corretto viene salvato');
+    b3.stop();
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
 function run(ok) {

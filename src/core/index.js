@@ -70,14 +70,15 @@ function defaultSettingsPath() { return path.join(dataDir(), 'settings.json'); }
 function loadSettings(p) { try { return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(p, 'utf8')) }; } catch { return { ...DEFAULT_SETTINGS }; } }
 function saveSettings(p, s) { try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(s, null, 2)); } catch {} }
 
-function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPath = defaultSettingsPath(), statsPath, bottegaDir, fetch: fetchImpl, osLocale } = {}) {
+function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPath = defaultSettingsPath(), statsPath, fetch: fetchImpl, osLocale } = {}) {
   const initialSettings = loadSettings(settingsPath);
   i18n.setLang(i18n.resolveLang(initialSettings.lang, osLocale));
   const state = new OfficeState({ settings: initialSettings });
   // lo storico (store): accanto alle opzioni, in platypus.db. Se non si apre si va avanti in memoria e l'ufficio lo dice
   const history = new History({ dir: path.dirname(settingsPath), settings: initialSettings });
   const stats = new Stats(state, statsPath || path.join(path.dirname(settingsPath), 'stats.json'));
-  const bottega = new Bottega(bottegaDir || path.join(path.dirname(settingsPath), 'bottega'));
+  // il Libro della bottega, nello storico. La cartella di un progetto (lo storico non la tiene) la cerca il motore
+  const bottega = new Bottega({ store: history.store, keys: history.keys, cwdOf: projectFolder });
   // le notifiche (attese, avvisi, report): le decide il motore, le mostra la shell
   // (shellInfo: le voci del menu dei gusci esterni; si chiama solo più tardi, quando hook e demo esistono già)
   const notifier = new Notifier(state, {
@@ -416,6 +417,20 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       const opts = { only, replay: isReplay };
       return { ok: true, sid: s.id, aid, now: st.now(), ...grounding.checkStale(s, agents, s.cwd, opts), ...grounding.findGhosts(s, agents, s.cwd, opts), ...grounding.checkClaims(s, agents, s.cwd, opts), ...surprise.surprises(agents, { ...opts, now: st.now() }) };
     } catch (e) { return { ok: false, error: e.message }; }
+  }
+
+  // la cartella di un progetto dalla sua chiave: tra le sessioni aperte, poi nell'archivio di Claude Code (rifatto al
+  // massimo ogni 30 s). Lo storico non tiene percorsi assoluti, quindi un progetto senza sessioni né archivio non ha cartella
+  let folders = { at: 0, map: new Map() };
+  function projectFolder(key) {
+    const keys = history.keys;
+    for (const s of state.sessions.values()) if (!s.demo && s.cwd && (keys.keyNow(s.cwd) === key || projectKey(s.cwd) === key)) return s.cwd;
+    if (Date.now() - folders.at > 30000) {
+      const map = new Map();
+      try { for (const x of listArchive({ base, limit: 400 })) if (x.cwd) for (const k of [keys.keyNow(x.cwd), projectKey(x.cwd)]) if (!map.has(k)) map.set(k, x.cwd); } catch {}
+      folders = { at: Date.now(), map };
+    }
+    return folders.map.get(key) || '';
   }
 
   // la cartella del progetto: dalla sessione (anche in replay) o passata direttamente

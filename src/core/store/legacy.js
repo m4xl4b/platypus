@@ -87,6 +87,7 @@ async function readLegacy(dataDir, { keys = null, clock = Date.now } = {}) {
     const p = projects.get(key) || { _id: key, name: '', aliases: {}, firstSeen: now, lastSeen: now, forgotten: {}, learned: {} };
     if (typeof b.name === 'string' && b.name && !p.name) p.name = b.name.slice(0, 200);
     if (remote) p.remote = remote;
+    if (b.mute) p.mute = true;
     if (key !== oldKey) p.aliases[oldKey] = now;
     for (const [id, t] of Object.entries(numMap(b.forgotten))) p.forgotten[id] = Math.max(p.forgotten[id] || 0, t);
     for (const [id, t] of Object.entries(numMap(b.learned))) p.learned[id] = Math.max(p.learned[id] || 0, t);

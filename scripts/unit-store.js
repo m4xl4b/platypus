@@ -526,7 +526,8 @@ async function legacyTests(ok) {
   const { declareCollections } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
   const { importLegacy, weekStart, dayStart } = require(path.join(ROOT, 'src', 'core', 'store', 'legacy'));
   const { ProjectKeys, normDir, keyFor } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
-  const { Bottega, projectKey } = require(path.join(ROOT, 'src', 'core', 'bottega'));
+  const { projectKey } = require(path.join(ROOT, 'src', 'core', 'bottega'));
+  const { FileBottega: Bottega } = require(path.join(ROOT, 'scripts', 'legacy-212')); // il Libro come lo scriveva la 2.12
   const { FileFeedbackLog: FeedbackLog } = require(path.join(ROOT, 'scripts', 'legacy-212')); // il registro come lo scriveva la 2.12
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-prima-'));
   const T = 1763500000000, NOW = T + 86400000;
@@ -675,7 +676,106 @@ async function legacyTests(ok) {
   }
 }
 
-module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); } };
+// S9: il Libro della bottega nello storico (le lezioni in `lessons`, il resto nel documento del progetto)
+async function bookTests(ok) {
+  console.log('store: il Libro nello storico');
+  const { openStore } = require(path.join(ROOT, 'src', 'core', 'store'));
+  const { declareCollections } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
+  const { ProjectKeys, keyFor, normDir } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
+  const { Bottega, projectKey } = require(path.join(ROOT, 'src', 'core', 'bottega'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-libro-'));
+  const A = path.join(tmp, 'Lavoro', 'Platypus'), B = path.join(tmp, 'copie', 'platypus-due'), C = path.join(tmp, 'senza-remote');
+  const REMOTE = 'git@github.com:m4xl4b/platypus.git', K = keyFor(A, REMOTE).key;
+  const remotes = { [normDir(A)]: REMOTE, [normDir(B)]: 'https://github.com/m4xl4b/platypus.git' };
+  const T = Date.now() - 60000;
+  const c = (kind, key, sid, t, excerpt = 'riga') => ({ kind, key, sid, t, agent: 'Claude', excerpt });
+  const dir = path.join(tmp, 'db');
+  const open = [];
+  // lo storico come lo apre il motore: sqlite, guardia che rifiuta, collezioni vere; git finto
+  const mk = (cwdOf = () => '') => {
+    const store = declareCollections(openStore({ backend: 'sqlite', dir, guard: 'reject', requireFields: true }));
+    const keys = new ProjectKeys({ store, exec: async cwd => remotes[normDir(cwd)] || null });
+    const book = new Bottega({ store, keys, cwdOf, log() {} });
+    open.push(store);
+    return { store, keys, book, close() { book.stop(); store.close(); } };
+  };
+  try {
+    let h = mk();
+    await h.keys.resolve(A); await h.keys.resolve(B); await h.keys.resolve(C);
+    h.book.learn(A, [c('flaky-command', 'npm run test:e2e', 's1', T), c('flaky-command', 'npm run test:e2e', 's2', T + 1), c('fragile-file', 'src/a.js', 's1', T + 2, 'TypeError in C:\\Users\\mario\\x.js con password=hunter2')]);
+    h.book.learn(B, [c('flaky-command', 'npm run test:e2e', 's3', T + 3), c('ghost-path', 'src/old.ts', 's3', T + 4)]);
+    h.book.learn(C, [c('loop-trap', 'cargo build', 's4', T + 5)]);
+    const fragile = Object.values(h.book.book(A).lessons).find(l => l.kind === 'fragile-file').id;
+    h.book.act(A, 'pin', fragile);
+    h.book.setMute(B, true);
+    h.book.book(A).learned = { 'sess-arch': T }; h.book.book(A).dirty = true;
+    const vA = h.book.view(A), vB = h.book.view(B);
+    ok(vA.key === K && vB.key === K && vA.lessons.length === 3 && vA.lessons.find(l => l.kind === 'flaky-command').count === 3 && h.book.view(C).key === projectKey(C) && h.book.view(C).lessons.length === 1,
+      'due cartelle dello stesso repository hanno un Libro solo; una cartella senza remote ha il suo');
+    h.close();
+    // dopo un riavvio: tutto c'è, dallo storico
+    h = mk();
+    await h.keys.resolve(A);
+    const rA = h.book.view(A), flaky = rA.lessons.find(l => l.kind === 'flaky-command');
+    ok(rA.lessons.length === 3 && flaky.count === 3 && flaky.sessions.length === 3 && rA.lessons.find(l => l.id === fragile).pinned === true && rA.mute === true && rA.learnedSessions === 1 && h.book.view(C).lessons[0].key === 'cargo build',
+      'dopo un riavvio il Libro si rilegge dallo storico: lezioni, conteggi, lezioni fissate, "non parlare agli agenti", sessioni già lette');
+    const ev = rA.lessons.find(l => l.id === fragile).evidence[0].excerpt;
+    ok(ev === 'TypeError in C:\\Users\\mario\\x.js con password=[secret]' || !ev.includes('hunter2'), 'le prove delle lezioni passano dal filtro dei segreti');
+    h.book.act(A, 'forget', fragile);
+    h.book.save();
+    ok(h.store.collection('lessons').get(`${K}:${fragile}`) === null && h.store.collection('projects').get(K).forgotten[fragile] > 0 && h.store.collection('lessons').count({ project: K }) === 2,
+      '«Dimentica» toglie la lezione anche dallo storico, e se ne ricorda');
+    h.close();
+
+    // la chiave arriva da git dopo: il Libro aperto con la chiave della cartella passa al progetto, senza doppioni
+    const D = path.join(tmp, 'terza-copia', 'platypus');
+    remotes[normDir(D)] = 'ssh://git@github.com/m4xl4b/platypus';
+    h = mk();
+    let release;
+    const slow = new Promise(r => { release = r; });
+    h.keys.exec = async cwd => { await slow; return remotes[normDir(cwd)] || null; };
+    h.book.learn(D, [c('slow-step', 'npm run build', 's5', T + 6, '7 min')]);
+    const early = h.book.view(D).key;
+    h.book.save(); // salvato con la chiave della cartella, prima che git risponda
+    const storedEarly = h.store.collection('lessons').count({ project: projectKey(D) });
+    release(); await h.keys.resolve(D);
+    const after = h.book.view(D);
+    h.book.save();
+    ok(early === projectKey(D) && storedEarly === 1 && after.key === K && after.lessons.some(l => l.kind === 'slow-step') && after.lessons.length === 3 && h.store.collection('lessons').count({ project: projectKey(D) }) === 0 &&
+      h.store.collection('lessons').count({ project: K }) === 3 && h.store.collection('projects').get(projectKey(D)) === null && Object.keys(h.store.collection('projects').get(K).aliases).includes(projectKey(D)),
+      'un Libro aperto prima che git risponda passa sotto la chiave del progetto, anche nello storico, senza lasciare doppioni');
+    h.close();
+
+    // la demo non scrive niente nello storico, nemmeno il progetto
+    h = mk();
+    const before = JSON.stringify(['projects', 'lessons'].map(n => h.store.collection(n).count({})));
+    h.book.seedDemo('C:/Progetti/portale-clienti', [c('ghost-path', 'src/x.ts', 'demo-1', T), c('ghost-path', 'src/x.ts', 'demo-2', T + 1)]);
+    h.book.learn('C:/Progetti/portale-clienti', [c('flaky-command', 'npm test', 'demo-3', T + 2)]);
+    const demoView = h.book.view('C:/Progetti/portale-clienti');
+    h.book.save();
+    ok(demoView.lessons.length === 2 && JSON.stringify(['projects', 'lessons'].map(n => h.store.collection(n).count({}))) === before && h.keys.byDir.size === 0 && h.keys.pending.size === 0 && h.book.list().some(b => b.cwd === 'C:/Progetti/portale-clienti'),
+      'il Libro della demo resta in memoria: niente nello storico, nemmeno una domanda a git; nella scheda dell\'atrio si vede');
+    h.book.dropDemo();
+    h.close();
+
+    // la scheda dell'atrio: solo i Libri di cui si conosce la cartella
+    h = mk(key => (key === K ? A : ''));
+    const list = h.book.list();
+    ok(list.length === 1 && list[0].key === K && list[0].cwd === A && list[0].lessons === 3 && list[0].name === 'platypus' && h.book.cwdOfKey(K) === A && h.book.cwdOfKey(projectKey(C)) === '',
+      'la scheda dell\'atrio elenca i Libri dello storico di cui il motore conosce la cartella');
+    h.close();
+
+    let rawBytes = '';
+    for (const f of fs.readdirSync(dir)) rawBytes += fs.readFileSync(path.join(dir, f)).toString('latin1');
+    const leaks = [tmp.replace(/\\/g, '/'), tmp, 'Lavoro', 'copie', 'terza-copia', 'mario', 'hunter2'].filter(x => rawBytes.includes(x));
+    ok(leaks.length === 0 && rawBytes.includes('npm run test:e2e') && !fs.existsSync(path.join(tmp, 'bottega')), 'nel file del database non c\'è la cartella di nessun progetto, e non c\'è più una cartella bottega' + (leaks.length ? ': ' + leaks.join(', ') : ''));
+  } finally {
+    for (const st of open) { try { st.close(); } catch {} }
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); } };
 if (require.main === module) {
   let failed = 0;
   module.exports.run((c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) failed++; })

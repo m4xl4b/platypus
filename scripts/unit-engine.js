@@ -281,22 +281,23 @@ function forgetTests(ok) {
   try {
     const cwd = path.join(tmp, 'shop'), now = Date.now();
     const old = [{ kind: 'ghost-path', key: 'src/old-cart.ts', sid: 's1', t: now - 20000, agent: 'Claude', excerpt: 'File does not exist.' }];
-    const b = new Bottega(path.join(tmp, 'bottega'));
+    const book = () => { const st = testStore('sqlite', path.join(tmp, 'db')); const bk = new Bottega({ store: st.store, keys: st.keys }); bk.close = () => { bk.stop(); st.store.close(); }; return bk; };
+    const b = book();
     const ghosts = bk => bk.view(cwd).lessons.filter(l => l.kind === 'ghost-path');
     b.learn(cwd, old);
     const id = ghosts(b)[0].id;
     b.act(cwd, 'forget', id);
     b.learn(cwd, old); // il giro successivo dell'apprendimento dal vivo
     ok(!ghosts(b).length, 'lezione dimenticata: gli stessi casi non la riportano indietro');
-    b.stop();
-    const b2 = new Bottega(path.join(tmp, 'bottega')); // anche dopo un riavvio
+    b.close();
+    const b2 = book(); // anche dopo un riavvio
     b2.learn(cwd, old);
     ok(!ghosts(b2).length, 'dimenticata anche dopo il riavvio dell\'app');
     b2.learn(cwd, [{ ...old[0], sid: 's2', t: Date.now() + 60000 }]);
     const g = ghosts(b2);
     ok(g.length === 1 && g[0].count === 1, 'un caso nuovo, dopo «Dimentica», ricomincia la lezione da capo');
-    b2.stop();
-  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+    b2.close();
+  } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
 // finestra: la posizione salvata su un monitor che non c'è più non deve aprirla fuori dallo schermo
@@ -605,13 +606,16 @@ function workflowTests(ok) {
 
 // il registro dei messaggi su uno store di prova: in memoria, con le collezioni vere e la guardia che rifiuta;
 // le chiavi dei progetti non chiamano git (ogni cartella è il suo progetto)
-function testFeedbackLog(backend = 'memory', dir) {
+function testStore(backend = 'memory', dir) {
   const { openStore } = require(path.join(ROOT, 'src', 'core', 'store'));
   const { declareCollections } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
   const { ProjectKeys } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
-  const { FeedbackLog } = require(path.join(ROOT, 'src', 'core', 'feedbacklog'));
   const store = declareCollections(openStore({ backend, dir, guard: 'reject', requireFields: true }));
-  const keys = new ProjectKeys({ store, exec: async () => null });
+  return { store, keys: new ProjectKeys({ store, exec: async () => null }) };
+}
+function testFeedbackLog(backend = 'memory', dir) {
+  const { FeedbackLog } = require(path.join(ROOT, 'src', 'core', 'feedbacklog'));
+  const { store, keys } = testStore(backend, dir);
   const log = new FeedbackLog({ store, keys });
   log.close = () => store.close();
   return log;
@@ -1286,13 +1290,15 @@ function feedbackModeTests(ok, fb, inp) {
   const bt = require(path.join(ROOT, 'src', 'core', 'bottega'));
   const bdir = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-mute-'));
   try {
-    const b1 = new bt.Bottega(bdir);
+    // nello storico, come nel motore: sqlite nella cartella di prova; stop() chiude anche lo store
+    const mkBook = () => { const st = testStore('sqlite', path.join(bdir, 'db')); const b = new bt.Bottega({ store: st.store, keys: st.keys, log() {} }); const stop = b.stop.bind(b); b.stop = () => { stop(); st.store.close(); }; return b; };
+    const b1 = mkBook();
     ok(b1.muted('/p/app') === false && b1.setMute('/p/app', true) === true && b1.view('/p/app').mute === true, 'Libro: «non parlare agli agenti di questo progetto»');
     b1.stop();
-    const b2 = new bt.Bottega(bdir);
+    const b2 = mkBook();
     ok(b2.muted('/p/app') === true && b2.muted('/p/altro') === false && b2.setMute('/p/app', false) === false, 'Libro: la scelta resta salvata, progetto per progetto');
     b2.stop();
-  } finally { fs.rmSync(bdir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(bdir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
 // il fumetto di un comando senza descrizione mostra il comando vero, non il "cd" davanti

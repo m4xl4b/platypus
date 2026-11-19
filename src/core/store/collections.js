@@ -26,7 +26,7 @@ const COLLECTIONS = {
     fields: {
       name: 'string', remote: 'string', aliases: NUM, firstSeen: 'number', lastSeen: 'number',
       // del Libro: le lezioni dimenticate (id → quando) e le sessioni d'archivio già lette (id → fine)
-      forgotten: NUM, learned: NUM,
+      forgotten: NUM, learned: NUM, mute: 'boolean', // mute: "non parlare agli agenti di questo progetto" (2.11)
     },
     indexes: [],
     retention: null,

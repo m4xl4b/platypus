@@ -148,12 +148,12 @@ To uninstall:
 
 ### The Workshop book
 
-The lessons Platypus deduces from your sessions live in `~/.platypus/bottega`, one JSON file per project folder (the file name is a key computed from the folder). Nothing leaves your computer.
+The lessons Platypus deduces from your sessions live in the history database, `~/.platypus/platypus.db`, under a key of the project: the `origin` remote of its git repository without any credentials, or the folder when there is no remote. Two clones of the same repository share one book. The database never holds the project's folder, the text of your prompts or the output of commands. Nothing leaves your computer.
 
 The book learns from the open sessions once a minute and, when a project has an open session, rereads that project's past sessions by itself in the background (every 6 hours at most; a session already read and unchanged is skipped).
 
 - To forget a single lesson: open the Book (BOOK on the floor's notice board, or WORKSHOP in the lobby) and press FORGET.
-- To forget a project's book, or all of them: close Platypus and delete its file, or the whole `~/.platypus/bottega` folder.
+- To forget all the books, and the rest of the history: close Platypus and delete `~/.platypus/platypus.db` (with `platypus.db-wal` and `platypus.db-shm` next to it, if they are there). Up to 2.12 the books were files in `~/.platypus/bottega`: 2.13 no longer reads or writes them.
 - To stop learning: OPT → *The Workshop book learns from sessions*. Grandpa has his own switch next to it.
 - If you added the book's section to a project's `CLAUDE.md`, it sits between `<!-- platypus:bottega:start -->` and `<!-- platypus:bottega:end -->`: delete those lines to remove it. The previous version of the file is in `CLAUDE.md.platypus-backup`.
 

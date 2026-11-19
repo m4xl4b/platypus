@@ -124,7 +124,8 @@ class ProjectKeys {
     const cur = projects.get(info.key);
     const aliases = { ...(cur && cur.aliases) };
     for (const a of info.aliases) if (!aliases[a]) aliases[a] = now;
-    const doc = { _id: info.key, name: info.name || (cur && cur.name) || '', aliases, firstSeen: (cur && cur.firstSeen) || now, lastSeen: now };
+    // gli altri campi del progetto (quelli del Libro: lezioni dimenticate, sessioni già lette, mute) restano com'erano
+    const doc = { ...(cur || {}), _id: info.key, name: info.name || (cur && cur.name) || '', aliases, firstSeen: (cur && cur.firstSeen) || now, lastSeen: now };
     const remote = info.remote || (cur && cur.remote);
     if (remote) doc.remote = remote;
     projects.put(doc);

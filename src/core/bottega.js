@@ -10,8 +10,6 @@
 //   ghost-path     percorsi inventati che tornano (es. un file rinominato cercato col vecchio nome)
 //   slow-step      comandi che restano appesi a lungo
 
-const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
 const { tr, trn } = require('../i18n');
 const grounding = require('./grounding');
@@ -100,48 +98,133 @@ function digest(session, agents, now = Date.now()) {
   return out;
 }
 
+const { mergeLesson } = require('./store/legacy');
+
 // ---- il libro di un progetto
+// Dalla 2.13 i Libri stanno nello storico (src/core/store): le lezioni nella collezione `lessons`, una per documento,
+// e quello che riguarda il Libro intero (lezioni dimenticate, sessioni d'archivio già lette, "non parlare agli agenti")
+// nel documento del progetto in `projects`. La chiave è quella del progetto (il repository, o la cartella): due
+// cartelle dello stesso repository hanno un Libro solo.
+// Lo storico non tiene percorsi assoluti: la cartella di un progetto la dà chi crea il Libro, con cwdOf(chiave)
+// (il motore la cerca tra le sessioni aperte e nell'archivio di Claude Code).
+// Senza store il Libro resta in memoria (la demo, le prove).
 class Bottega {
-  constructor(dir = path.join(require('../paths').dataDir(), 'bottega')) {
-    this.dir = dir;
-    this.books = new Map(); // chiave -> {key, name, cwd, lessons: {id: lesson}, learned: {}, forgotten: {id: t}, dirty}
+  constructor({ store = null, keys = null, cwdOf = () => '', log = msg => console.error('[platypus] ' + msg) } = {}) {
+    this.store = store;
+    this.keys = keys;
+    this.cwdOf = cwdOf;
+    this.log = log;
+    this.books = new Map(); // chiave -> {key, name, cwd, lessons: {id: lesson}, learned: {}, forgotten: {id: t}, mute, strays, dirty}
     this.timer = setInterval(() => this.save(), 30000);
     this.timer.unref && this.timer.unref();
   }
   stop() { clearInterval(this.timer); this.save(); }
 
+  // la chiave del progetto di una cartella: quella dello storico se c'è, altrimenti quella della cartella
+  keyOf(cwd) { return this.keys ? this.keys.keyNow(cwd) : projectKey(cwd); }
+
   book(cwd) {
-    const key = projectKey(cwd);
+    const pk = projectKey(cwd);
+    const own = this.books.get(pk);
+    if (own && own.demo) return own; // il Libro finto della demo: mai nello storico, nemmeno per chiedere la chiave
+    const key = this.keyOf(cwd);
     let b = this.books.get(key);
     if (!b) {
-      b = { key, name: dirName(cwd) || String(cwd || ''), cwd: String(cwd || ''), lessons: {}, learned: {}, forgotten: {} };
-      let fresh = b.name;
-      try { Object.assign(b, JSON.parse(fs.readFileSync(path.join(this.dir, key + '.json'), 'utf8')), { key }); } catch {}
-      // i libri salvati con il nome in minuscolo prendono quello giusto (stessa chiave, stesse lezioni)
-      b.dirty = false;
-      if (dirName(cwd) && b.name !== fresh) { b.name = fresh; b.dirty = true; }
+      b = this.loadBook(key, cwd);
+      // aperto con la chiave della cartella prima che git rispondesse: quello che aveva imparato passa al progetto
+      if (own && key !== pk) { this.books.delete(pk); this.absorb(b, own); }
       this.books.set(key, b);
     }
+    // il nome da mostrare è quello dell'ultima cartella, con le sue maiuscole
+    if (cwd) { b.cwd = String(cwd); const n = dirName(cwd); if (n && b.name !== n) { b.name = n; b.dirty = true; } }
     return b;
+  }
+
+  // un Libro vuoto, con quello che lo storico sa del progetto (anche sotto i suoi alias)
+  loadBook(key, cwd) {
+    const b = { key, name: dirName(cwd) || String(cwd || ''), cwd: String(cwd || ''), lessons: {}, learned: {}, forgotten: {}, mute: false, strays: new Set(), dirty: false };
+    if (!this.store) return b;
+    try {
+      const projects = this.store.collection('projects');
+      const all = this.keys ? this.keys.allKeys(key) : [key];
+      for (const k of all) {
+        const p = projects.get(k);
+        if (!p) continue;
+        if (k === key && p.name) b.name = p.name; // il nome salvato; book() lo corregge con quello della cartella
+        for (const [id, t] of Object.entries(p.forgotten || {})) b.forgotten[id] = Math.max(b.forgotten[id] || 0, t);
+        for (const [id, t] of Object.entries(p.learned || {})) b.learned[id] = Math.max(b.learned[id] || 0, t);
+        if (p.mute) b.mute = true;
+        if (k !== key && (p.forgotten || p.learned || p.mute)) b.strays.add(k);
+      }
+      for (const d of this.store.collection('lessons').find({ project: { $in: all } })) {
+        const l = { id: d.lesson, kind: d.kind, key: d.key, count: d.count || 0, sessions: d.sessions || [], first: d.first || d.t, last: d.last || d.t, evidence: d.evidence || [], seen: d.seen || [], pinned: !!d.pinned, ignored: !!d.ignored };
+        if (!l.id || !l.kind || !l.key) continue;
+        if (d.project !== key) b.strays.add(d.project);
+        b.lessons[l.id] = b.lessons[l.id] ? { ...mergeLesson(b.lessons[l.id], l), id: l.id } : l;
+      }
+      if (b.strays.size) b.dirty = true; // al prossimo salvataggio passa tutto sotto la chiave del progetto
+    } catch (e) { this.log('Libro: non riesco a leggere lo storico (' + (e && e.message || e) + ')'); }
+    return b;
+  }
+
+  // unisce a b un Libro aperto prima con un'altra chiave dello stesso progetto
+  absorb(b, other) {
+    for (const [id, l] of Object.entries(other.lessons)) b.lessons[id] = b.lessons[id] ? { ...mergeLesson(b.lessons[id], l), id } : l;
+    for (const [id, t] of Object.entries(other.forgotten || {})) b.forgotten[id] = Math.max(b.forgotten[id] || 0, t);
+    for (const [id, t] of Object.entries(other.learned || {})) b.learned[id] = Math.max(b.learned[id] || 0, t);
+    if (other.mute) b.mute = true;
+    if (other.job && !b.job) b.job = other.job;
+    b.strays.add(other.key);
+    for (const k of other.strays || []) b.strays.add(k);
+    b.strays.delete(b.key);
+    b.dirty = true;
+  }
+
+  // scrive nello storico i Libri cambiati, uno per transazione. Se non ci riesce resta "da salvare" e riprova
+  save() {
+    if (!this.store) return;
+    for (const b of this.books.values()) {
+      if (!b.dirty || b.demo) continue;
+      try { this.store.transaction(() => this.saveBook(b)); b.dirty = false; }
+      catch (e) { this.log('Libro: non riesco a salvare ' + b.key + ' (' + (e && e.message || e) + ')'); }
+    }
+  }
+  saveBook(b) {
+    const projects = this.store.collection('projects'), lessons = this.store.collection('lessons'), now = Date.now();
+    // quello che stava sotto un alias (la chiave della cartella) passa sotto la chiave del progetto
+    for (const k of b.strays) {
+      if (k === b.key) continue;
+      lessons.deleteMany({ project: k });
+      const q = projects.get(k);
+      if (q && !q.remote && !Object.keys(q.aliases || {}).length) projects.delete(k);
+    }
+    const cur = projects.get(b.key) || {};
+    projects.put({
+      ...cur, _id: b.key, name: b.name || cur.name || '', aliases: cur.aliases || {}, firstSeen: cur.firstSeen || now, lastSeen: now,
+      forgotten: b.forgotten || {}, learned: b.learned || {}, mute: !!b.mute,
+    });
+    const keep = new Set();
+    for (const l of Object.values(b.lessons)) {
+      const _id = `${b.key}:${l.id}`;
+      keep.add(_id);
+      lessons.put({
+        _id, project: b.key, t: l.last, lesson: l.id, kind: l.kind, key: l.key, count: l.count, sessions: l.sessions, first: l.first, last: l.last,
+        evidence: l.evidence, seen: l.seen, pinned: !!l.pinned, ignored: !!l.ignored,
+      });
+    }
+    for (const d of lessons.find({ project: b.key }, { fields: [] })) if (!keep.has(d._id)) lessons.delete(d._id);
+    b.strays.clear();
   }
 
   // il libro finto della demo: solo in memoria, mai sul disco
   seedDemo(cwd, cases) {
-    const b = this.book(cwd);
-    b.demo = true; b.lessons = {}; b.learned = {}; b.forgotten = {};
+    // creato qui, con la chiave della cartella: book() lo ritrova senza chiedere niente allo storico né a git
+    const b = { key: projectKey(cwd), name: dirName(cwd) || String(cwd || ''), cwd: String(cwd || ''), lessons: {}, learned: {}, forgotten: {}, mute: false, strays: new Set(), dirty: false, demo: true };
+    this.books.set(b.key, b);
     this.learn(cwd, cases);
     b.dirty = false;
   }
   dropDemo() { for (const [k, b] of this.books) if (b.demo) this.books.delete(k); }
-
-  save() {
-    for (const b of this.books.values()) {
-      if (!b.dirty || b.demo) continue;
-      b.dirty = false;
-      const { dirty, job, demo, ...data } = b;
-      try { fs.mkdirSync(this.dir, { recursive: true }); fs.writeFileSync(path.join(this.dir, b.key + '.json'), JSON.stringify(data)); } catch {}
-    }
-  }
 
   // aggiunge i casi al libro; lo stesso caso (sessione, momento, agente, tipo, chiave) non conta due volte,
   // e i casi di una lezione dimenticata non la riportano indietro (solo quelli successivi a "Dimentica")
@@ -214,23 +297,33 @@ class Bottega {
     return { key: b.key, name: b.name, cwd: b.cwd, mute: !!b.mute, learnedSessions: Object.keys(b.learned || {}).length, learning: job, lessons };
   }
 
-  // i progetti che hanno un libro (sul disco o già in memoria), per la scheda BOTTEGA dell'atrio
+  // i progetti che hanno un libro (nello storico o già in memoria), per la scheda BOTTEGA dell'atrio. Solo quelli di
+  // cui si conosce la cartella: senza, il Libro non si può aprire
   list(now = Date.now()) {
-    const keys = new Set(this.books.keys());
-    try { for (const f of fs.readdirSync(this.dir)) if (/^[0-9a-f]{16}\.json$/.test(f)) keys.add(f.slice(0, 16)); } catch {}
+    const groups = new Map(); // chiave -> { name, cwd, lessons }
+    if (this.store) {
+      try {
+        for (const d of this.store.collection('lessons').find({}, { fields: ['project', 'count', 'sessions', 'last', 'pinned', 'ignored'] })) {
+          const g = groups.get(d.project) || { name: '', cwd: '', lessons: [] };
+          g.lessons.push({ count: d.count || 0, sessions: d.sessions || [], last: d.last || 0, pinned: !!d.pinned, ignored: !!d.ignored });
+          groups.set(d.project, g);
+        }
+        for (const [key, g] of groups) { const p = this.store.collection('projects').get(key); if (p) g.name = p.name || ''; }
+      } catch (e) { this.log('Libro: non riesco a leggere lo storico (' + (e && e.message || e) + ')'); }
+    }
+    // quello che è in memoria è più fresco (anche i Libri non ancora salvati e quello della demo)
+    for (const [key, b] of this.books) groups.set(key, { name: b.name, cwd: b.cwd, lessons: Object.values(b.lessons) });
     const out = [];
-    for (const key of keys) {
-      let b = this.books.get(key);
-      if (!b) { try { b = JSON.parse(fs.readFileSync(path.join(this.dir, key + '.json'), 'utf8')); } catch { continue; } }
-      if (!b.cwd) continue;
-      const ls = Object.values(b.lessons || {});
-      if (!ls.length) continue;
-      const strong = ls.filter(l => !l.ignored && (l.pinned || (l.count > 1 && weightOf(l, now) >= LESSON_WEIGHT))).length;
-      out.push({ key, name: b.name, cwd: b.cwd, lessons: ls.length, strong, last: Math.max(...ls.map(l => l.last || 0)) });
+    for (const [key, g] of groups) {
+      if (!g.lessons.length) continue;
+      const cwd = g.cwd || this.cwdOf(key) || '';
+      if (!cwd) continue;
+      const strong = g.lessons.filter(l => !l.ignored && (l.pinned || (l.count > 1 && weightOf(l, now) >= LESSON_WEIGHT))).length;
+      out.push({ key, name: g.name || dirName(cwd), cwd, lessons: g.lessons.length, strong, last: Math.max(...g.lessons.map(l => l.last || 0)) });
     }
     return out.sort((x, y) => y.last - x.last);
   }
-  cwdOfKey(key) { const b = this.list().find(x => x.key === key); return b ? b.cwd : ''; }
+  cwdOfKey(key) { const b = this.books.get(key); return (b && b.cwd) || this.cwdOf(key) || ''; }
 
   // rilegge le sessioni passate del progetto (non quelle aperte, né quelle già lette e non cambiate)
   // con un OfficeState senza interfaccia, a blocchi, senza mai bloccare il server
@@ -239,9 +332,9 @@ class Bottega {
     if (b.job && b.job.running) return b.job;
     const { listArchive, findSessionFile, loadEvents, applyEvent } = require('./archive');
     const { OfficeState, displayName } = require('./state');
-    const todo = listArchive({ base, limit: 400, liveIds }).filter(x => x.cwd && projectKey(x.cwd) === b.key && !x.live && (b.learned || {})[x.id] !== x.end);
+    const todo = listArchive({ base, limit: 400, liveIds }).filter(x => x.cwd && this.keyOf(x.cwd) === b.key && !x.live && (b.learned || {})[x.id] !== x.end);
     const job = b.job = { running: true, total: todo.length, done: 0, cases: 0, error: '' };
-    const finish1 = (info, st) => { if (st) try { st.stop(); } catch {} if (info) { b.learned = b.learned || {}; b.learned[info.id] = info.end; b.dirty = true; } job.done++; setImmediate(next); };
+    const finish1 = (info, st) => { if (st) try { st.stop(); } catch {} if (info) { const nb = this.book(cwd); nb.learned = nb.learned || {}; nb.learned[info.id] = info.end; nb.dirty = true; } job.done++; setImmediate(next); };
     const next = () => {
       const info = todo.shift();
       if (!info) { job.running = false; return; }
