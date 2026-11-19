@@ -19,7 +19,7 @@ const crypto = require('crypto');
 const MIN_N = 10;          // casi per gruppo sotto cui non si dice niente
 const MIN_ACTIONS = 5;     // una sessione con meno azioni non dice niente sugli errori
 const Z = 1.96;            // 95%
-const MESSAGE_FEATURES = ['elder', 'loop'];
+const MESSAGE_FEATURES = ['elder', 'loop', 'fear'];
 const SESSION_FEATURES = ['sessionLessons'];
 const FEATURES = [...SESSION_FEATURES, ...MESSAGE_FEATURES]; // le funzioni che possono stare in esperimento (quelle che possono essere accese)
 

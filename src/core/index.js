@@ -372,13 +372,14 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
 
   let hooksCache = { t: 0, v: false, f: false };
   function hooksInstalled() {
-    if (Date.now() - hooksCache.t > 5000) hooksCache = { t: Date.now(), v: hooks.status({ base }), f: hooks.feedbackStatus({ base }) };
+    if (Date.now() - hooksCache.t > 5000) hooksCache = { t: Date.now(), v: hooks.status({ base }), f: hooks.feedbackStatus({ base }), fo: hooks.feedbackOutdated({ base }) };
     return hooksCache.v;
   }
   function payload() {
     const snap = state.snapshot();
     snap.hooks.installed = hooksInstalled();
     snap.hooks.feedback = hooksCache.f; // gli hook di feedback, installati a parte
+    snap.hooks.feedbackOutdated = !!hooksCache.fo; // installati prima della 2.14, senza PreToolUse
     const nowMs = Date.now();
     feedbackSaid = feedbackSaid.filter(x => nowMs - x.t < SAID_MS);
     snap.feedback = feedbackSaid;

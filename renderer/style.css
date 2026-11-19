@@ -308,6 +308,7 @@ body.tiny .podlabel small { display: none; }
 
 /* ---------- costi e avvisi ---------- */
 #stats .warn { color: var(--orange); }
+#settings .fbhooks .warn { color: var(--orange); } /* 2.14: hook di feedback senza PreToolUse */
 .bacheca { pointer-events: auto; }
 .bacheca .cost { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 3px; }
 .bacheca .cost span { font-family: 'PS2P'; font-size: 7px; color: var(--dim); }

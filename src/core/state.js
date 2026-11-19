@@ -88,6 +88,7 @@ const DEFAULT_SETTINGS = {
   fbStale: 'off',          // file cambiato da un altro agente e modificato senza rileggerlo (nella 2.11 al massimo in ombra)
   fbClaims: 'off',         // affermazioni senza prove a fine turno (nella 2.11 al massimo in ombra)
   fbDrift: 'off',          // richiamo al compito (nella 2.11 al massimo in ombra)
+  fbFear: 'shadow',        // 2.14: la paura prima di un'azione rischiosa senza prudenza. In ombra di base: prima si misura
   bottegaLearn: true,   // il Libro della bottega impara dalle sessioni (dal vivo e dall'archivio)
   coworkDirs: '',       // cartelle extra dove cercare le sessioni Cowork (separate da ;)
   claudeDirs: '',       // altre cartelle di configurazione di Claude Code (es. dentro WSL), separate da ;

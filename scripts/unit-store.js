@@ -1078,7 +1078,7 @@ async function experimentTests(ok) {
     `statistica: Wilson 81/263 = ${w.map(x => x.toFixed(4)).join('–')}, Newcombe 56/70 contro 48/80 = ${d.diff.toFixed(4)} (${d.lo.toFixed(4)}–${d.hi.toFixed(4)}), come nei lavori originali`);
   // il quarto modo: solo per le funzioni che possono essere accese
   ok(fb.cleanMode('fbLoop', 'experiment') === 'experiment' && fb.cleanMode('fbSessionLessons', 'experiment') === 'experiment' && fb.cleanMode('fbClaims', 'experiment') === 'shadow' && fb.cleanMode('fbDrift', 'experiment') === 'shadow' &&
-    fb.modeOf({ fbElder: 'experiment' }, 'elder') === 'experiment' && JSON.stringify(X.FEATURES) === '["sessionLessons","elder","loop"]', 'il modo «esperimento» vale per le tre funzioni che possono essere accese; le altre restano in ombra');
+    fb.modeOf({ fbElder: 'experiment' }, 'elder') === 'experiment' && fb.cleanMode('fbFear', 'experiment') === 'experiment' && JSON.stringify(X.FEATURES) === '["sessionLessons","elder","loop","fear"]', 'il modo «esperimento» vale per le quattro funzioni che possono essere accese (con la paura, 2.14); le altre restano in ombra');
   // respond: il gruppo decide se il messaggio parte, e resta scritto nel messaggio
   const rules = { PostToolUseFailure: [{ feature: 'loop', run: () => ({ feature: 'loop', text: 'Platypus: stop looping.' }) }] };
   const sidOn = ids.find(id => X.groupOf(id, 'loop') === 'on'), sidSh = ids.find(id => X.groupOf(id, 'loop') === 'shadow');
@@ -1106,7 +1106,7 @@ async function experimentTests(ok) {
     store.collection('sessions').put({ _id: sid, project: 'p1', t: i, actions: i < 2 ? 3 : 100, errors: group === 'on' ? 4 + (i % 3) : 9 + (i % 3) });
   }
   const sl = X.resultFor(store, 'sessionLessons');
-  ok(sl.enough && sl.kind === 'sessions' && sl.n.on === 11 && sl.n.shadow === 11 && sl.assigned === 24 && sl.result.diff < -3 && sl.result.hi < 0 && X.results(store).length === 3,
+  ok(sl.enough && sl.kind === 'sessions' && sl.n.on === 11 && sl.n.shadow === 11 && sl.assigned === 24 && sl.result.diff < -3 && sl.result.hi < 0 && X.results(store).length === 4,
     `lezioni a inizio sessione: ${sl.result.m1.toFixed(1)} errori ogni 100 azioni con le lezioni contro ${sl.result.m2.toFixed(1)} senza (n = ${sl.n.on} e ${sl.n.shadow}; le sessioni con meno di ${X.MIN_ACTIONS} azioni non contano)`);
   store.close();
 }

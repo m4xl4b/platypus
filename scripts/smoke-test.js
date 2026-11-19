@@ -742,7 +742,7 @@ process.on('exit', code => {
     const setx = JSON.parse((await get(port, '/api/settings')).body);
     const exp = JSON.parse((await get(port, '/api/feedback/experiment?cwd=' + encodeURIComponent(fakeCwd))).body);
     const exD = JSON.parse((await get(port, '/api/feedback/experiment')).body);
-    ok(setx.fbLoop === 'experiment' && setx.fbClaims === 'shadow' && exp.ok && exp.modes.loop === 'experiment' && exp.minN === 10 && exp.project.length === 3 && exp.all.length === 3 && exD.ok && exD.project === null,
+    ok(setx.fbLoop === 'experiment' && setx.fbClaims === 'shadow' && exp.ok && exp.modes.loop === 'experiment' && exp.minN === 10 && exp.project.length === 4 && exp.all.length === 4 && exp.modes.fear === 'shadow' && exD.ok && exD.project === null,
       'esperimento: l\'opzione si salva (solo per le funzioni che possono essere accese), la rotta dà i risultati per il progetto e per tutti');
     await get(port, '/api/settings', 'POST', JSON.stringify({ fbLoop: 'off', fbClaims: 'off' }));
     const rt = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'retention' }))).body);
@@ -771,18 +771,18 @@ process.on('exit', code => {
   ok(!hooks.feedbackStatus({ base }), 'hook di feedback: non installati insieme a quelli che osservano');
   const fi = hooks.installFeedback({ port: 47800, base });
   let cur = readS();
-  ok(hooks.feedbackStatus({ base }) && hooks.status({ base }) && fi.events === 5 && countFb(cur) === 5 && cur.model === 'opus', `hook di feedback installati a parte: ${countFb(cur)} eventi`);
+  ok(hooks.feedbackStatus({ base }) && hooks.status({ base }) && fi.events === 6 && countFb(cur) === 6 && cur.model === 'opus' && !hooks.feedbackOutdated({ base }), `hook di feedback installati a parte: ${countFb(cur)} eventi`);
   ok(others(cur) === before, 'gli hook che osservano e quelli dell\'utente restano identici');
-  ok(cur.hooks.Stop.some(g => g.hooks.some(h => h.type === 'http' && h.timeout === 3 && !h.async)) && cur.hooks.PostToolUseFailure.some(g => g.matcher === hooks.FEEDBACK_TOOLS && g.hooks.some(isFb)) && !cur.hooks.PreToolUse.some(g => g.hooks.some(isFb)), 'hook di feedback: http, sincroni, sui soli eventi previsti (mai PreToolUse)');
+  ok(cur.hooks.Stop.some(g => g.hooks.some(h => h.type === 'http' && h.timeout === 3 && !h.async)) && cur.hooks.PostToolUseFailure.some(g => g.matcher === hooks.FEEDBACK_TOOLS && g.hooks.some(isFb)) && cur.hooks.PreToolUse.some(g => g.matcher === hooks.FEAR_TOOLS && /mcp__/.test(g.matcher) && g.hooks.some(isFb)), 'hook di feedback: http, sincroni, sui soli eventi previsti (dalla 2.14 anche PreToolUse, per la paura, con gli strumenti MCP)');
   hooks.installFeedback({ port: 47800, base });
-  ok(countFb(readS()) === 5, 'installarli due volte non li raddoppia');
+  ok(countFb(readS()) === 6, 'installarli due volte non li raddoppia');
   hooks.installFeedback({ port: 47800, base, curl: true });
   cur = readS();
-  ok(countFb(cur) === 5 && cur.hooks.Stop.some(g => g.hooks.some(h => h.type === 'command' && /curl/.test(h.command) && isFb(h))), 'con curl: comandi al posto degli hook http, sempre cinque');
+  ok(countFb(cur) === 6 && cur.hooks.Stop.some(g => g.hooks.some(h => h.type === 'command' && /curl/.test(h.command) && isFb(h))), 'con curl: comandi al posto degli hook http, sempre sei');
   hooks.install({ port: 47800, base }); // reinstallare (o aggiornare) quelli che osservano non tocca quelli di feedback, nemmeno se sono comandi curl
-  ok(countFb(readS()) === 5 && !hooks.outdated({ base }), 'reinstallare gli hook che osservano lascia quelli di feedback');
+  ok(countFb(readS()) === 6 && !hooks.outdated({ base }), 'reinstallare gli hook che osservano lascia quelli di feedback');
   hooks.uninstall({ base });
-  ok(!hooks.status({ base }) && hooks.feedbackStatus({ base }) && countFb(readS()) === 5, 'togliere gli hook che osservano lascia quelli di feedback');
+  ok(!hooks.status({ base }) && hooks.feedbackStatus({ base }) && countFb(readS()) === 6, 'togliere gli hook che osservano lascia quelli di feedback');
   hooks.install({ port: 47800, base });
   const ru = hooks.uninstallFeedback({ base });
   cur = readS();

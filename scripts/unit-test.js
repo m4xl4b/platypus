@@ -1132,12 +1132,122 @@ function fearViewTests(ok) {
   } finally { st.stop && st.stop(); }
 }
 
+// 2.14, R7: la paura prestata all'agente (feedback "fear" al PreToolUse), il suo esito, gli hook da aggiornare
+function fearFeedbackTests(ok) {
+  const { OfficeState } = require(path.join(ROOT, 'src', 'core', 'state'));
+  const fb = require(path.join(ROOT, 'src', 'core', 'feedback'));
+  require(path.join(ROOT, 'src', 'core', 'feedback-rules'));
+  const { judge } = require(path.join(ROOT, 'src', 'core', 'outcomes'));
+  const hooks = require(path.join(ROOT, 'src', 'core', 'hooks'));
+  const i18n = require(path.join(ROOT, 'src', 'i18n'));
+  const iso = t => new Date(t).toISOString();
+  let now = Date.parse('2026-11-19T16:00:00Z'), n = 0, seqS = 0;
+  const cwd = '/home/u/proj';
+  const mk = () => {
+    const st = new OfficeState({ clock: () => now, settings: {} }), S = 'sess-fb-fear-' + (++seqS);
+    const line = (type, content, extra = {}) => ({ type, timestamp: iso(now += 1000), cwd, gitBranch: 'feature/x', message: { role: type, content, ...(type === 'assistant' ? { id: 'm' + (++n), usage: { input_tokens: 1, output_tokens: 1 } } : {}) }, ...extra });
+    const x = {
+      st, S,
+      say: t => st.applyTranscriptLine(S, null, line('user', t)),
+      bash: (id, command, out = 'ok') => { st.applyTranscriptLine(S, null, line('assistant', [{ type: 'tool_use', id, name: 'Bash', input: { command } }])); if (out !== null) st.applyTranscriptLine(S, null, line('user', [{ type: 'tool_result', tool_use_id: id, content: out }])); },
+      get s() { return st.sessions.get(S); },
+      hook: (command, extra = {}) => ({ hook_event_name: 'PreToolUse', session_id: S, cwd, tool_name: 'Bash', tool_input: { command }, tool_use_id: 'hook-' + (++n), ...extra }),
+    };
+    return x;
+  };
+  const gate = () => new fb.Gate({ now: () => now });
+  const ctxOf = (x, settings = { fbFear: 'on' }, lessons = []) => ({ now: () => now, session: x.s, cwd, settings, lessons: () => lessons });
+  const stops = [];
+  try {
+    // acceso: il messaggio arriva prima dell'azione, in inglese, con il perché, che cosa manca e che cosa fare
+    let x = mk(); stops.push(x.st);
+    x.say('sistema il test del login');
+    x.bash('a1', 'npm test');
+    let g = gate();
+    let r = fb.respond(x.hook('git push --force origin main'), ctxOf(x), g);
+    const txt = r.out && r.out.hookSpecificOutput.additionalContext;
+    ok(r.out && r.out.hookSpecificOutput.hookEventName === 'PreToolUse' && /^Platypus: this command is irreversible \(pushes to the main branch\)\./.test(txt) && /Missing in the last actions: .*a commit or a copy/.test(txt) && /If the user did not ask for exactly this, first .* or ask them\./.test(txt) && txt.length <= fb.MAX_TEXT,
+      'paura all\'agente: prima dell\'azione, irreversibile, che cosa manca e che cosa fare → ' + txt);
+    ok(r.entry.feature === 'fear' && r.entry.mode === 'on' && r.entry.event === 'PreToolUse' && r.entry.about.kind === 'fear' && r.entry.about.cmd === 'git push <remote> main' && /^git-push/.test(r.entry.tag) && r.entry.toolUseId, 'paura all\'agente: nel registro la funzione, la regola e la forma del comando');
+    ok(!JSON.stringify(r.entry).includes('--force origin'), 'paura all\'agente: nel registro non c\'è il comando');
+    // una volta per regola per sessione: né allo stesso agente né a un altro
+    now += 10 * 60000;
+    ok(!fb.respond(x.hook('git push --force origin main'), ctxOf(x), g).out && !fb.respond(x.hook('git push -f origin main', { agent_id: 'sub-1' }), ctxOf(x), g).out, 'paura all\'agente: la stessa regola non torna nella stessa sessione, nemmeno a un sottoagente');
+    // un'altra regola, più tardi: sì
+    now += 3 * 60000;
+    ok(/destroys|throws away every change/.test((fb.respond(x.hook('git reset --hard'), ctxOf(x), g).out || { hookSpecificOutput: {} }).hookSpecificOutput.additionalContext || ''), 'paura all\'agente: un\'altra regola, più tardi, sì');
+    // di base (in ombra): niente all'agente, ma nel registro
+    x = mk(); stops.push(x.st);
+    x.say('sistema il login');
+    const { DEFAULT_SETTINGS } = require(path.join(ROOT, 'src', 'core', 'state'));
+    r = fb.respond(x.hook('git clean -fd'), ctxOf(x, DEFAULT_SETTINGS), gate());
+    ok(!r.out && r.entry && r.entry.mode === 'shadow' && r.entry.feature === 'fear', 'paura all\'agente: di base in ombra, registrata ma non detta');
+    ok(!fb.respond(x.hook('git clean -fd'), ctxOf(x, { fbFear: 'off' }), gate()).entry, 'paura all\'agente: spenta, niente nemmeno nel registro');
+    // quando tace: azione prudente, livello 1, richiesta dell'utente, azione innocua
+    x = mk(); stops.push(x.st);
+    x.say('sistema il login');
+    x.bash('b1', 'git add -A && git commit -m wip', '[x] wip');
+    ok(!fb.respond(x.hook('git reset --hard HEAD~1'), ctxOf(x), gate()).entry, 'paura all\'agente: dopo un commit il reset --hard è prudente, niente da dire');
+    ok(!fb.respond(x.hook('npm install lodash'), ctxOf(x), gate()).entry && !fb.respond(x.hook('ls -la'), ctxOf(x), gate()).entry, 'paura all\'agente: niente per il livello 1 o per un comando innocuo');
+    x = mk(); stops.push(x.st);
+    x.say('butta tutto e fai un reset hard');
+    ok(!fb.respond(x.hook('git reset --hard'), ctxOf(x), gate()).entry, 'paura all\'agente: niente se l\'utente l\'ha chiesto (probabile)');
+    // l'azione stessa, se il transcript è già arrivato, non è prudenza
+    x = mk(); stops.push(x.st);
+    x.say('sistema il login');
+    x.bash('c1', 'git status && git reset --hard', null);
+    r = fb.respond(x.hook('git status && git reset --hard', { tool_use_id: 'c1' }), ctxOf(x), gate());
+    ok(r.out && r.entry.mode === 'on', 'paura all\'agente: il passo aperto della stessa azione non conta come prudenza');
+    // con una cicatrice nel Libro su quell'azione, lo dice: un messaggio solo, niente doppione con il Nonno
+    x = mk(); stops.push(x.st);
+    x.say('sistema il login');
+    const scar = { id: 'L1', kind: 'scar', key: 'git reset --hard <ref> → *', level: 'lesson', ignored: false, weight: 2 };
+    r = fb.respond(x.hook('git reset --hard origin/main'), ctxOf(x, { fbFear: 'on' }, [scar]), gate());
+    ok(/already destroyed work once/.test(r.out.hookSpecificOutput.additionalContext) && /\/scar$/.test(r.entry.tag), 'paura all\'agente: con una cicatrice nel Libro, lo stesso messaggio la cita');
+    // in italiano nell'ufficio, sempre in inglese per l'agente
+    const prev = i18n.getLang(); i18n.setLang('it');
+    try {
+      x = mk(); stops.push(x.st);
+      x.say('sistema il login');
+      r = fb.respond(x.hook('git clean -fd'), ctxOf(x), gate());
+      ok(/^Platypus: this command is dangerous/.test(r.out.hookSpecificOutput.additionalContext) && /^Platypus: questo comando è pericoloso/.test(r.entry.local), 'paura all\'agente: inglese per l\'agente, la lingua dell\'ufficio nel registro');
+    } finally { i18n.setLang(prev); }
+
+    // ---- l'esito: nelle 3 azioni dopo quella avvisata
+    const E = { t: 1000, agent: 'main', feature: 'fear', toolUseId: 'p1', about: { kind: 'fear', cmd: 'git reset --hard <ref>', pat: 'git-reset-hard' } };
+    const step = (id, sig, extra = {}) => ({ id, t: 1000 + Number(String(id).replace(/\D/g, '') || 0), act: 'run', tool: 'Bash', sig: 'run:' + sig, err: false, ...extra });
+    const ag = (...rest) => ({ steps: [step('p1', 'git reset --hard'), ...rest], goals: [] });
+    ok(judge(E, ag(step('q2', 'git status')), 5000).outcome === 'helped', 'paura, esito: ha guardato dopo l\'avviso → probabilmente utile');
+    ok(judge(E, ag(step('q2', 'git stash')), 5000).outcome === 'helped', 'paura, esito: ha messo da parte il lavoro → probabilmente utile');
+    ok(judge(E, ag({ id: 'q2', t: 1002, act: 'other', tool: 'AskUserQuestion', sig: 'AskUserQuestion', err: false }), 5000).why.length > 0 && judge(E, ag({ id: 'q2', t: 1002, act: 'other', tool: 'AskUserQuestion', sig: 'AskUserQuestion', err: false }), 5000).outcome === 'helped', 'paura, esito: ha chiesto all\'utente → probabilmente utile');
+    ok(judge(E, ag(step('q2', 'git clean -fd', { risk: { level: 2, missed: true } })), 5000).outcome === 'ignored', 'paura, esito: un\'altra azione rischiosa senza prudenza → ignorato');
+    ok(judge(E, ag(step('q2', 'npm test'), step('q3', 'npm run lint'), step('q4', 'node x.js')), 5000).outcome === 'unclear', 'paura, esito: tre azioni d\'altro → non si può dire');
+    ok(judge(E, ag(step('q2', 'npm test')), 5000) === null, 'paura, esito: meno di tre azioni, ancora presto');
+    ok(judge(E, ag(step('q2', 'git status', { err: null })), 5000) === null, 'paura, esito: l\'azione dopo è ancora in corso');
+    ok(judge(E, { steps: [step('p1', 'git reset --hard')], goals: [{ t: 3000 }] }, 5000).outcome === 'helped', 'paura, esito: il turno finisce lì → si è fermato e ha lasciato decidere');
+
+    // ---- gli hook di feedback di prima della 2.14 sono da aggiornare
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-fearhooks-'));
+    try {
+      hooks.installFeedback({ port: 47800, base: tmp });
+      const fresh = !hooks.feedbackOutdated({ base: tmp });
+      const p = path.join(tmp, 'settings.json'), j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      delete j.hooks.PreToolUse;
+      fs.writeFileSync(p, JSON.stringify(j));
+      ok(fresh && hooks.feedbackOutdated({ base: tmp }) && hooks.feedbackStatus({ base: tmp }), 'hook di feedback senza PreToolUse (installati con la 2.13): da aggiornare');
+      hooks.uninstallFeedback({ base: tmp });
+      ok(!hooks.feedbackOutdated({ base: tmp }), 'hook di feedback assenti: niente da aggiornare');
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  } finally { for (const st of stops) { try { st.stop && st.stop(); } catch {} } }
+}
+
 function run(ok) {
   console.log('libro della bottega');
   bottegaTests(ok);
   riskTests(ok);
   prudenceTests(ok);
   fearViewTests(ok);
+  fearFeedbackTests(ok);
   bottegaNameTests(ok);
   elderTests(ok);
   console.log('sorprese');
@@ -1154,7 +1264,7 @@ function run(ok) {
   alertTests(ok);
 }
 
-module.exports = { run, riskTests, prudenceTests, fearStoreTests, scarTests, fearViewTests };
+module.exports = { run, riskTests, prudenceTests, fearStoreTests, scarTests, fearViewTests, fearFeedbackTests };
 
 if (require.main === module) {
   require('./test-guard').requireTempDataDir('unit-test'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea

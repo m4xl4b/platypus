@@ -680,7 +680,10 @@ function feedbackTests(ok) {
   ok(fb.decide(inp('PostToolUse'), {}, one('PostToolUse', claim)).message.block === false, 'feedback: «block» fuori da Stop non conta');
   // niente da dire
   ok(fb.decide(inp('PostToolUse'), {}) === null && fb.decide(inp('PostToolUse'), {}, one('PostToolUse', () => null)) === null, 'feedback: senza regole o senza messaggio, niente');
-  ok(fb.answer('PostToolUse', null) === null && fb.answer('PreToolUse', { text: 'x' }) === null, 'feedback: nessuna risposta per gli eventi che non usiamo');
+  ok(fb.answer('PostToolUse', null) === null && fb.answer('Notification', { text: 'x' }) === null && fb.answer('PermissionRequest', { text: 'x' }) === null, 'feedback: nessuna risposta per gli eventi che non usiamo');
+  // 2.14: PreToolUse porta solo contesto (la paura), mai una decisione né un comando cambiato
+  const pre = fb.answer('PreToolUse', { text: 'Platypus: x' });
+  ok(pre && pre.hookSpecificOutput.hookEventName === 'PreToolUse' && pre.hookSpecificOutput.additionalContext === 'Platypus: x' && Object.keys(pre.hookSpecificOutput).length === 2, 'feedback: al PreToolUse solo additionalContext, mai permissionDecision o updatedInput');
   // input rotti: mai un errore
   const bad = [null, undefined, 'x', 42, [], {}, { hook_event_name: 'PostToolUse' }, { hook_event_name: 7, session_id: 's' }, { hook_event_name: 'Boh', session_id: 's' }, { hook_event_name: 'PostToolUse', session_id: '' }];
   ok(bad.every(x => fb.decide(x, {}, one('PostToolUse', lesson)) === null), 'feedback: input malformati → niente, senza errori');
@@ -696,7 +699,7 @@ function feedbackTests(ok) {
   ok(fb.say('Platypus: già firmato') === 'Platypus: già firmato' && fb.say('  due\n righe ') === 'Platypus: due righe' && fb.say('') === '', 'feedback: firma e spazi');
   const long = fb.say('x'.repeat(2000));
   ok(long.length === fb.MAX_TEXT && long.endsWith('…'), `feedback: testo lungo tagliato a ${fb.MAX_TEXT} caratteri (${long.length})`);
-  ok(['SessionStart', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SubagentStop'].every(ev => Array.isArray(fb.RULES[ev])) && !fb.RULES.PreToolUse, 'feedback: regole solo per gli eventi a cui sappiamo rispondere');
+  ok(['SessionStart', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SubagentStop'].every(ev => Array.isArray(fb.RULES[ev])) && !fb.RULES.Notification && !fb.RULES.PermissionRequest, 'feedback: regole solo per gli eventi a cui sappiamo rispondere');
   feedbackModeTests(ok, fb, inp);
   // la prova su una sessione vera: un marcatore per evento, e un solo blocco a fine turno
   const ck = ev => fb.checkAnswer(inp(ev));
@@ -1220,7 +1223,7 @@ function outcomeTests(ok, fb, inp, rules) {
 function feedbackModeTests(ok, fb, inp) {
   const { OfficeState, DEFAULT_SETTINGS } = require(path.join(ROOT, 'src', 'core', 'state'));
   // opzioni: tutto spento di base, solo modi validi, e due funzioni mai oltre l'ombra
-  ok(Object.values(fb.FEATURES).every(k => DEFAULT_SETTINGS[k] === 'off'), 'feedback: ogni funzione è spenta di base');
+  ok(Object.values(fb.FEATURES).every(k => DEFAULT_SETTINGS[k] === (k === 'fbFear' ? 'shadow' : 'off')), 'feedback: ogni funzione è spenta di base, tranne la paura (2.14), in ombra: misura senza dire niente');
   const st = new OfficeState({});
   st.setSettings({ fbElder: 'on', fbLoop: 'boh', fbClaims: 'on', fbDrift: 'shadow', fbSessionLessons: 'shadow' });
   ok(st.settings.fbElder === 'on' && st.settings.fbLoop === 'off' && st.settings.fbClaims === 'shadow' && st.settings.fbDrift === 'shadow', `feedback, opzioni: modi ripuliti (elder ${st.settings.fbElder}, loop ${st.settings.fbLoop}, claims ${st.settings.fbClaims})`);

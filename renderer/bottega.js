@@ -14,7 +14,7 @@
   // scheda FEEDBACK: i nomi brevi delle funzioni e dei modi (i messaggi partono dagli hook, vedi le opzioni)
   const FEATURE = {
     sessionLessons: tr('Lezioni a inizio sessione'), elder: tr('Il Nonno'), loop: tr('Giro in tondo'),
-    stale: tr('File cambiato da un altro'), claims: tr('Affermazioni senza prove'), drift: tr('Ritorno al compito'),
+    stale: tr('File cambiato da un altro'), claims: tr('Affermazioni senza prove'), drift: tr('Ritorno al compito'), fear: tr('La paura'),
   };
   // gli esiti (vedi src/core/outcomes.js): etichette oneste, sono indizi
   const OUTCOME = { helped: tr('PROBABILMENTE UTILE'), ignored: tr('IGNORATO'), unclear: tr('NON SI PUÒ DIRE') };

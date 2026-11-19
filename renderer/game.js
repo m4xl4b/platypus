@@ -3281,13 +3281,17 @@ const FEEDBACK_FEATURES = [
   ['fbSessionLessons', tr('Lezioni del progetto a inizio sessione'), true, 'sessionLessons'],
   ['fbElder', tr('Il Nonno parla all\'agente dopo una trappola nota'), true, 'elder'],
   ['fbLoop', tr('Uscita dal giro in tondo (stesso errore due volte)'), true, 'loop'],
+  // la paura (2.14) prima delle tre solo in ombra: il testo sotto l'elenco parla delle «ultime tre»
+  ['fbFear', tr('La paura: prima di un\'azione rischiosa senza prudenza (in ombra di base)'), true, 'fear'],
   ['fbStale', tr('File cambiato da un altro agente e modificato senza rileggerlo'), false, 'stale'],
   ['fbClaims', tr('Affermazioni senza prove a fine turno'), false, 'claims'],
   ['fbDrift', tr('Richiamo al compito quando va alla deriva'), false, 'drift'],
 ];
 function feedbackStateHtml() {
   const on = !!(snap && snap.hooks && snap.hooks.feedback);
+  const old = on && !!(snap && snap.hooks && snap.hooks.feedbackOutdated);
   return `<p class="${on ? 'on' : 'dim'}">${esc(on ? tr('Hook di feedback: installati.') : tr('Hook di feedback: non installati.'))} ${esc(tr('Da soli non dicono niente all\'agente.'))}</p>` +
+    (old ? `<p class="warn">${esc(tr('Sono di una versione precedente: manca PreToolUse, quindi la paura non arriva all\'agente (nemmeno in ombra). Rimuovili e installali di nuovo.'))}</p>` : '') +
     `<button type="button" data-do="fbhooks">${esc(on ? tr('RIMUOVI GLI HOOK DI FEEDBACK…') : tr('INSTALLA GLI HOOK DI FEEDBACK…'))}</button><div class="fbconfirm" hidden></div>`;
 }
 function feedbackHooksHtml(st) {

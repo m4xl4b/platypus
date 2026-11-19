@@ -23,6 +23,9 @@ const GIVE_UP_MS = 60 * 60000;    // una sessione che non si vede più: dopo un'
 const WITHDRAW = /\bnot (?:yet )?(?:verified|tested|been run)\b|\bhave(?:n'?t| not) (?:yet )?(?:run|tested|verified)\b|\bdid(?:n'?t| not) (?:run|test|verify)\b|\bnon (?:ancora )?(?:verificat\w*|testat\w*|provat\w*)\b|\bnon ho (?:ancora )?(?:lanciato|verificato|eseguito|provato)\b/i;
 
 const say = (outcome, why) => ({ outcome, why });
+// la paura (2.14): dopo l'avviso, ha guardato, salvato o provato a vuoto?
+const PRUDENT = /^(git\s+(status|diff|log|show|stash(\s+(push|save))?\s*$|stash\s+(push|save)\b|commit\b(?!.*--amend)|branch\s+[^-\s]|tag\s+[^-\s])|ls\b|dir\b|get-childitem\b|cat\b|terraform\s+plan|pulumi\s+preview|kubectl\s+(get|diff|describe)|helm\s+(list|status|diff)|pg_dump|mysqldump|cp\b|tar\b)/i;
+const FEAR_STEPS = 3;
 const cmdOfStep = s => (/^run:/.test(s.sig || '') ? s.sig.slice(4) : '');
 const sameCmd = (s, cmd) => !!cmd && !!cmdOfStep(s) && cmdCore(cmdOfStep(s)) === cmdCore(cmd);
 const isTest = s => s.act === 'verify' && isTestCommand(cmdOfStep(s));
@@ -99,6 +102,19 @@ function judge(e, ag, now = Date.now()) {
       const until = next || Infinity;
       if ((ag.replies || []).some(r => r.t > e.t && r.t < until && WITHDRAW.test(String(r.text || '')))) return say('helped', tr('ha detto che non era verificato'));
       return closed ? say('ignored', stopped ? tr('niente prima della richiesta successiva') : tr('nessun controllo nei passi successivi')) : null;
+    }
+    // 2.14 · la paura: nelle 3 azioni dopo quella avvisata, ha chiesto all'utente, aggiunto prudenza, o è andato avanti?
+    // L'avviso arriva al PreToolUse: l'azione avvisata parte comunque (Platypus non decide), quindi si guarda quello che viene dopo
+    case 'fear': {
+      const win = after.slice(0, FEAR_STEPS);
+      for (const s of win) {
+        if (s.err === null) return null;
+        if (s.tool === 'AskUserQuestion' || s.tool === 'ExitPlanMode') return say('helped', tr('ha chiesto all\'utente'));
+        if (s.act === 'read' || s.act === 'search' || PRUDENT.test(cmdCore(cmdOfStep(s)))) return say('helped', tr('ha aggiunto prudenza'));
+        if (s.risk && s.risk.level >= 2) return s.risk.missed ? say('ignored', tr('è andato avanti con un\'altra azione rischiosa senza prudenza')) : say('helped', tr('l\'azione rischiosa dopo era prudente'));
+      }
+      if (stopped && !win.length) return say('helped', tr('si è fermato e ha lasciato decidere all\'utente'));
+      return win.length >= FEAR_STEPS || closed ? say('unclear', tr('è andato avanti con altro')) : null;
     }
     // il Nonno su un comando lento («lancialo in background»): i passi non dicono come è stato lanciato
     case 'slow-step': return say('unclear', tr('i passi non dicono se l\'ha lanciato in background'));
