@@ -17,8 +17,8 @@ const ROOT = path.join(__dirname, '..');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // un processo Node con del codice; risolve con { code, out } quando esce
-function child(code, args = [], { env = process.env, onLine = null } = {}) {
-  const c = spawn(process.execPath, ['-e', code, ROOT, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+function child(code, args = [], { env = process.env, onLine = null, stdin = false } = {}) {
+  const c = spawn(process.execPath, ['-e', code, ROOT, ...args], { env, stdio: [stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
   let out = '';
   c.stdout.on('data', d => { out += d; if (onLine) for (const l of String(d).split('\n')) if (l.trim()) onLine(l.trim(), c); });
   c.stderr.on('data', d => { out += d; });
@@ -85,22 +85,33 @@ async function run(ok) {
       const path = require('path'); const [root, dir] = process.argv.slice(1);
       const { DatabaseSync } = require(path.join(root, 'src/core/store/sqlite-load')).loadSqlite();
       const db = new DatabaseSync(path.join(dir, 'platypus.db'));
+      db.exec('PRAGMA busy_timeout = 10000'); // senza, BEGIN IMMEDIATE fallisce subito se il file è un attimo occupato
       db.exec('BEGIN IMMEDIATE'); process.stdout.write('held\\n');
-      setTimeout(() => { db.exec('COMMIT'); db.close(); process.stdout.write('released\\n'); }, 4500);`, [d2]);
+      // tiene il blocco finché la prova non dice "release" (o 60 s al massimo): nessuna gara fra due orologi
+      const release = () => { db.exec('COMMIT'); db.close(); process.stdout.write('released\\n'); process.exit(0); };
+      process.stdin.on('data', d => { if (/release/.test(String(d))) release(); });
+      setTimeout(release, 60000);`, [d2], { stdin: true });
     kids.push(holder.proc);
     // un solo ascoltatore che accumula: prima un "held" arrivato a un'attesa già scaduta andava perso (CI di macOS)
     let heldOut = '';
     holder.proc.stdout.on('data', d => { heldOut += d; });
-    for (let i = 0; i < 100 && !/held/.test(heldOut); i++) await sleep(50);
+    // i runner macOS della CI possono metterci più di 5 s a far partire il processo: si aspetta fino a 30 s
+    for (let i = 0; i < 600 && !/held/.test(heldOut); i++) await sleep(50);
+    const held = /held/.test(heldOut);
     const sess = { id: 'sess-occupata', cwd: path.join(tmp, 'progetto'), demo: false };
     for (let i = 0; i < 30; i++) h.recordStep(sess, { id: 'main' }, { id: 'u' + i, t: 1000 + i, tool: 'Read', act: 'read', target: 'src/a' + i + '.js', sig: 'Read', err: false, dur: 1, phase: '' });
-    const first = h.flush(); // il database è occupato: la coda resta
+    const t0 = Date.now();
+    const first = h.flush(); // il database è occupato più a lungo di busy_timeout: la coda resta
+    const waited = Date.now() - t0;
     const kept = h.pending.size, busy = h.busy || 0;
-    await holder.done;
+    holder.proc.stdin.write('release\n');
+    const hold = await holder.done;
     const second = h.flush();
     const saved = h.store.collection('steps').count({ session: 'sess-occupata' });
     h.stop();
-    ok(first === 0 && kept === 30 && busy >= 1 && second === 30 && saved === 30, `database occupato da un altro processo per 4,5 s: la coda non perde niente (${kept} passi tenuti, poi ${saved} scritti)`);
+    const good = held && first === 0 && kept === 30 && busy >= 1 && second === 30 && saved === 30;
+    ok(good, `database occupato da un altro processo più a lungo dell'attesa di SQLite: la coda non perde niente (${kept} passi tenuti, poi ${saved} scritti)` +
+      (good ? '' : ` · primo flush ${first} dopo ${waited} ms, busy ${busy}, secondo ${second}; l'altro processo: ${held ? 'ha tenuto il blocco' : 'non ha mai tenuto il blocco'}, uscito con ${hold.code}: ${hold.out.trim().replace(/\s+/g, ' ').slice(0, 300)}`));
 
     // ---------------------------------------------------------- aprire lo storico mentre un altro processo lo tiene chiuso
     // più a lungo dell'attesa di SQLite (3 s): l'apertura riprova invece di ripiegare sulla memoria (visto sulla CI)
