@@ -5,6 +5,8 @@
 //   portale-clienti  migliora: i giri in tondo e le sorprese calano, le lezioni del Libro arrivano agli agenti
 //   mes-clone        peggiora: più giri in tondo, più fasi bloccate, più affermazioni senza prove
 //   isms-docs        stabile
+// Dalla 2.14 anche la paura: azioni rischiose, paure mancate (in calo su portale-clienti, in aumento su mes-clone) e
+// cicatrici, più il messaggio "fear" in esperimento (con il messaggio l'agente aggiunge prudenza più spesso).
 // e il "giro in tondo" è in esperimento, con un effetto visibile (probabilmente utile più spesso con i messaggi).
 // Numeri a caso ma sempre gli stessi (seme fisso), così le prove li possono controllare.
 
@@ -14,6 +16,12 @@ const { pathKey } = require('./store/project-key');
 const { groupOf } = require('./experiments');
 
 const DAY = 86400000, WEEK = 7 * DAY, WEEKS = 13;
+// le azioni rischiose finte: regola, livello, forma, bersaglio (senza comandi veri)
+const RISKS = [
+  ['git-reset-hard', 2, 'git reset --hard <ref>', ''], ['git-clean', 2, 'git clean -fd', ''], ['rm-recursive', 2, 'rm -r <path>', 'data/export'],
+  ['git-push-main', 3, 'git push <remote> main', ''], ['terraform-apply', 3, 'terraform apply', ''], ['sql-delete-all', 3, 'DELETE FROM <table>', ''], ['publish', 3, '<tool> publish', ''],
+];
+const NAMES = ['CLAUDE', 'EXPLORE', 'ARCHITECT', 'TEST-RUNNER', 'PULIZIA'];
 const PROJECTS = [
   { cwd: 'C:/Progetti/portale-clienti', name: 'portale-clienti', shape: 'better' },
   { cwd: 'D:/dev/mes-clone', name: 'mes-clone', shape: 'worse' },
@@ -28,8 +36,11 @@ const along = (shape, f, from, to) => (shape === 'better' ? from + (to - from) *
 function seedDemoHistory(store, now = Date.now()) {
   const r = rng(20261119);
   const pick = a => a[Math.floor(r() * a.length)];
+  // la paura (2.14) ha il suo generatore: così i numeri di prima restano identici
+  const rf = rng(20261120), pickF = a => a[Math.floor(rf() * a.length)];
   const sessions = store.collection('sessions'), steps = store.collection('steps'), feedback = store.collection('feedback'), experiments = store.collection('experiments'), projects = store.collection('projects');
-  let nSessions = 0, nSteps = 0, nFeedback = 0;
+  const risks = store.collection('risks');
+  let nSessions = 0, nSteps = 0, nFeedback = 0, nRisks = 0;
   store.transaction(() => {
     for (const p of PROJECTS) {
       const key = pathKey(p.cwd);
@@ -54,6 +65,28 @@ function seedDemoHistory(store, now = Date.now()) {
             lessons: p.shape === 'better' ? Math.round(2.5 * f) : 0, cost: Math.round((0.6 + r() * 2.4) * 100) / 100, tokens: 40000 + Math.floor(r() * 300000),
           });
           nSessions++;
+          // la paura (2.14): qualche azione rischiosa per sessione; le paure mancate seguono la forma del progetto
+          {
+            const n = 2 + Math.floor(rf() * 2), missRate = along(p.shape, f, 0.85, 0.1);
+            let missed = 0, scars = 0;
+            for (let i = 0; i < n; i++) {
+              const [rule, level, shape, target] = pickF(RISKS), miss = rf() < missRate, damage = miss && rf() < 0.12;
+              const rt = t + (i + 1) * 300000;
+              risks.put({ _id: `${sid}:risk${i}`, project: key, t: rt, session: sid, agent: i ? 'demo-sub' : 'main', name: pickF(NAMES), tool: 'Bash', ruleIds: [rule], level,
+                prudence: miss ? 0 : 0.6, present: miss ? [] : ['backup'], missing: miss ? ['looked', 'backup'] : ['looked'], missed: miss, shape, ...(target ? { target } : {}),
+                ...(damage ? { outcome: 'damage', at: rt + 120000, evidence: [`${sid}:s0`] } : {}) });
+              nRisks++; if (miss) missed++; if (damage) scars++;
+              // il messaggio "fear", in esperimento: con il messaggio l'agente aggiunge prudenza più spesso
+              if (miss && p.shape !== 'steady') {
+                const group = groupOf(sid, 'fear'), u = rf();
+                const outcome = u < 0.2 ? 'unclear' : (u - 0.2) / 0.8 < (group === 'on' ? 0.62 : 0.3) ? 'helped' : 'ignored';
+                feedback.put({ project: key, t: rt - 1000, sid, agent: 'main', name: 'CLAUDE', feature: 'fear', mode: group, group, event: 'PreToolUse', tag: rule,
+                  text: 'Platypus: this command is dangerous. Missing in the last actions: a commit or a copy. If the user did not ask for exactly this, first make a commit or a copy, or ask them.', about: { kind: 'fear', cmd: shape, pat: rule }, outcome, at: rt + 600000 });
+                nFeedback++;
+              }
+            }
+            sessions.patch(sid, { risky_actions: n, missed_fears: missed, scars });
+          }
           if (p.shape !== 'steady') { experiments.put({ _id: sid + ':sessionLessons', project: key, t, sid, feature: 'sessionLessons', group: lessonsGroup }); }
           // i messaggi del giro in tondo, in esperimento: con i messaggi l'agente cambia strada più spesso
           if (loops > 0 && p.shape !== 'steady') {
@@ -81,7 +114,20 @@ function seedDemoHistory(store, now = Date.now()) {
       }
     }
   });
-  return { sessions: nSessions, steps: nSteps, feedback: nFeedback };
+  // oggi: qualche azione rischiosa delle ultime ore, così il report del giorno ha qualcosa da mostrare
+  store.transaction(() => {
+    PROJECTS.forEach((p, j) => {
+      const key = pathKey(p.cwd);
+      for (let i = 0; i < 2; i++) {
+        const [rule, level, shape, target] = RISKS[(j * 2 + i) % RISKS.length], rt = now - (i * 2 + j + 1) * 1800000, damage = j === 1 && i === 0;
+        risks.put({ _id: `demo-today-${p.name}-${i}`, project: key, t: rt, session: `demo-today-${p.name}`, agent: 'main', name: NAMES[(i + j) % NAMES.length], tool: 'Bash', ruleIds: [rule], level,
+          prudence: i ? 0.6 : 0, present: i ? ['backup'] : [], missing: i ? ['looked'] : ['looked', 'backup'], missed: !i, shape, ...(target ? { target } : {}),
+          ...(damage ? { outcome: 'damage', at: rt + 60000, evidence: [`demo-today-${p.name}:s0`] } : {}) });
+        nRisks++;
+      }
+    });
+  });
+  return { sessions: nSessions, steps: nSteps, feedback: nFeedback, risks: nRisks };
 }
 
 // lo store della demo: in memoria, con le collezioni vere, già riempito

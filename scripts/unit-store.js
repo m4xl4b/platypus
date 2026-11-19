@@ -1243,6 +1243,19 @@ async function demoHistoryTests(ok) {
   ok(same && a.seeded.sessions > 200 && a.seeded.steps > 300 && a.seeded.feedback > 100 && a.backend === 'memory', `tre mesi finti, sempre uguali e solo in memoria: ${a.seeded.sessions} sessioni, ${a.seeded.steps} passi, ${a.seeded.feedback} messaggi`);
   const verdicts = PROJECTS.map(p => { const all = HQ.queryAll(a, { projects: [pathKey(p.cwd)], from: HQ.addDays(HQ.bucketStart(now, 'week'), -7 * 25), to: now + 1, bucket: 'week' }); return ['loops', 'stuck', 'claims', 'surprises'].map(m => HQ.trend(all[m], now).verdict).join(','); });
   ok(verdicts[0] === 'fewer,fewer,fewer,fewer' && verdicts[1] === 'more,more,more,more' && verdicts[2] === 'same,same,same,same', `un progetto migliora, uno peggiora, uno resta uguale: ${verdicts.join(' | ')}`);
+  // 2.14 (R10): la paura nello storico finto
+  {
+    const fear = require(path.join(ROOT, 'src', 'core', 'fear'));
+    const sameRisks = JSON.stringify(a.collection('risks').find({}, { sort: { _id: 1 } })) === JSON.stringify(b.collection('risks').find({}, { sort: { _id: 1 } }));
+    const mf = PROJECTS.map(p => { const all = HQ.queryAll(a, { projects: [pathKey(p.cwd)], from: HQ.addDays(HQ.bucketStart(now, 'week'), -7 * 25), to: now + 1, bucket: 'week', metrics: ['missed_fears'] }); return HQ.trend(all.missed_fears, now).verdict; });
+    const sm = fear.summary(a, { projects: [pathKey(PROJECTS[1].cwd)], now });
+    const d0 = new Date(now); d0.setHours(0, 0, 0, 0);
+    const today = fear.reportDay(a, d0.getTime(), d0.getTime() + 86400000);
+    const ex = X.resultFor(a, 'fear');
+    ok(sameRisks && a.seeded.risks > 100 && mf[0] === 'fewer' && mf[1] === 'more' && sm.total > 20 && sm.damage > 0 && sm.rules.length >= 5 && today.total >= 3 && today.scars.length >= 1 && ex.enough,
+      `la paura finta: ${a.seeded.risks} azioni rischiose, paure mancate ${mf.join('/')}, oggi ${today.total} con ${today.scars.length} cicatrice, il messaggio in esperimento (n = ${ex.n.on} e ${ex.n.shadow})`);
+    ok(!/--force|origin\/|@example|DROP TABLE/.test(JSON.stringify(a.collection('risks').find({}))), 'la paura finta: solo forme di comandi, nessun comando');
+  }
   const loop = X.resultFor(a, 'loop'), sl = X.resultFor(a, 'sessionLessons');
   ok(loop.enough && loop.result.lo > 0.1 && sl.enough && sl.result.hi < 0, `l'esperimento della demo ha un effetto visibile: giro in tondo +${(loop.result.diff * 100).toFixed(0)} punti (da +${(loop.result.lo * 100).toFixed(0)}), lezioni a inizio sessione ${sl.result.diff.toFixed(1)} errori ogni 100 azioni`);
   const s1 = searchSteps(a, { projects: [pathKey(PROJECTS[0].cwd)], file: 'login' }), t = HQ.reportTrend(a, now);

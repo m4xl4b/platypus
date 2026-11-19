@@ -1161,7 +1161,8 @@ function relayoutPeople() {
   }
   for (const n of npcs) {
     n.alpha = 0;
-    const tgt = n.npc === 'cat' ? n.target : n.npc === 'pest' && n.state === 'chat' ? n.victim : n.npc === 'hr' && n.state !== 'exit' ? n.victim : null;
+    // il Nonno va (o sta) da chi deve sentirlo: senza questa riga, quando le sale si spostano finiva all'ascensore e parlava da lì
+    const tgt = n.npc === 'cat' ? n.target : n.npc === 'pest' && n.state === 'chat' ? n.victim : (n.npc === 'hr' || n.npc === 'elder') && n.state !== 'exit' ? n.victim : null;
     const d = tgt && deskFor(tgt);
     let place;
     if (d) place = besidePlace(d);

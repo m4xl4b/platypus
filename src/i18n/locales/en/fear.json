@@ -140,5 +140,9 @@
   "Segnare una regola come normale per questo progetto (per esempio «qui terraform apply è normale») arriverà con la guardia, che aspetta ancora le prove sugli hook.": "Marking a rule as normal for this project (for example \"here terraform apply is normal\") will come with the guard, which is still waiting for the hook tests.",
   "LE ULTIME": "THE LATEST",
   "Le azioni difficili da disfare che gli agenti di questo progetto hanno fatto, con o senza prudenza, e i danni visti dopo. Platypus non è una protezione: riconosce schemi noti e può non vedere quello che non conosce. Ogni giudizio è probabile.": "The hard-to-undo actions the agents of this project took, with or without prudence, and the damage seen after. Platypus is not a protection: it recognises known patterns and can miss what it does not know. Every judgement is probable.",
-  "PAURE E CICATRICI": "FEARS AND SCARS"
+  "PAURE E CICATRICI": "FEARS AND SCARS",
+  "Rimetti il branch come su origin": "Put the branch back as on origin",
+  "Aggiorna l'infrastruttura di prova": "Update the test infrastructure",
+  "Pulisci gli export vecchi": "Clean up the old exports",
+  "Report di novembre": "November report"
 }

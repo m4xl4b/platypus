@@ -72,6 +72,7 @@ class Demo {
     }
     this.groundingScenario(this.ids.a, { explore: team[0], finder: team[1], architect: arch, tester: team[2], plan: planId }, scale);
     this.synonymsScenario(this.ids.a);
+    this.fearScenario(this.ids.c, scale); // isms-docs: pochi agenti, la scena si vede tutta
     this.startWorkflows(this.ids.c);
     this.demoMessage(this.ids.a, arch, tr('Usa i refresh token a rotazione'));
     this.seedBooks();
@@ -172,6 +173,8 @@ class Demo {
     for (const [d, h, sid] of [[3, 2, 'demo-old-5'], [2, 4, 'demo-old-6'], [1, 3, 'demo-old-7']]) rev.push({ kind: 'flaky-command', key: 'npm test -- specs', t: at(d, h), sid, agent: 'SPEC-CHECKER', excerpt: 'FAIL specs/REQ-012.md' });
     for (const [d, h, sid] of [[2, 1, 'demo-old-6'], [1, 1, 'demo-old-7']]) rev.push({ kind: 'ghost-path', key: 'specs/REQ-049.md', t: at(d, h), sid, agent: 'REVIEWER', excerpt: 'File does not exist.' });
     this.bottega.seedDemo('D:/dev/mes-clone', rev);
+    // isms-docs (la scena della paura): una cicatrice di due giorni fa sulla stessa cartella, e il Nonno la ricorda
+    this.bottega.seedDemo('C:/Progetti/isms-docs', [{ kind: 'scar', key: 'rm -r <path> → data/export', t: at(2, 2), sid: 'demo-old-8', agent: 'GENERAL-PURPOSE', excerpt: 'backup,asked' }]);
   }
 
   // un evento fra qualche secondo (accorciato da scale), cancellato se la demo si ferma
@@ -212,6 +215,43 @@ class Demo {
       this.state.worldEnd(s, a, tid, !!err, { content: out }, { toolUseResult: {} }, t + 4000);
     });
     return id;
+  }
+
+  // 2.14 (R10) · la paura, sul piano di isms-docs. Quattro scene che tornano ogni 4 minuti, senza mai lanciare un comando vero:
+  //   1. RIPRISTINO fa git reset --hard senza un commit prima: resta calmo, arriva il Nonno con il timbro PERICOLO
+  //   2. INFRA lancia terraform plan, poi terraform apply: suda, perché è stato prudente
+  //   3. PULIZIA cancella data/export (che aveva appena letto), poi non lo trova più e i test cadono: la cicatrice
+  //   4. CLAUDE chiede il permesso per uno strumento MCP che manda una mail: livello 3 nel fumetto (IRREVERSIBILE)
+  fearScenario(sid, scale = 1) {
+    const s = this.state.sessions.get(sid);
+    if (!s) return;
+    const mk = (desc) => { const id = this.spawn(sid, 'general-purpose', desc); const a = id && s.subs.get(id); if (a) a._demoHold = Infinity; return a; };
+    const reset = mk(tr('Rimetti il branch come su origin')), infra = mk(tr('Aggiorna l\'infrastruttura di prova')), clean = mk(tr('Pulisci gli export vecchi'));
+    if (!reset || !infra || !clean) return;
+    const at = (sec, fn) => this.later(sec * scale, fn);
+    const tool = (sec, a, name, input, out, err = false, dur = 2) => {
+      const id = 'demo-fear-' + (++this.n);
+      at(sec, () => this.state.worldStart(s, a, id, name, input, Date.now()));
+      at(sec + dur, () => this.state.worldEnd(s, a, id, !!err, { content: out }, { toolUseResult: {} }, Date.now()));
+    };
+    const round = (t0) => {
+      // 1 · il reset senza rete
+      tool(t0 + 4, reset, 'Bash', { command: 'npm test' }, 'Tests: 18 passed, 18 total');
+      tool(t0 + 9, reset, 'Bash', { command: 'git reset --hard origin/main' }, 'HEAD is now at 4f2a9c1 Merge pull request #41');
+      // 2 · plan, poi apply: la paura giusta
+      tool(t0 + 14, infra, 'Bash', { command: 'terraform plan -out=tfplan' }, 'Plan: 2 to add, 1 to change, 0 to destroy.');
+      tool(t0 + 22, infra, 'Bash', { command: 'terraform apply tfplan' }, 'Apply complete! Resources: 2 added, 1 changed, 0 destroyed.', false, 5);
+      // 3 · la cartella cancellata: dopo, il file non c'è più e i test cadono (il motore segna la cicatrice entro un minuto)
+      tool(t0 + 30, clean, 'Read', { file_path: s.cwd + '/data/export/ordini-2026.csv' }, 'id,cliente,totale');
+      tool(t0 + 34, clean, 'Bash', { command: 'rm -rf data/export' }, '');
+      tool(t0 + 40, clean, 'Read', { file_path: s.cwd + '/data/export/ordini-2026.csv' }, 'File does not exist.', true);
+      tool(t0 + 44, clean, 'Bash', { command: 'git reflog' }, '4f2a9c1 HEAD@{0}: commit: export mensile');
+      // 4 · una mail al cliente da uno strumento MCP: serve il tuo permesso, ed è irreversibile
+      at(t0 + 50, () => this.hook(sid, 'PermissionRequest', { tool_name: 'mcp__gmail__send_email', tool_input: { to: 'cliente@example.com', subject: tr('Report di novembre') } }));
+    };
+    round(0);
+    const again = () => { round(0); this.later(240 * scale, again); };
+    this.later(240 * scale, again);
   }
 
   later(sec, fn) { const tm = setTimeout(() => { this.world.timers.delete(tm); try { fn(); } catch {} }, sec * 1000); this.world.timers.add(tm); }

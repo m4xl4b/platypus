@@ -155,6 +155,20 @@ process.on('exit', code => {
   await sleep(2500);
   const st = JSON.parse((await get(port, '/api/state')).body);
   ok(st.sessions.length >= 4, `demo: ${st.sessions.length} piani, ${st.sessions.reduce((a, s) => a + s.subs.length, 0)} sottoagenti`);
+  // 2.14 (R10): le quattro scene della paura sul piano di isms-docs, recitate in velocità; nessun comando vero
+  {
+    const fs2 = [...core.state.sessions.values()].find(s => s.demo && /isms-docs/.test(s.cwd));
+    const subs = fs2 ? [...fs2.subs.values()] : [];
+    const { tr: trD } = require(path.join(__dirname, '..', 'src', 'i18n'));
+    const by = d => subs.find(a => a.description === trD(d));
+    const lastRisk = a => { const st2 = (a && a.world && a.world.steps) || []; for (let i = st2.length - 1; i >= 0; i--) if (st2[i].risk) return st2[i].risk; return null; };
+    const rReset = lastRisk(by('Rimetti il branch come su origin')), rInfra = lastRisk(by('Aggiorna l\'infrastruttura di prova')), clean = by('Pulisci gli export vecchi');
+    // segna le cicatrici come fa il motore ogni minuto (senza far imparare il Libro: lo prova una parte più avanti)
+    if (fs2) require(path.join(__dirname, '..', 'src', 'core', 'fear')).markScars(fs2, [fs2.main, ...fs2.subs.values()].filter(a => a.world).map(a => ({ id: a.id, name: a.name, world: a.world, mind: a.mind })));
+    ok(rReset && rReset.level === 2 && rReset.missed && rInfra && rInfra.level === 3 && !rInfra.missed && rInfra.present.includes('dryrun') && clean && clean.world.scarAt > 0 && fs2.main.permRisk && fs2.main.permRisk.level === 3 && /mcp|esterno|external/i.test(fs2.main.permRisk.reasons.join(' ')),
+      'demo, la paura: reset senza rete (paura mancata), plan e apply (prudente), la cartella cancellata (cicatrice), la mail MCP (irreversibile)');
+    ok(!core.history.store.collection('risks').count({ session: fs2 ? fs2.id : '-' }), 'demo, la paura: niente nello storico vero');
+  }
   // lo storico: il motore apre il database accanto alle opzioni e lo dice nello stato (S9 di docs/plans/2.13-storage.md)
   const hist0 = await core.historyReady(), sse0 = await sseFirst(port);
   ok(st.history && st.history.backend === 'sqlite' && st.history.notice === '' && sse0.history && sse0.history.notice === '' && fs.existsSync(path.join(tmp, 'platypus.db')) && hist0 && hist0.done === true && core.history.store.info().collections.length === 8,

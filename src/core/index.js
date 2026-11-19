@@ -820,7 +820,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         if (!sc) return json(res, 404, { ok: false });
         if (!sc.store) return json(res, 200, { ok: true, demo: true });
         // nella demo il giro in tondo e le lezioni a inizio sessione sono in esperimento (dati finti, demo-history.js)
-        const modes = sc.demo ? { sessionLessons: 'experiment', elder: 'on', loop: 'experiment' } : Object.fromEntries(experiments.FEATURES.map(f => [f, feedback.modeOf(state.settings, f)]));
+        const modes = sc.demo ? { sessionLessons: 'experiment', elder: 'on', loop: 'experiment', fear: 'experiment' } : Object.fromEntries(experiments.FEATURES.map(f => [f, feedback.modeOf(state.settings, f)]));
         return json(res, 200, { ok: true, demo: sc.demo, modes, minN: experiments.MIN_N, project: sc.projects ? experiments.results(sc.store, sc.projects) : null, all: experiments.results(sc.store) });
       } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
     }
