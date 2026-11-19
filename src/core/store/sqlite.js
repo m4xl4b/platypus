@@ -121,6 +121,29 @@ class SqliteDriver {
     this.persistent = true;
     this.file = path.join(opts.dir, 'platypus.db');
     this.db = null;
+    // Due Platypus che partono insieme su un file nuovo: mentre uno lo passa a WAL e lo prepara, SQLite può dire
+    // "database is locked" all'altro senza aspettare busy_timeout (visto sulla CI di Linux e Windows). Si riprova
+    // tutta l'apertura, al massimo 5 volte con una pausa che cresce; ogni altro errore resta quello che è.
+    const locked = e => /database is locked|SQLITE_BUSY|database table is locked/i.test(String(e && e.message || e));
+    for (let attempt = 1; ; attempt++) {
+      try { this.openOnce(sqlite, opts); break; }
+      catch (e) {
+        if (attempt >= 5 || !locked(e)) throw e;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150 * attempt);
+      }
+    }
+    this.stmts = new Map();
+    this.inTx = false;
+    this.queue = [];       // righe di append che aspettano: { name, doc }
+    this.queued = new Set(); // "collezione\n_id" delle righe in coda, per accorgersi dei doppioni
+    this.timer = null;
+    this.flushMs = Number.isFinite(opts.flushMs) ? opts.flushMs : FLUSH_MS;
+    this.flushDocs = Number.isInteger(opts.flushDocs) && opts.flushDocs > 0 ? opts.flushDocs : FLUSH_DOCS;
+    this.onError = typeof opts.onError === 'function' ? opts.onError : e => console.error('[platypus] store: ' + (e && e.message || e));
+  }
+
+  // un tentativo di apertura: file, impostazioni, controllo, migrazioni, una scrittura vera
+  openOnce(sqlite, opts) {
     try {
       fs.mkdirSync(opts.dir, { recursive: true, mode: 0o700 });
       this.db = new sqlite.DatabaseSync(this.file);
@@ -146,14 +169,6 @@ class SqliteDriver {
       const msg = String(e && e.message || e);
       fail(/not a database|malformed|corrupt/i.test(msg) ? 'corrupt' : 'unopenable', msg);
     }
-    this.stmts = new Map();
-    this.inTx = false;
-    this.queue = [];       // righe di append che aspettano: { name, doc }
-    this.queued = new Set(); // "collezione\n_id" delle righe in coda, per accorgersi dei doppioni
-    this.timer = null;
-    this.flushMs = Number.isFinite(opts.flushMs) ? opts.flushMs : FLUSH_MS;
-    this.flushDocs = Number.isInteger(opts.flushDocs) && opts.flushDocs > 0 ? opts.flushDocs : FLUSH_DOCS;
-    this.onError = typeof opts.onError === 'function' ? opts.onError : e => console.error('[platypus] store: ' + (e && e.message || e));
   }
 
   stmt(sql) {

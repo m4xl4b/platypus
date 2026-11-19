@@ -88,7 +88,10 @@ async function run(ok) {
       db.exec('BEGIN IMMEDIATE'); process.stdout.write('held\\n');
       setTimeout(() => { db.exec('COMMIT'); db.close(); process.stdout.write('released\\n'); }, 4500);`, [d2]);
     kids.push(holder.proc);
-    for (let i = 0; i < 50 && !/held/.test(await Promise.race([sleep(100).then(() => ''), new Promise(r => holder.proc.stdout.once('data', d => r(String(d))))])); i++);
+    // un solo ascoltatore che accumula: prima un "held" arrivato a un'attesa già scaduta andava perso (CI di macOS)
+    let heldOut = '';
+    holder.proc.stdout.on('data', d => { heldOut += d; });
+    for (let i = 0; i < 100 && !/held/.test(heldOut); i++) await sleep(50);
     const sess = { id: 'sess-occupata', cwd: path.join(tmp, 'progetto'), demo: false };
     for (let i = 0; i < 30; i++) h.recordStep(sess, { id: 'main' }, { id: 'u' + i, t: 1000 + i, tool: 'Read', act: 'read', target: 'src/a' + i + '.js', sig: 'Read', err: false, dur: 1, phase: '' });
     const first = h.flush(); // il database è occupato: la coda resta
@@ -98,6 +101,30 @@ async function run(ok) {
     const saved = h.store.collection('steps').count({ session: 'sess-occupata' });
     h.stop();
     ok(first === 0 && kept === 30 && busy >= 1 && second === 30 && saved === 30, `database occupato da un altro processo per 4,5 s: la coda non perde niente (${kept} passi tenuti, poi ${saved} scritti)`);
+
+    // ---------------------------------------------------------- aprire lo storico mentre un altro processo lo tiene chiuso
+    // più a lungo dell'attesa di SQLite (3 s): l'apertura riprova invece di ripiegare sulla memoria (visto sulla CI)
+    {
+      const d4 = path.join(tmp, 'chiuso');
+      fs.mkdirSync(d4, { recursive: true });
+      const lock = child(`
+        const path = require('path'); const [root, dir] = process.argv.slice(1);
+        const { DatabaseSync } = require(path.join(root, 'src/core/store/sqlite-load')).loadSqlite();
+        const db = new DatabaseSync(path.join(dir, 'platypus.db'));
+        db.exec('BEGIN EXCLUSIVE'); db.exec('CREATE TABLE x (a)'); process.stdout.write('held\\n');
+        setTimeout(() => { db.exec('COMMIT'); db.close(); process.stdout.write('released\\n'); }, 4000);`, [d4]);
+      kids.push(lock.proc);
+      let lockOut = '';
+      lock.proc.stdout.on('data', d => { lockOut += d; });
+      for (let i = 0; i < 100 && !/held/.test(lockOut); i++) await sleep(50);
+      const { openStoreSafe } = require(path.join(ROOT, 'src', 'core', 'store'));
+      const t0 = Date.now();
+      const s4 = openStoreSafe({ backend: 'sqlite', dir: d4 });
+      const waited = Date.now() - t0, fb = s4.fallback, be = s4.backend;
+      s4.close();
+      await lock.done;
+      ok(/held/.test(lockOut) && !fb && be === 'sqlite' && waited >= 3000, `storico aperto mentre un altro processo lo tiene chiuso per 4 s: aspetta e si apre (${(waited / 1000).toFixed(1)} s), niente ripiego in memoria${fb ? ' — ripiego: ' + fb.code + ' ' + String(fb.detail).slice(0, 80) : ''}`);
+    }
 
     // ---------------------------------------------------------- ucciso a metà di una transazione grande
     const d3 = path.join(tmp, 'crash');

@@ -178,7 +178,6 @@ function runTauri() {
 
 // ---------------------------------------------------------------- main
 (async () => {
-  if ((has('--setup') || has('--shortcut')) && !nodeForWindow) process.exit(1); // Electron non si installa: il motivo è già scritto sopra
   if (has('--setup')) { process.exit(depsOk() || installDeps() ? 0 : 1); }
   if (has('--shortcut')) {
     if (!depsOk() && !installDeps()) process.exit(1);
