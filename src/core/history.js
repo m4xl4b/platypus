@@ -79,6 +79,12 @@ class History {
     this.queue('steps', doc);
   }
 
+  // ---- l'esperimento sul feedback (S11): il gruppo di una sessione per una funzione, una volta sola
+  recordExperiment({ cwd, sid, feature, group, t }) {
+    if (!cwd || !sid || !feature || (group !== 'on' && group !== 'shadow')) return;
+    this.queue('experiments', { _id: `${sid}:${feature}`, project: this.keys.keyNow(cwd), t: t || this.clock(), sid: String(sid), feature, group });
+  }
+
   // ---- il riassunto di ogni sessione (collezione sessions): si riscrive solo se è cambiato
   summarize(state) {
     if (!state || !state.sessions) return 0;

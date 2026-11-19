@@ -52,6 +52,7 @@ const osint = require('./osint');
 const { Stats } = require('./stats');
 const { History } = require('./history');
 const { runRetention } = require('./retention');
+const experiments = require('./experiments');
 const hooks = require('./hooks');
 const feedback = require('./feedback');
 const { FeedbackLog, MemoryFeedbackLog } = require('./feedbacklog');
@@ -287,6 +288,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       }, feedbackGate);
       out = r.out; entry = r.entry;
       if (entry && entry.mode === 'shadow') feedbackStats.shadow++;
+      // in esperimento: il gruppo della sessione resta nello storico (mai per la demo)
+      if (entry && entry.group && !(s && s.demo)) history.recordExperiment({ cwd, sid: entry.sid, feature: entry.feature, group: entry.group, t: entry.t });
     } catch { feedbackStats.errors++; out = null; }
     // calcolata tardi: non la mandiamo (la regola del tempo massimo vale anche per noi)
     if (out && Date.now() - t0 > FEEDBACK_MS) {
@@ -691,6 +694,17 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       const cwd = projectCwd(Object.fromEntries(url.searchParams));
       if (!cwd) return json(res, 404, { ok: false });
       try { return json(res, 200, { ok: true, demo: isDemoCwd(cwd), entries: (isDemoCwd(cwd) ? demoFeedbackLog : feedbackLog).recent(cwd, 200).map(feedbackRow) }); } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+    }
+    // l'esperimento sul feedback (S11): i due gruppi a confronto, per il progetto e per tutti i progetti
+    if (url.pathname === '/api/feedback/experiment') {
+      try {
+        history.flush();
+        const q = Object.fromEntries(url.searchParams), cwd = projectCwd(q);
+        if (cwd && isDemoCwd(cwd)) return json(res, 200, { ok: true, demo: true });
+        const keys = cwd ? history.keys.allKeys(history.keys.keyIfKnown(cwd)) : null;
+        const modes = Object.fromEntries(experiments.FEATURES.map(f => [f, feedback.modeOf(state.settings, f)]));
+        return json(res, 200, { ok: true, modes, minN: experiments.MIN_N, project: keys ? experiments.results(history.store, keys) : null, all: experiments.results(history.store) });
+      } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
     }
     // quanti messaggi per funzione negli ultimi 7 giorni, in tutti i progetti (accanto agli interruttori delle opzioni)
     if (url.pathname === '/api/feedback/counts') {

@@ -59,6 +59,7 @@
       const d = await (await fetch('/api/feedback/log?' + new URLSearchParams(B.q))).json();
       B.fb = d && d.ok ? d.entries : [];
     } catch { B.fb = B.fb || []; }
+    try { const x = await (await fetch('/api/feedback/experiment?' + new URLSearchParams(B.q))).json(); B.exp = x && x.ok ? x : null; } catch { B.exp = null; }
     if (B.open && B.data) render();
   }
   function feedbackHtml() {
@@ -77,6 +78,34 @@
     }).join('');
   }
   // per ogni funzione: i mandati accanto a quelli in ombra, che sono il termine di paragone
+  // l'esperimento (S11): i due gruppi a confronto, solo con numeri e solo quando ce ne sono abbastanza
+  function experimentHtml() {
+    const x = B.exp;
+    if (!x || x.demo || !x.all) return '';
+    const pct = v => (v * 100).toFixed(0) + '%', num = v => (Math.round(v * 10) / 10).toFixed(1), sgn = (v, f) => (v > 0 ? '+' : v < 0 ? '−' : '') + f(Math.abs(v));
+    const line = (r, scope) => {
+      if (!r) return '';
+      if (!r.enough) return tr('{scope}: dati insufficienti (n = {a} con i messaggi, {b} senza; ne servono almeno {min} per gruppo)', { scope, a: r.n.on, b: r.n.shadow, min: x.minN });
+      const q = r.result;
+      return r.kind === 'messages'
+        ? tr('{scope}: probabilmente utili {a} con i messaggi (n = {na}) contro {b} senza (n = {nb}); differenza {d} (al 95% tra {lo} e {hi})',
+          { scope, a: pct(q.p1), na: r.n.on, b: pct(q.p2), nb: r.n.shadow, d: sgn(q.diff * 100, v => v.toFixed(0)) + ' pt', lo: sgn(q.lo * 100, v => v.toFixed(0)), hi: sgn(q.hi * 100, v => v.toFixed(0)) })
+        : tr('{scope}: errori ogni 100 azioni {a} con le lezioni (n = {na} sessioni) contro {b} senza (n = {nb}); differenza {d} (al 95% tra {lo} e {hi})',
+          { scope, a: num(q.m1), na: r.n.on, b: num(q.m2), nb: r.n.shadow, d: sgn(q.diff, num), lo: sgn(q.lo, num), hi: sgn(q.hi, num) });
+    };
+    const rows = x.all.map((all, i) => {
+      const proj = x.project && x.project[i], on = x.modes && x.modes[all.feature] === 'experiment';
+      const any = (r) => r && (r.n.on + r.n.shadow > 0);
+      if (!on && !any(all)) return '';
+      return `<div><b>${esc(FEATURE[all.feature] || all.feature)}</b>${on ? '' : ` <span class="dim">${esc(tr('(esperimento spento)'))}</span>`}` +
+        (proj ? `<br>${esc(line(proj, tr('questo progetto')))}` : '') +
+        // se tutti i casi vengono da questo progetto, la seconda riga ripeterebbe la prima
+        (proj && JSON.stringify(proj.n) === JSON.stringify(all.n) ? '' : `<br>${esc(line(all, tr('tutti i progetti')))}`) + '</div>';
+    }).filter(Boolean);
+    if (!rows.length) return '';
+    return `<div class="fbsum fbexp"><div><b>${esc(tr('ESPERIMENTO'))}</b></div>${rows.join('')}` +
+      `<p class="dim">${esc(tr('Ogni sessione finisce a caso nel gruppo con i messaggi o in quello senza: i due gruppi lavorano negli stessi giorni e con gli stessi modelli. Una differenza il cui intervallo comprende lo zero non dice niente.'))}</p></div>`;
+  }
   function feedbackSummary() {
     const by = new Map();
     for (const e of B.fb || []) {
@@ -135,7 +164,7 @@
       `<button data-do="md" title="${esc(tr('Prepara una sezione per il CLAUDE.md del progetto con le lezioni fissate e le più forti'))}">${esc(tr('PROPONI PER CLAUDE.MD'))}</button></div>`) +
       (isDemo ? '' : `<label class="mute" title="${esc(tr('Vale per le funzioni di feedback delle opzioni: con questa spunta Platypus non manda né registra messaggi per gli agenti di questo progetto.'))}"><input type="checkbox" data-do="mute" ${d.mute ? 'checked' : ''}> ${esc(tr('Non parlare agli agenti di questo progetto'))}</label>` +
         `<button data-do="forgetproject" class="danger forgetproject" title="${esc(tr('Toglie dallo storico tutto quello che riguarda questo progetto. Chiede conferma.'))}">${esc(tr('DIMENTICA QUESTO PROGETTO…'))}</button>`) +
-      (fbTab ? `<div class="list">${feedbackSummary()}${feedbackHtml()}</div>` : '') +
+      (fbTab ? `<div class="list">${experimentHtml()}${feedbackSummary()}${feedbackHtml()}</div>` : '') +
       (fbTab ? '' : (B.md ? `<div class="md"><div class="mh">${esc(tr('ANTEPRIMA'))} <span class="dim">${esc(B.md.path)}</span></div>` +
         (B.md.markdown ? `<pre>${esc(B.md.markdown)}</pre>` : `<p class="dim">${esc(WHY_NOT.empty)}</p>`) +
         `<div class="la"><button data-do="copy" ${B.md.markdown ? '' : 'disabled'}>${esc(tr('COPIA'))}</button>` +

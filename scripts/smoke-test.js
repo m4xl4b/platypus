@@ -690,6 +690,14 @@ process.on('exit', code => {
     const after = JSON.parse((await get(port, '/api/bottega?cwd=' + encodeURIComponent(fakeCwd))).body);
     ok(fg.ok && fg.documents > 0 && core.history.store.collection('lessons').count({ project: fkKey }) === 0 && core.history.store.collection('steps').count({ session: 'bottega-smoke-0001' }) === 0 && after.ok && after.lessons.length === 0,
       `storico: «Dimentica questo progetto» dal Libro: ${fg.documents} documenti tolti, il Libro è vuoto`);
+    // l'esperimento sul feedback (S11): l'opzione, la rotta, e il gruppo che resta nello storico
+    await get(port, '/api/settings', 'POST', JSON.stringify({ fbLoop: 'experiment', fbClaims: 'experiment' }));
+    const setx = JSON.parse((await get(port, '/api/settings')).body);
+    const exp = JSON.parse((await get(port, '/api/feedback/experiment?cwd=' + encodeURIComponent(fakeCwd))).body);
+    const exD = JSON.parse((await get(port, '/api/feedback/experiment')).body);
+    ok(setx.fbLoop === 'experiment' && setx.fbClaims === 'shadow' && exp.ok && exp.modes.loop === 'experiment' && exp.minN === 10 && exp.project.length === 3 && exp.all.length === 3 && exD.ok && exD.project === null,
+      'esperimento: l\'opzione si salva (solo per le funzioni che possono essere accese), la rotta dà i risultati per il progetto e per tutti');
+    await get(port, '/api/settings', 'POST', JSON.stringify({ fbLoop: 'off', fbClaims: 'off' }));
     const rt = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'retention' }))).body);
     const names = core.history.store.collection('projects').find({}).map(p => p.name);
     ok(!names.some(n => /portale-clienti|mes-clone|isms-docs/.test(n)) && !names.includes(''), `storico: nessuna cartella della demo e nessun progetto senza nome tra i progetti (${names.join(', ')})`);

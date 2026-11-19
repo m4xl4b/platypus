@@ -15,6 +15,7 @@
 // Le regole si aggiungono a RULES, per evento; conta la prima che ha qualcosa da dire e che può dirlo adesso.
 //
 // Ogni funzione ha tre modi nelle opzioni: spenta, ombra (calcola e registra quello che direbbe, senza dirlo) e accesa.
+// Dalla 2.13 un quarto, esperimento (experiments.js): ogni sessione finisce a caso nel gruppo acceso o in quello in ombra.
 // I messaggi agli agenti sono sempre in inglese: li legge il modello.
 
 const MAX_TEXT = 400;          // un messaggio a un agente è breve
@@ -28,13 +29,19 @@ const RULES = { SessionStart: [], PostToolUse: [], PostToolUseFailure: [], Stop:
 
 // ---- le funzioni e i loro modi
 const FEATURES = { sessionLessons: 'fbSessionLessons', elder: 'fbElder', loop: 'fbLoop', stale: 'fbStale', claims: 'fbClaims', drift: 'fbDrift' };
-const MODES = ['off', 'shadow', 'on'];
+const MODES = ['off', 'shadow', 'on', 'experiment'];
 const SHADOW_ONLY = new Set(['stale', 'claims', 'drift']); // nella 2.11 queste tre registrano soltanto: prima si guardano i dati
 const featureOfSetting = k => Object.keys(FEATURES).find(f => FEATURES[f] === k) || null;
-// il valore di un'opzione fb*, ripulito: un modo valido, e mai "acceso" per le funzioni solo in ombra
+// il valore di un'opzione fb*, ripulito: un modo valido, e mai "acceso" (né "esperimento", che è acceso per metà delle
+// sessioni) per le funzioni solo in ombra
 function cleanMode(setting, v) {
   const m = MODES.includes(v) ? v : 'off';
-  return m === 'on' && SHADOW_ONLY.has(featureOfSetting(setting)) ? 'shadow' : m;
+  return (m === 'on' || m === 'experiment') && SHADOW_ONLY.has(featureOfSetting(setting)) ? 'shadow' : m;
+}
+// il modo per una sessione: in esperimento è il gruppo della sessione ('on' o 'shadow'), altrimenti quello delle opzioni
+function sessionMode(settings, feature, sid) {
+  const m = modeOf(settings, feature);
+  return m === 'experiment' ? { mode: require('./experiments').groupOf(sid, feature), group: true } : { mode: m, group: false };
 }
 function modeOf(settings, feature) {
   const k = FEATURES[feature];
@@ -164,10 +171,11 @@ function respond(input, ctx = {}, gate, rules = RULES) {
       allow: message => modeOf(ctx.settings, message.feature) !== 'off' && (!gate || !gate.why(input, message)),
     }, rules);
     if (!r) return { out: null, entry: null };
-    const mode = modeOf(ctx.settings, r.message.feature);
+    const sm = sessionMode(ctx.settings, r.message.feature, input.session_id), mode = sm.mode;
     if (gate) gate.record(input, r.message, mode);
     const now = ctx.now || Date.now;
     let entry = { t: now(), sid: input.session_id, agent: input.agent_id || 'main', feature: r.message.feature, mode, event: input.hook_event_name, lessonId: r.message.lessonId, text: r.message.text };
+    if (sm.group) entry.group = mode; // in esperimento: il gruppo della sessione, per confrontare i due gruppi (experiments.js)
     if (r.message.tag) entry.tag = r.message.tag; // che cosa ha trovato la regola, in breve (es. «tests/ungrounded»)
     if (r.message.local) entry.local = r.message.local;
     if (r.message.about) entry.about = r.message.about;
@@ -189,6 +197,6 @@ function checkAnswer(input) {
 }
 
 module.exports = {
-  decide, answer, say, respond, checkAnswer, Gate, modeOf, cleanMode,
+  decide, answer, say, respond, checkAnswer, Gate, modeOf, cleanMode, sessionMode,
   RULES, EVENTS, MAX_TEXT, MAX_LONG, CHECK_MARK, FEATURES, MODES, SHADOW_ONLY, AGENT_GAP_MS, SESSION_MAX,
 };

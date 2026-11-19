@@ -1042,7 +1042,59 @@ async function forgetTests(ok) {
   }
 }
 
-module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); await retentionTests(ok); await forgetTests(ok); } };
+// S11: l'esperimento sul feedback (src/core/experiments.js): gruppi, statistica, risultati dallo storico
+async function experimentTests(ok) {
+  console.log('store: esperimento sul feedback');
+  const X = require(path.join(ROOT, 'src', 'core', 'experiments'));
+  const fb = require(path.join(ROOT, 'src', 'core', 'feedback'));
+  const { openStore } = require(path.join(ROOT, 'src', 'core', 'store'));
+  const { declareCollections } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
+  // gruppi: sempre gli stessi, metà e metà, indipendenti tra le funzioni
+  const ids = Array.from({ length: 4000 }, (_, i) => 'sess-' + i.toString(36) + '-' + (i * 7919 % 1000));
+  const on = ids.filter(id => X.groupOf(id, 'loop') === 'on').length, same = ids.filter(id => X.groupOf(id, 'loop') === X.groupOf(id, 'elder')).length;
+  ok(ids.every(id => X.groupOf(id, 'loop') === X.groupOf(id, 'loop')) && on > 1860 && on < 2140 && same > 1860 && same < 2140 && ['on', 'shadow'].includes(X.groupOf('', '')),
+    `gruppi: la stessa sessione ha sempre lo stesso gruppo; ${on} su 4000 nel gruppo con i messaggi; per due funzioni lo stesso gruppo ${same} volte su 4000 (indipendenti)`);
+  // statistica: valori pubblicati (Newcombe 1998, esempio con 56/70 e 48/80; Wilson 81/263)
+  const w = X.wilson(81, 263), d = X.propDiff(56, 70, 48, 80), m = X.meanDiff([1, 2, 3, 4, 5], [2, 3, 4, 5, 6]);
+  const near = (a, b, e = 0.0006) => Math.abs(a - b) < e;
+  ok(near(w[0], 0.2553) && near(w[1], 0.3662) && near(d.diff, 0.2) && near(d.lo, 0.0524) && near(d.hi, 0.3339) && near(m.diff, -1, 1e-9) && near(m.lo, -1 - 1.96 * 1, 1e-9) && X.wilson(0, 0)[1] === 1,
+    `statistica: Wilson 81/263 = ${w.map(x => x.toFixed(4)).join('–')}, Newcombe 56/70 contro 48/80 = ${d.diff.toFixed(4)} (${d.lo.toFixed(4)}–${d.hi.toFixed(4)}), come nei lavori originali`);
+  // il quarto modo: solo per le funzioni che possono essere accese
+  ok(fb.cleanMode('fbLoop', 'experiment') === 'experiment' && fb.cleanMode('fbSessionLessons', 'experiment') === 'experiment' && fb.cleanMode('fbClaims', 'experiment') === 'shadow' && fb.cleanMode('fbDrift', 'experiment') === 'shadow' &&
+    fb.modeOf({ fbElder: 'experiment' }, 'elder') === 'experiment' && JSON.stringify(X.FEATURES) === '["sessionLessons","elder","loop"]', 'il modo «esperimento» vale per le tre funzioni che possono essere accese; le altre restano in ombra');
+  // respond: il gruppo decide se il messaggio parte, e resta scritto nel messaggio
+  const rules = { PostToolUseFailure: [{ feature: 'loop', run: () => ({ feature: 'loop', text: 'Platypus: stop looping.' }) }] };
+  const sidOn = ids.find(id => X.groupOf(id, 'loop') === 'on'), sidSh = ids.find(id => X.groupOf(id, 'loop') === 'shadow');
+  const hook = sid => ({ hook_event_name: 'PostToolUseFailure', session_id: sid, cwd: '/p', tool_name: 'Bash' });
+  const rOn = fb.respond(hook(sidOn), { cwd: '/p', settings: { fbLoop: 'experiment' } }, null, rules), rSh = fb.respond(hook(sidSh), { cwd: '/p', settings: { fbLoop: 'experiment' } }, null, rules);
+  const rPlain = fb.respond(hook(sidSh), { cwd: '/p', settings: { fbLoop: 'on' } }, null, rules);
+  ok(rOn.out && rOn.entry.mode === 'on' && rOn.entry.group === 'on' && !rSh.out && rSh.entry.mode === 'shadow' && rSh.entry.group === 'shadow' && rPlain.out && !('group' in rPlain.entry),
+    'in esperimento il messaggio parte solo nel gruppo «on», e nel registro resta il gruppo; con la funzione accesa per tutti non c\'è gruppo');
+  // i risultati dallo storico
+  const store = declareCollections(openStore({ requireFields: true, guard: 'reject' }));
+  const add = (n, group, outcome, project = 'p1') => { for (let i = 0; i < n; i++) store.collection('feedback').put({ project, t: i, feature: 'loop', mode: group, group, outcome, text: 'Platypus: x' }); };
+  add(4, 'on', 'helped'); add(2, 'on', 'ignored'); add(3, 'shadow', 'helped'); add(3, 'shadow', 'ignored'); add(5, 'on', 'unclear'); add(2, 'shadow', undefined);
+  store.collection('feedback').put({ project: 'p1', t: 1, feature: 'loop', mode: 'on', text: 'Platypus: fuori dall\'esperimento', outcome: 'helped' });
+  let r = X.resultFor(store, 'loop');
+  ok(!r.enough && r.n.on === 6 && r.n.shadow === 6 && r.counts.on.unclear === 5 && r.counts.shadow.waiting === 2 && !r.result, 'pochi casi: «dati insufficienti», con i numeri; i «non si può dire» e quelli ancora da giudicare non contano; i messaggi fuori dall\'esperimento nemmeno');
+  add(26, 'on', 'helped'); add(8, 'on', 'ignored'); add(12, 'shadow', 'helped'); add(20, 'shadow', 'ignored'); add(9, 'on', 'helped', 'p2');
+  r = X.resultFor(store, 'loop', ['p1']);
+  const all = X.resultFor(store, 'loop');
+  ok(r.enough && r.n.on === 40 && r.n.shadow === 38 && near(r.result.p1, 30 / 40) && near(r.result.p2, 15 / 38) && r.result.lo > 0 && all.n.on === 49,
+    `con abbastanza casi: probabilmente utili ${(r.result.p1 * 100).toFixed(0)}% con i messaggi contro ${(r.result.p2 * 100).toFixed(0)}% senza, differenza ${(r.result.diff * 100).toFixed(0)} punti (${(r.result.lo * 100).toFixed(0)}–${(r.result.hi * 100).toFixed(0)}); per progetto e per tutti`);
+  // le lezioni a inizio sessione: errori ogni 100 azioni, per sessione
+  for (let i = 0; i < 24; i++) {
+    const group = i % 2 ? 'on' : 'shadow', sid = 'L' + i;
+    store.collection('experiments').put({ _id: sid + ':sessionLessons', project: 'p1', t: i, sid, feature: 'sessionLessons', group });
+    store.collection('sessions').put({ _id: sid, project: 'p1', t: i, actions: i < 2 ? 3 : 100, errors: group === 'on' ? 4 + (i % 3) : 9 + (i % 3) });
+  }
+  const sl = X.resultFor(store, 'sessionLessons');
+  ok(sl.enough && sl.kind === 'sessions' && sl.n.on === 11 && sl.n.shadow === 11 && sl.assigned === 24 && sl.result.diff < -3 && sl.result.hi < 0 && X.results(store).length === 3,
+    `lezioni a inizio sessione: ${sl.result.m1.toFixed(1)} errori ogni 100 azioni con le lezioni contro ${sl.result.m2.toFixed(1)} senza (n = ${sl.n.on} e ${sl.n.shadow}; le sessioni con meno di ${X.MIN_ACTIONS} azioni non contano)`);
+  store.close();
+}
+
+module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); await retentionTests(ok); await forgetTests(ok); await experimentTests(ok); } };
 if (require.main === module) {
   let failed = 0;
   module.exports.run((c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) failed++; })

@@ -3214,10 +3214,11 @@ function feedbackStateHtml() {
 function feedbackHooksHtml(st) {
   const opt = (v, l, cur) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${esc(l)}</option>`;
   const row = ([k, label, canOn, feature]) => { const cur = (st && st[k]) || 'off'; return `<label><span>${esc(label)}<small class="fbn" data-fbn="${feature}"></small></span><select name="${k}" data-fb>` +
-    opt('off', tr('spenta'), cur) + opt('shadow', tr('ombra'), cur) + (canOn ? opt('on', tr('accesa'), cur) : '') + '</select></label>'; };
+    opt('off', tr('spenta'), cur) + opt('shadow', tr('ombra'), cur) + (canOn ? opt('on', tr('accesa'), cur) + opt('experiment', tr('esperimento'), cur) : '') + '</select></label>'; };
   return `<fieldset class="fbhooks"><legend>${esc(tr('FEEDBACK AGLI AGENTI'))}</legend>` +
     `<p>${esc(tr('Platypus può dire all\'agente quello che vede (una lezione del Libro, un giro in tondo) attraverso gli hook di Claude Code. Servono hook a parte, che si installano solo da qui e solo dopo la tua conferma.'))}</p>` +
     FEEDBACK_FEATURES.map(row).join('') +
+    `<p class="dim">${esc(tr('«Esperimento»: ogni sessione nuova finisce a caso, metà e metà, in un gruppo dove i messaggi partono o in uno dove si registrano soltanto. I due gruppi lavorano negli stessi giorni, con gli stessi modelli: un confronto prima e dopo mescolerebbe l\'effetto del messaggio con i cambi di modello. I risultati sono nel Libro, scheda FEEDBACK.'))}</p>` +
     `<p class="dim">${esc(tr('«Ombra» registra che cosa avrebbe detto, senza dirlo: serve a vedere se aiuterebbe. I messaggi sono rari (uno ogni 2 minuti per agente, 6 all\'ora per sessione) e mai due volte la stessa lezione. Le ultime tre funzioni per ora arrivano solo all\'ombra.'))}</p>` +
     `<div class="fbstate">${feedbackStateHtml()}</div></fieldset>`;
 }
