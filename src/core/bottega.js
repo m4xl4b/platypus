@@ -180,6 +180,14 @@ class Bottega {
     b.dirty = true;
   }
 
+  // "Dimentica questo progetto": i suoi Libri escono dalla memoria senza essere salvati (lo storico lo svuota chi chiama)
+  forgetBooks(keys) {
+    const set = new Set(keys);
+    let n = 0;
+    for (const [k, b] of this.books) if (!b.demo && (set.has(k) || set.has(b.key))) { this.books.delete(k); n++; }
+    return n;
+  }
+
   // le lezioni che la conservazione ha tolto dallo storico ([{ project, id }]) escono anche dai Libri in memoria,
   // altrimenti il prossimo salvataggio le riscriverebbe
   dropLessons(list) {

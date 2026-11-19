@@ -6,6 +6,9 @@
 // Non ferma mai l'ufficio: se il database non si apre, lo store è in memoria (lo storico non resta) e
 // notice() dà la frase da mostrare. La demo non passa mai di qui: ha i suoi dati finti in memoria.
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { openStoreSafe, fallbackReason, scrub } = require('./store');
 const { cmdCore, errorPattern } = require('./bottega');
 const { declareCollections } = require('./store/collections');
@@ -123,6 +126,57 @@ class History {
       this.log(`store: ${bad} documenti non salvati nello storico (${e && e.message || e})`);
       return n;
     }
+  }
+
+  // ---- "Dimentica questo progetto" (S10): ogni documento della sua chiave e dei suoi alias, in ogni collezione; le
+  // voci delle statistiche che lo riguardano; i Libri in memoria; poi VACUUM, così nel file non resta niente.
+  // state: lo stato dell'ufficio (le sessioni aperte del progetto), bottega e stats: quelli del motore.
+  // Le copie di sicurezza (platypus.db.bak-*, legacy-*, platypus.db.broken-*) non si toccano: lo dice chi chiede conferma.
+  forgetProject(key, { state = null, bottega = null, stats = null } = {}) {
+    if (typeof key !== 'string' || !/^[0-9a-f]{16}$/.test(key)) return null;
+    const keys = this.keys.allKeys(key);
+    const k = new Set(keys);
+    const sessions = new Set(), names = new Set();
+    try {
+      for (const d of this.store.collection('sessions').find({ project: { $in: keys } }, { fields: [] })) sessions.add(d._id);
+      for (const d of this.store.collection('steps').find({ project: { $in: keys } }, { fields: ['session'] })) if (d.session) sessions.add(d.session);
+      for (const kk of keys) { const p = this.store.collection('projects').get(kk); if (p && p.name) names.add(p.name); }
+    } catch (e) { this.log('store: ' + e.message); }
+    if (state && state.sessions) for (const s of state.sessions.values()) {
+      if (s.demo || !s.cwd) continue;
+      if (k.has(this.keys.keyNow(s.cwd))) { sessions.add(s.id); try { names.add(state.label(s)); } catch {} }
+    }
+    if (bottega) for (const b of bottega.books.values()) if (k.has(b.key) && b.name) names.add(b.name);
+    // prima quello che è in memoria, poi lo storico: nessun salvataggio deve riportarlo indietro
+    const removed = { books: bottega ? bottega.forgetBooks(keys) : 0, stats: stats ? stats.forget({ sessions, names }) : 0, documents: 0, sessions: sessions.size };
+    for (const [id, x] of this.pending) if (k.has(x.doc.project) || (x.coll === 'sessions' && sessions.has(x.doc._id))) this.pending.delete(id);
+    for (const id of sessions) this.summaries.delete(id);
+    this.flush();
+    for (const kk of keys) removed.documents += this.store.forgetProject(kk);
+    // i riassunti delle sessioni con la chiave della cartella (scritti prima che git rispondesse) e i passi senza progetto
+    try { this.store.transaction(() => { for (const id of sessions) if (this.store.collection('sessions').delete(id)) removed.documents++; removed.documents += this.store.collection('steps').deleteMany({ session: { $in: [...sessions] } }); }); } catch {}
+    this.keys.forget(keys);
+    try { removed.size = this.store.compact(); } catch (e) { this.log('store: ' + e.message); }
+    this.log(`store: progetto dimenticato (${removed.documents} documenti, ${removed.stats} voci delle statistiche)`);
+    return removed;
+  }
+
+  // ---- "Compatta": lo spazio libero torna al disco
+  compact() { this.flush(); return this.store.compact(); }
+
+  // ---- "Esporta": un file JSONL per collezione in una cartella nuova; di base ~/Downloads/platypus-export-<data>/
+  exportAll(dir) {
+    this.flush();
+    let target = dir;
+    if (!target) {
+      const d = new Date(this.clock()), p = n => String(n).padStart(2, '0');
+      const base = path.join(os.homedir(), 'Downloads', `platypus-export-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`);
+      target = base;
+      for (let i = 2; fs.existsSync(target); i++) target = `${base}-${i}`;
+    }
+    const files = [];
+    for (const c of this.store.info().collections) files.push(this.store.export(c.name, target));
+    return { dir: target, files: files.map(f => ({ collection: f.collection, count: f.count, file: path.basename(f.file) })) };
   }
 
   // la frase per l'avviso nell'ufficio («storico non disponibile: …»), o '' se va tutto bene

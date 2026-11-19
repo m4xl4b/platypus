@@ -764,7 +764,10 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     server.close();
   }
 
-  return { state, history, historyReady: () => historyReady, retention, stats, notify: notifier, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
+  // "Dimentica questo progetto" con tutto quello che il motore ha in memoria
+  function forgetProject(key) { return history.forgetProject(key, { state, bottega, stats }); }
+
+  return { state, history, historyReady: () => historyReady, retention, forgetProject, stats, notify: notifier, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
     install: () => hooks.install({ port, base }),
     uninstall: () => hooks.uninstall({ base }),
     status: () => hooks.status({ base }),

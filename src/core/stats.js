@@ -41,10 +41,11 @@ class Stats {
     this.timer = setInterval(() => this.collect(), 10000);
     this.saveTimer = setInterval(() => this.save(), 30000);
     this.timer.unref && this.timer.unref(); this.saveTimer.unref && this.saveTimer.unref();
-    setTimeout(() => this.collect(), 3000).unref();
+    this.firstTimer = setTimeout(() => this.collect(), 3000);
+    this.firstTimer.unref && this.firstTimer.unref();
   }
 
-  stop() { clearInterval(this.timer); clearInterval(this.saveTimer); this.save(); }
+  stop() { clearInterval(this.timer); clearInterval(this.saveTimer); clearTimeout(this.firstTimer); this.save(); }
 
   // dallo storico in memoria, con la stessa forma che aveva stats.json
   load() {
@@ -182,6 +183,25 @@ class Stats {
     }
     for (const r of d.releases) if (r.project === from) r.project = to;
     this.dirty = true;
+  }
+
+  // "Dimentica questo progetto": le statistiche tengono i progetti per nome, non per chiave. Si tolgono le voci che
+  // contengono una sessione del progetto (o, senza sessioni, che hanno uno dei suoi nomi), con i rilasci di quel
+  // nome in quel giorno, e l'ultimo stato delle sue sessioni. Restituisce quante voci ha tolto
+  forget({ sessions = new Set(), names = new Set() } = {}) {
+    let n = 0;
+    for (const d of Object.values(this.data.days)) {
+      for (const [name, p] of Object.entries(d.projects || {})) {
+        const ss = p.sessions || [];
+        if (!(ss.some(x => sessions.has(x)) || (!ss.length && names.has(name)))) continue;
+        delete d.projects[name];
+        d.releases = (d.releases || []).filter(r => r.project !== name);
+        n++;
+      }
+    }
+    for (const [sid, v] of Object.entries(this.data.last)) if (sessions.has(sid) || (v && names.has(v.name))) { delete this.data.last[sid]; n++; }
+    if (n) { this.dirty = true; this.save(); }
+    return n;
   }
 
   // ---------- letture ----------

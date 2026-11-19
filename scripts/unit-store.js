@@ -935,7 +935,87 @@ async function retentionTests(ok) {
   }
 }
 
-module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); await retentionTests(ok); } };
+// S10: "Dimentica questo progetto", "Compatta", "Esporta"
+async function forgetTests(ok) {
+  console.log('store: dimentica, compatta, esporta');
+  const { History } = require(path.join(ROOT, 'src', 'core', 'history'));
+  const { Bottega } = require(path.join(ROOT, 'src', 'core', 'bottega'));
+  const { Stats } = require(path.join(ROOT, 'src', 'core', 'stats'));
+  const { FeedbackLog } = require(path.join(ROOT, 'src', 'core', 'feedbacklog'));
+  const { keyFor, pathKey, normDir } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-dimentica-'));
+  const A = path.join(tmp, 'progetto-segreto'), B = path.join(tmp, 'altro-lavoro');
+  const RA = 'git@github.com:m4xl4b/repo-segretissimo.git', KA = keyFor(A, RA).key, KB = pathKey(B);
+  const T = Date.now() - 3600000;
+  let h;
+  try {
+    h = new History({ dir: path.join(tmp, 'dati'), backend: 'sqlite', log() {} });
+    h.keys.exec = async cwd => (normDir(cwd) === normDir(A) ? RA : null);
+    await h.keys.resolve(A); await h.keys.resolve(B);
+    const sess = (id, cwd) => ({ id, cwd, kind: 'code', createdAt: T, lastActivity: T + 1, main: { id: 'main', model: 'm' }, subs: new Map(), tok: { in: 1, out: 1, cr: 0, cw: 0 }, toolsByType: { Claude: 1 }, errByType: {}, completedByType: {}, wByType: {}, completed: 0, releases: [], alerts: [], project: path.basename(cwd) });
+    const sA = sess('sess-segreta-1', A), sB = sess('sess-altra-1', B);
+    const state = { sessions: new Map([[sA.id, sA], [sB.id, sB]]), label: s => s.project, costOf: () => 0.5, rateOf: () => 0 };
+    const bottega = new Bottega({ store: h.store, keys: h.keys, log() {} });
+    const stats = new Stats(state, { store: h.store, log() {} });
+    const log = new FeedbackLog({ store: h.store, keys: h.keys });
+    const c = (kind, key, sid) => ({ kind, key, sid, t: T, agent: 'Claude', excerpt: 'riga' });
+    bottega.learn(A, [c('flaky-command', 'npm run e2e-segreto', 'sess-segreta-1'), c('ghost-path', 'src/segreto.ts', 'sess-segreta-1')]);
+    bottega.learn(B, [c('flaky-command', 'cargo test', 'sess-altra-1')]);
+    bottega.save();
+    for (const [s0, id] of [[sA, 't1'], [sA, 't2'], [sB, 't3']]) h.recordStep(s0, { id: 'main' }, { id, t: T, tool: 'Bash', act: 'run', target: 'cmd:npm', sig: 'run:npm test', err: false, dur: 1, phase: '' });
+    h.summarize(state);
+    log.append(A, { t: T, sid: sA.id, agent: 'main', feature: 'loop', mode: 'on', event: 'PreToolUse', text: 'Platypus: progetto-segreto loop' });
+    log.append(B, { t: T, sid: sB.id, agent: 'main', feature: 'loop', mode: 'on', event: 'PreToolUse', text: 'Platypus: altro' });
+    h.store.collection('experiments').put({ _id: sA.id + ':loop', project: KA, t: T, sid: sA.id, feature: 'loop', group: 'on' });
+    stats.data.days['2026-11-18'] = { projects: { 'progetto-segreto': { cost: 1, tokens: 1, sessions: [sA.id], completed: 1, commits: 1, prs: 0, tests: 0, wing: 'code' }, 'altro-lavoro': { cost: 2, tokens: 2, sessions: [sB.id], completed: 1, commits: 0, prs: 0, tests: 0, wing: 'code' } },
+      releases: [{ t: T, kind: 'commit', text: 'fix progetto-segreto', agent: 'Claude', project: 'progetto-segreto' }, { t: T, kind: 'commit', text: 'altro', agent: 'Claude', project: 'altro-lavoro' }], alerts: 0 };
+    stats.data.last[sA.id] = { t: T, cost: 1, tok: 1, completed: 1, cbt: {}, err: {}, tools: {}, costType: {}, rel: '', alerts: [], name: 'progetto-segreto' };
+    stats.data.last[sB.id] = { t: T, cost: 2, tok: 2, completed: 1, cbt: {}, err: {}, tools: {}, costType: {}, rel: '', alerts: [], name: 'altro-lavoro' };
+    stats.dirty = true; stats.save(); h.flush();
+    const count = key => ['lessons', 'steps', 'sessions', 'feedback', 'experiments'].reduce((n, x) => n + h.store.collection(x).count({ project: key }), 0) + (h.store.collection('projects').get(key) ? 1 : 0);
+    const beforeA = count(KA), beforeB = count(KB);
+    // in coda, non ancora scritto: anche questo va dimenticato
+    h.recordStep(sA, { id: 'main' }, { id: 't9', t: T, tool: 'Read', act: 'read', target: 'src/segreto.ts', sig: 'Read', err: false, dur: 1, phase: '' });
+    const r = h.forgetProject(KA, { state, bottega, stats });
+    const day = stats.data.days['2026-11-18'], stored = h.store.collection('daily').get('day:2026-11-18');
+    ok(beforeA === 8 && r.documents === 8 && count(KA) === 0 && count(pathKey(A)) === 0 && h.store.collection('steps').count({ session: sA.id }) === 0 && count(KB) === beforeB && bottega.view(B).lessons.length === 1,
+      `dimentica: ${r.documents} documenti del progetto via da ogni collezione (anche quello in coda); l'altro progetto resta com'era`);
+    ok(!day.projects['progetto-segreto'] && day.projects['altro-lavoro'] && day.releases.length === 1 && !stats.data.last[sA.id] && stats.data.last[sB.id] && !stored.projects['progetto-segreto'] && stored.releases.every(x => x.project !== 'progetto-segreto') && r.stats === 2,
+      'dimentica: anche le statistiche, che tengono i progetti per nome (la voce del giorno, i suoi rilasci, l\'ultimo stato della sessione)');
+    ok(!bottega.books.has(KA) && r.books === 1 && r.size && r.size.after <= r.size.before, 'dimentica: il Libro esce dalla memoria e il database viene compattato');
+    stats.stop(); bottega.stop();
+    let raw = '';
+    for (const f of fs.readdirSync(path.join(tmp, 'dati'))) if (f.startsWith('platypus.db')) raw += fs.readFileSync(path.join(tmp, 'dati', f)).toString('latin1');
+    const leaks = [KA, pathKey(A), 'progetto-segreto', 'repo-segretissimo', 'e2e-segreto', 'segreto.ts', 'sess-segreta-1', A.replace(/\\/g, '/'), A].filter(x => raw.includes(x));
+    ok(leaks.length === 0 && raw.includes('altro-lavoro') && raw.includes('cargo test'), 'dimentica: nel file del database (e nel WAL) non c\'è più la chiave, la cartella, il nome, il remote né le lezioni del progetto' + (leaks.length ? ': ' + leaks.join(', ') : ''));
+    // dopo, il progetto può ricominciare da capo
+    const b2 = new Bottega({ store: h.store, keys: h.keys, log() {} });
+    b2.learn(A, [c('loop-trap', 'make', 'sess-nuova')]);
+    ok(b2.view(A).lessons.length === 1 && b2.view(A).lessons[0].kind === 'loop-trap', 'dopo «Dimentica» il progetto ricomincia con un Libro vuoto');
+    b2.stop();
+    ok(h.forgetProject('non-una-chiave') === null && h.forgetProject('0123456789abcdef').documents === 0, 'dimentica: una chiave non valida è rifiutata, una sconosciuta non toglie niente');
+    // compatta ed esporta
+    const cp = h.compact();
+    ok(cp && cp.after <= cp.before && cp.after > 0, `compatta: ${cp.before} → ${cp.after} byte`);
+    const out = path.join(tmp, 'export');
+    const ex = h.exportAll(out);
+    const files = fs.readdirSync(out).sort();
+    const lines = f => fs.readFileSync(path.join(out, f), 'utf8').split('\n').filter(Boolean).length;
+    ok(ex.dir === out && files.join() === 'daily.jsonl,experiments.jsonl,feedback.jsonl,lessons.jsonl,projects.jsonl,sessions.jsonl,steps.jsonl' && ex.files.every(f => lines(f.file) === f.count && f.count === h.store.collection(f.collection).count({})),
+      'esporta: un file JSONL per collezione, con tutti i documenti');
+    const home = path.join(tmp, 'casa'), prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = home; process.env.USERPROFILE = home;
+    try {
+      const d1 = h.exportAll(), d2 = h.exportAll();
+      ok(path.dirname(d1.dir) === path.join(home, 'Downloads') && /^platypus-export-\d{8}-\d{4}$/.test(path.basename(d1.dir)) && d2.dir === d1.dir + '-2' && fs.readdirSync(d2.dir).length === 7, 'esporta: di base in Scaricati/platypus-export-<data>, senza mai sovrascrivere un\'esportazione di prima');
+    } finally { for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
+  } finally {
+    if (h) { try { h.stop(); } catch {} }
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); await retentionTests(ok); await forgetTests(ok); } };
 if (require.main === module) {
   let failed = 0;
   module.exports.run((c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) failed++; })

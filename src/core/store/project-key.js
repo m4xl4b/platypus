@@ -143,6 +143,13 @@ class ProjectKeys {
     }
     return key;
   }
+  // dimentica quello che sa di un progetto (dopo "Dimentica questo progetto"): la prossima volta si rilegge git
+  forget(keys) {
+    const set = new Set(keys);
+    for (const [dir, info] of this.byDir) if (set.has(info.key) || info.aliases.some(a => set.has(a))) this.byDir.delete(dir);
+    for (const [a, k] of this.canon) if (set.has(a) || set.has(k)) this.canon.delete(a);
+  }
+
   // tutte le chiavi con cui un progetto è stato salvato: la sua e gli alias (per "dimentica questo progetto", S10)
   allKeys(key) {
     const k = this.canonical(key), out = new Set([k]);

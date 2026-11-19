@@ -342,6 +342,17 @@ class SqliteDriver {
     return (one('PRAGMA page_count') - one('PRAGMA freelist_count')) * one('PRAGMA page_size');
   }
 
+  // "Compatta": riscrive il database senza le pagine libere (VACUUM) e svuota il registro WAL, così nel file non
+  // resta niente dei documenti tolti. Restituisce la dimensione prima e dopo
+  vacuum() {
+    this.flush();
+    const size = () => { let n = 0; for (const f of [this.file, this.file + '-wal']) { try { n += fs.statSync(f).size; } catch {} } return n; };
+    const before = size();
+    this.db.exec('VACUUM');
+    try { this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {}
+    return { before, after: size() };
+  }
+
   info() {
     let size = 0;
     for (const f of [this.file, this.file + '-wal']) { try { size += fs.statSync(f).size; } catch {} }

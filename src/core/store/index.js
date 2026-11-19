@@ -168,6 +168,13 @@ class Store {
     });
   }
 
+  // "Compatta": restituisce lo spazio libero al disco (sqlite: VACUUM). { before, after } in byte, o null in memoria
+  compact() {
+    const d = this.use();
+    if (this.depth > 0) fail('invalid-argument', 'compact non si può chiamare dentro una transazione');
+    return typeof d.vacuum === 'function' ? d.vacuum() : null;
+  }
+
   // un file JSONL (un documento per riga, in ordine di _id) nella cartella indicata
   export(name, dir) {
     const c = this.collection(name);
