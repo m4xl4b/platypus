@@ -69,6 +69,16 @@ A first version queried the sessions once per metric: 359 ms for all projects. R
 
 **Ingest, compared like with like.** On one million steps, ingest measured 12,442 steps per second in S3 and 8,113–8,133 later. Run side by side on 200,000 steps, the code of S3 (`f14cc19`) and the code of S12 give the same speed: 14,608 and 14,416 against 13,926 and 14,492 steps per second, two runs each. The drop on the long runs comes from the state of the machine at that moment, not from the code; the note in S9 that blamed the parallel load was a guess, now checked.
 
+## S12b · Archive search, 2026-11-19
+
+A search for a file name (part of it, any case) in one project of the one-million-step benchmark (about 50,000 steps of that project over 90 days), newest first, up to 50 results:
+
+| Measure | Target | Result |
+|---|---|---|
+| Search for a file in a project | under 200 ms | **162 ms** median, 167 ms maximum |
+
+On a project this large the search reaches its time budget (150 ms) before reading every step: it returns what it found among the most recent steps (39, 27 and 23 results here) and says it was partial, with the number of steps it looked at. A substring search cannot use an index; the budget is what keeps it under the target. On a normal project (thousands of steps) it reads them all.
+
 ## What the numbers say
 
 - **Both targets are met with a wide margin.** Ingest is 12 times the target; the query the office needs is 100 times faster than the target.

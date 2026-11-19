@@ -10,7 +10,7 @@
   const when = t => new Date(t).toLocaleString(LOCALE, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   const LEVEL = { lesson: [tr('LEZIONE'), 'ok'], observation: [tr('OSSERVAZIONE'), ''] };
 
-  const B = { open: false, q: null, focus: null, data: null, showObs: false, showIgnored: false, timer: null, sig: '', md: null, tab: 'lessons', fb: null, fbAt: 0, hist: null, histTable: false };
+  const B = { open: false, q: null, focus: null, data: null, showObs: false, showIgnored: false, timer: null, sig: '', md: null, tab: 'lessons', fb: null, fbAt: 0, hist: null, histTable: false, find: { kind: 'file', q: '', err: false, res: null, busy: false } };
   // scheda FEEDBACK: i nomi brevi delle funzioni e dei modi (i messaggi partono dagli hook, vedi le opzioni)
   const FEATURE = {
     sessionLessons: tr('Lezioni a inizio sessione'), elder: tr('Il Nonno'), loop: tr('Giro in tondo'),
@@ -29,7 +29,7 @@
 
   window.openBottega = function (sid, lessonId, opts = {}) {
     B.open = true; B.focus = lessonId || null; B.sig = ''; B.scrolled = false; B.md = null;
-    B.tab = ['feedback', 'history'].includes(opts.tab) ? opts.tab : 'lessons'; B.fb = null; B.fbAt = 0; B.hist = null; B.histTable = false;
+    B.tab = ['feedback', 'history'].includes(opts.tab) ? opts.tab : 'lessons'; B.fb = null; B.fbAt = 0; B.hist = null; B.histTable = false; B.find = { kind: 'file', q: '', err: false, res: null, busy: false };
     B.q = sid ? { sid } : opts.key ? { key: opts.key } : null;
     if (!B.q) return;
     el().hidden = false;
@@ -201,15 +201,63 @@
     const fb = f.on + f.shadow ? `<p class="dim">${esc(tr('Messaggi agli agenti in queste settimane: {on} mandati (probabilmente utili {h1} su {j1}), {sh} in ombra ({h2} su {j2}). Il confronto vero è nell\'esperimento, scheda FEEDBACK.', { on: f.on, h1: f.helpedOn, j1: f.judgedOn, sh: f.shadow, h2: f.helpedShadow, j2: f.judgedShadow }))}</p>` : '';
     return rows + fb;
   }
+  // la ricerca nei passi salvati (S12b): un file, un comando o un errore, dal più recente
+  const ACTION = () => ({ read: tr('legge'), edit: tr('modifica'), search: tr('cerca'), web: tr('web'), run: tr('lancia'), verify: tr('verifica'), look: tr('guarda'), delegate: tr('delega'), tool: tr('strumento'), other: tr('altro') });
+  function findHtml() {
+    const f = B.find, opt = (v, l) => `<option value="${v}" ${f.kind === v ? 'selected' : ''}>${esc(l)}</option>`;
+    const r = f.res;
+    let res = '';
+    if (f.busy) res = `<p class="dim">${esc(tr('Cerco…'))}</p>`;
+    else if (r && !r.ok) res = `<p class="dim">${esc(r.error || tr('Non riesco a cercare.'))}</p>`;
+    else if (r) {
+      const A = ACTION();
+      res = `<p class="dim">${esc(r.results.length ? trn('{n} passo trovato', '{n} passi trovati', r.results.length) : tr('Nessun passo trovato.'))}` +
+        (r.partial ? ' ' + esc(tr('Ricerca parziale: guardati i {n} passi più recenti.', { n: r.scanned })) : '') + '</p>' +
+        r.results.map(x => `<div class="hfound"><span class="dim">${esc(when(x.t))}</span> · ${esc(x.agent === 'main' ? 'CLAUDE' : x.agent)} · ${esc(A[x.action] || x.action)} <b>${esc(String(x.target || '').replace(/^cmd:/, ''))}</b>` +
+          (x.cmd ? ` <span class="dim">(${esc(x.cmd)})</span>` : '') + ` · <span class="${x.outcome === 'error' ? 'bad' : 'ok'}">${esc(x.outcome === 'error' ? tr('fallito') : tr('riuscito'))}</span>` +
+          (x.err ? `<br><span class="dim">${esc(x.err)}</span>` : '') +
+          ` <button data-replay="${esc(x.session)}" data-at="${x.t}">${esc(tr('REPLAY'))}</button></div>`).join('');
+    }
+    return `<div class="hfind"><select data-h="kind">${opt('file', tr('File'))}${opt('command', tr('Comando'))}${opt('error', tr('Errore'))}</select>` +
+      `<input type="text" data-h="q" maxlength="200" value="${esc(f.q)}" placeholder="${esc(tr('es. login.ts, npm test, TypeError'))}">` +
+      `<label class="chk"><input type="checkbox" data-h="err" ${f.err ? 'checked' : ''}> ${esc(tr('solo falliti'))}</label>` +
+      `<button data-do="hfind">${esc(tr('CERCA'))}</button></div>` + (res ? `<div class="hres">${res}</div>` : '');
+  }
+  async function runFind() {
+    const f = B.find;
+    if (!f.q.trim()) return;
+    f.busy = true; render();
+    try {
+      const qs = new URLSearchParams({ ...B.q, [f.kind]: f.q.trim(), limit: '50', ...(f.err ? { outcome: 'error' } : {}) });
+      const r = await (await fetch('/api/history/search?' + qs)).json();
+      f.res = { ...r, at: Date.now() };
+    } catch { f.res = { ok: false, at: Date.now() }; }
+    f.busy = false; render();
+  }
+
   function renderHistory() {
     const d = B.data;
     el().innerHTML = `<span class="x" title="${esc(tr('Chiudi'))}">X</span>` +
       `<h3>${esc(tr('LIBRO DELLA BOTTEGA'))} · ${esc(d.name)}</h3>` + tabsHtml() +
       `<p class="honest">${esc(tr('Come vanno le sessioni di questo progetto nelle ultime 26 settimane: ogni linea è la media per sessione, settimana per settimana. La frase accanto confronta le ultime 4 settimane con le 4 prima.'))}</p>` +
       (B.hist && B.hist.ok && !B.hist.demo ? `<div class="bar"><button data-do="histtable">${esc(B.histTable ? tr('LINEE') : tr('NUMERI'))}</button></div>` : '') +
-      `<div class="list hist">${historyBody()}</div><div class="htip" hidden></div>`;
+      `<div class="list hist">${B.hist && B.hist.ok && !B.hist.demo ? findHtml() : ''}${historyBody()}</div><div class="htip" hidden></div>`;
     bindClose(); bindTabs();
     const e = el(), tip = e.querySelector('.htip');
+    // la ricerca: i campi restano come li hai lasciati; Invio cerca
+    const fk = e.querySelector('[data-h=kind]'), fq = e.querySelector('[data-h=q]'), fe = e.querySelector('[data-h=err]'), fb = e.querySelector('[data-do=hfind]');
+    if (fk) {
+      fk.onchange = () => { B.find.kind = fk.value; };
+      fq.oninput = () => { B.find.q = fq.value; };
+      fq.onkeydown = ev => { if (ev.key === 'Enter') runFind(); };
+      fe.onchange = () => { B.find.err = fe.checked; };
+      fb.onclick = runFind;
+    }
+    for (const b of e.querySelectorAll('[data-replay]')) b.onclick = async () => {
+      const r = await post('/api/replay', { action: 'start', key: b.dataset.replay, at: Number(b.dataset.at) });
+      if (r && r.ok) { closeBottega(); if (window.goTo) goTo('replay'); }
+      else if (window.toast) toast((r && r.error) || tr('Sessione non trovata'), false);
+    };
     const tg = e.querySelector('[data-do=histtable]');
     if (tg) tg.onclick = () => { B.histTable = !B.histTable; B.sig = ''; render(); };
     // al passaggio del mouse: la settimana, il valore per sessione e quante sessioni
@@ -232,7 +280,7 @@
   function render() {
     const d = B.data;
     const fbTab = B.tab === 'feedback';
-    const sig = JSON.stringify([B.hist && B.hist.at, B.histTable, d.lessons.map(l => [l.id, l.count, l.pinned, l.ignored, l.level]), d.learning, B.showObs, B.showIgnored, B.focus, B.md, d.mute, B.tab, B.fb && [B.fb.length, B.fb[0] && B.fb[0].id, B.fb.map(e => e.outcome).join()]]);
+    const sig = JSON.stringify([B.hist && B.hist.at, B.histTable, B.find.res && B.find.res.at, B.find.busy, d.lessons.map(l => [l.id, l.count, l.pinned, l.ignored, l.level]), d.learning, B.showObs, B.showIgnored, B.focus, B.md, d.mute, B.tab, B.fb && [B.fb.length, B.fb[0] && B.fb[0].id, B.fb.map(e => e.outcome).join()]]);
     if (sig === B.sig) return;
     B.sig = sig;
     if (B.tab === 'history') return renderHistory();

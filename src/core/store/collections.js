@@ -47,10 +47,10 @@ const COLLECTIONS = {
       session: 'id', agent: 'string', action: 'string', tool: 'string', target: 'path', outcome: 'string',
       err: 'excerpt',  // la firma normalizzata dell'errore (senza numeri, percorsi, testi tra virgolette)
       fail: 'string',  // che tipo di fallimento (test, build, comando…)
-      cmd: 'excerpt',  // il cuore del comando ("npm test"), per la ricerca nell'archivio (S12b)
+      cmd: 'excerpt',  // la forma del comando ("npm run test:e2e", mai gli argomenti dopo un flag: search.js), per la ricerca (S12b)
       phase: 'string', dur: 'number',
     },
-    indexes: [['project', 't'], ['session', 't']],
+    indexes: [['project', 't'], ['session', 't']], // la ricerca (S12b) scorre i passi del progetto dal più recente: le basta il primo
     retention: { days: 90 },
   },
   sessions: {

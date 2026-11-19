@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 const { openStoreSafe, fallbackReason, scrub } = require('./store');
 const { cmdCore, errorPattern } = require('./bottega');
+const { cmdShape } = require('./search');
 const { forgetIn } = require('./stats');
 const { declareCollections } = require('./store/collections');
 const { ProjectKeys } = require('./store/project-key');
@@ -73,7 +74,8 @@ class History {
     };
     if (target) doc.target = target;
     if (step.phase) doc.phase = String(step.phase);
-    if (cmdLike) { const c = cmdCore(String(step.sig || '').replace(/^run:/, '')); if (c) doc.cmd = c; }
+    // del comando resta solo la forma (search.js, cmdShape): le prime parole semplici, mai gli argomenti dopo un flag
+    if (cmdLike) { const c = cmdShape(cmdCore(String(step.sig || '').replace(/^run:/, ''))); if (c) doc.cmd = c; }
     if (step.fail) {
       if (step.fail.kind) doc.fail = String(step.fail.kind);
       const e = step.fail.excerpt ? errorPattern(step.fail.excerpt) : '';

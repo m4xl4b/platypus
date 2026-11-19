@@ -54,6 +54,7 @@ const { History } = require('./history');
 const { runRetention } = require('./retention');
 const experiments = require('./experiments');
 const historyQuery = require('./history-query');
+const search = require('./search');
 const hooks = require('./hooks');
 const feedback = require('./feedback');
 const { FeedbackLog, MemoryFeedbackLog } = require('./feedbacklog');
@@ -715,6 +716,26 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       const cwd = projectCwd(Object.fromEntries(url.searchParams));
       if (!cwd) return json(res, 404, { ok: false });
       try { return json(res, 200, { ok: true, demo: isDemoCwd(cwd), entries: (isDemoCwd(cwd) ? demoFeedbackLog : feedbackLog).recent(cwd, 200).map(feedbackRow) }); } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+    }
+    // la ricerca nell'archivio sui passi salvati (S12b): per il progetto (sid, cwd o key) o per tutti
+    if (url.pathname === '/api/history/search') {
+      try {
+        history.flush();
+        const q = Object.fromEntries(url.searchParams);
+        let projects = null;
+        if (q.sid || q.cwd || q.key) {
+          const cwd = projectCwd(q);
+          if (cwd && isDemoCwd(cwd)) return json(res, 200, { ok: true, demo: true, results: [], scanned: 0, partial: false });
+          if (cwd) projects = history.keys.allKeys(history.keys.keyIfKnown(cwd));
+          else if (q.key && /^[0-9a-f]{16}$/.test(q.key)) projects = history.keys.allKeys(q.key);
+          else return json(res, 404, { ok: false });
+        }
+        const r = search.searchSteps(history.store, {
+          projects, file: (q.file || '').slice(0, 200), command: (q.command || '').slice(0, 200), error: (q.error || '').slice(0, 200), outcome: q.outcome,
+          from: Number(q.from) || undefined, to: Number(q.to) || undefined, limit: Number(q.limit) || 50,
+        });
+        return json(res, 200, { ok: true, ...r });
+      } catch (e) { return json(res, e.code === 'bad-query' ? 400 : 200, { ok: false, error: e.message }); }
     }
     // lo storico nel tempo (S12): per il progetto (sid, cwd o key) o per tutti; metric=all dà tutte le metriche con la loro lettura
     if (url.pathname === '/api/history') {

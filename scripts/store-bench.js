@@ -83,6 +83,18 @@ try {
     findErrors100Ms: errors.median, findAllMs: all.median, findAllFieldsMs: fields.median, findSessionMs: session.median, sessionSteps: session.last,
   });
 
+  // ---------------------------------------------------------- la ricerca nell'archivio (S12b): un file in un progetto
+  {
+    const { searchSteps } = require(path.join(ROOT, 'src', 'core', 'search'));
+    const times = [], found = [], partial = [];
+    for (const [i, name] of ['file-123.js', 'file-7.js', 'file-399.js'].entries()) {
+      const s = process.hrtime.bigint();
+      const r = searchSteps(store, { projects: [projects[i * 5]], file: name, limit: 50 });
+      times.push(ms(s)); found.push(r.results.length); partial.push(r.partial);
+    }
+    out.searchMs = median(times); out.searchMaxMs = Math.max(...times); out.searchFound = found; out.searchPartial = partial.some(Boolean);
+  }
+
   // ---------------------------------------------------------- lo storico nel tempo (S12): sei mesi di riassunti delle sessioni
   // 20 progetti, 15 sessioni a settimana ciascuno: tutte le metriche, per un progetto e per tutti, per settimana
   {
@@ -119,7 +131,7 @@ try {
 
 out.ingestOk = out.ingestPerSecond >= TARGET_INGEST;
 out.findOk = out.findRecent100Ms < TARGET_FIND_MS;
-out.historyOk = out.historyProjectMs < TARGET_HISTORY_MS && out.historyAllMs < TARGET_HISTORY_MS;
+out.historyOk = out.historyProjectMs < TARGET_HISTORY_MS && out.historyAllMs < TARGET_HISTORY_MS && out.searchMaxMs < TARGET_HISTORY_MS;
 if (args.includes('--json')) console.log(JSON.stringify(out, null, 2));
 else {
   const f = x => (x < 10 ? x.toFixed(2) : x.toFixed(0));
@@ -132,6 +144,7 @@ else {
   console.log(`    leggerli tutti, solo t e outcome         ${f(out.findAllFieldsMs)} ms`);
   console.log(`    leggerli tutti, interi                   ${f(out.findAllMs)} ms`);
   console.log(`  i passi di una sessione (${out.sessionSteps})               ${f(out.findSessionMs)} ms`);
+  console.log(`  ricerca di un file in un progetto            ${f(out.searchMs)} ms mediana, ${f(out.searchMaxMs)} ms massimo (${out.searchFound.join(', ')} risultati${out.searchPartial ? ', parziale' : ''})   (obiettivo: meno di ${TARGET_HISTORY_MS} ms)  ${out.searchMaxMs < TARGET_HISTORY_MS ? 'ok' : 'NON RAGGIUNTO'}`);
   console.log(`  storico, sei mesi (${out.historySessions} sessioni), tutte le metriche: un progetto ${f(out.historyProjectMs)} ms, tutti ${f(out.historyAllMs)} ms   (obiettivo: meno di ${TARGET_HISTORY_MS} ms)  ${out.historyOk ? 'ok' : 'NON RAGGIUNTO'}`);
   if (out.reopenMs !== undefined) console.log(`  riaprirlo (controllo del file all'avvio)    ${f(out.reopenMs)} ms`);
   if (out.sizeBytes) console.log(`  peso del database                          ${(out.sizeBytes / 1048576).toFixed(0)} MB, ${out.bytesPerStep} byte a passo, ${out.mbPerMillion} MB per milione di passi`);

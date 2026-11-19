@@ -279,6 +279,12 @@ process.on('exit', code => {
     const sumS = hs.collection('sessions').get('bottega-smoke-0001');
     ok(sumS && sumS.surprises >= 1 && sumS.loops >= 1 && Number.isFinite(sumS.claims) && Number.isFinite(sumS.stale) && Number.isFinite(sumS.stuck) && Number.isFinite(sumS.flaky) && sumS.lessons === 0,
       `storico: il riassunto della sessione ha i conteggi (sorprese ${sumS && sumS.surprises}, giri in tondo ${sumS && sumS.loops}, bloccato ${sumS && sumS.stuck}, instabili ${sumS && sumS.flaky}, affermazioni senza prove ${sumS && sumS.claims}, memorie vecchie ${sumS && sumS.stale})`);
+    // la ricerca nei passi salvati (S12b)
+    const sr = JSON.parse((await get(port, '/api/history/search?command=' + encodeURIComponent('npm test') + '&cwd=' + encodeURIComponent(fakeCwd))).body);
+    const srF = JSON.parse((await get(port, '/api/history/search?file=vecchio&cwd=' + encodeURIComponent(fakeCwd))).body);
+    const srBad = await get(port, '/api/history/search?cwd=' + encodeURIComponent(fakeCwd));
+    ok(sr.ok && sr.results.length === 3 && sr.results.every(x => x.cmd === 'npm test' && x.outcome === 'error' && x.session === 'bottega-smoke-0001') && srF.ok && srF.results.length === 1 && srF.results[0].target === 'src/vecchio.ts' && srBad.status === 400,
+      `ricerca nell'archivio: i ${sr.results && sr.results.length} «npm test» falliti della sessione aperta, il file citato, una richiesta vuota rifiutata`);
     // lo storico nel tempo (S12)
     const rep = JSON.parse((await get(port, '/api/report')).body);
     ok(rep.trend && Object.keys(rep.trend.metrics).join() === 'loops,stuck,surprises,claims' && rep.trend.recent >= 1 && rep.trend.min === 5 && rep.trend.metrics.loops.verdict === 'not-enough' && rep.totals,

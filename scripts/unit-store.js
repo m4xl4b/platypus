@@ -1174,7 +1174,62 @@ async function historyQueryTests(ok) {
   } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
-module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); await retentionTests(ok); await forgetTests(ok); await experimentTests(ok); await historyQueryTests(ok); } };
+// S12b: la ricerca nei passi salvati (src/core/search.js)
+async function searchTests(ok) {
+  console.log('store: ricerca nell\'archivio');
+  const { searchSteps, cmdShape } = require(path.join(ROOT, 'src', 'core', 'search'));
+  const { openStore } = require(path.join(ROOT, 'src', 'core', 'store'));
+  const { declareCollections } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
+  const { History } = require(path.join(ROOT, 'src', 'core', 'history'));
+  const shapes = { 'npm run test:e2e': 'npm run test:e2e', 'mysql -u root -phunter2': 'mysql', 'git commit -m "fix login"': 'git commit', 'npm test -- src/a.js': 'npm test', 'cargo build --release': 'cargo build', './run.sh test': './run.sh test', 'cat /etc/passwd': 'cat', 'a b c d e f': 'a b c d', '': '' };
+  const bad = Object.entries(shapes).filter(([c, w]) => cmdShape(c) !== w);
+  ok(!bad.length, 'forma del comando: le prime parole semplici, fino al primo flag, percorso o valore (al massimo 4)' + (bad.length ? ': ' + JSON.stringify(bad.map(([c]) => [c, cmdShape(c)])) : ''));
+  const store = declareCollections(openStore({ requireFields: true, guard: 'reject' }));
+  const steps = store.collection('steps');
+  const T = 1763500000000;
+  const add = (i, x) => steps.put({ _id: 'q' + i, project: 'p1', t: T + i * 1000, session: 'sess-' + (i % 3), agent: 'main', action: 'read', tool: 'Read', outcome: 'ok', ...x });
+  add(1, { target: 'src/auth/login.ts' });
+  add(2, { action: 'edit', tool: 'Edit', target: 'src/auth/login.ts' });
+  add(3, { action: 'verify', tool: 'Bash', target: 'cmd:npm', cmd: 'npm run test:e2e', outcome: 'error', err: 'TypeError: x is not a function', fail: 'test' });
+  add(4, { action: 'verify', tool: 'Bash', target: 'cmd:npm', cmd: 'npm run test:e2e', outcome: 'ok' });
+  add(5, { target: 'docs/LOGIN.md' });
+  add(6, { action: 'run', tool: 'Bash', target: 'cmd:cargo', cmd: 'cargo build', outcome: 'error', err: 'error[E0308]: mismatched types', fail: 'build' });
+  steps.put({ _id: 'other', project: 'p2', t: T, session: 's9', agent: 'main', action: 'read', tool: 'Read', outcome: 'ok', target: 'src/auth/login.ts' });
+  const ids = r => r.results.map(x => x.t - T).join(',');
+  const byFile = searchSteps(store, { projects: ['p1'], file: 'login' }), byCmd = searchSteps(store, { projects: ['p1'], command: 'test:e2e' }), byErr = searchSteps(store, { projects: ['p1'], error: 'TypeError' });
+  ok(ids(byFile) === '5000,2000,1000' && ids(byCmd) === '4000,3000' && ids(byErr) === '3000' && byFile.results[0].target === 'docs/LOGIN.md' && !('_id' in byFile.results[0]) && byFile.partial === false,
+    'ricerca: per parte del nome di un file (senza maiuscole), per comando, per errore; dal più recente; solo il progetto chiesto');
+  ok(ids(searchSteps(store, { projects: ['p1'], command: 'npm', outcome: 'error' })) === '3000' && ids(searchSteps(store, { projects: ['p1'], error: 'build' })) === '6000' && searchSteps(store, { file: 'login' }).results.length === 4 &&
+    ids(searchSteps(store, { projects: ['p1'], file: 'login', command: 'npm' })) === '' && searchSteps(store, { projects: ['p1'], file: 'login', limit: 2 }).results.length === 2 && ids(searchSteps(store, { projects: ['p1'], file: 'npm' })) === '',
+    'ricerca: solo i falliti, il tipo di errore, tutti i progetti, più condizioni insieme, il limite; un comando non è un file');
+  let code = null; try { searchSteps(store, { projects: ['p1'] }); } catch (e) { code = e.code; }
+  for (let i = 10; i < 9000; i++) add(i, { target: 'src/x' + i + '.js' });
+  let tick = 0;
+  const part = searchSteps(store, { projects: ['p1'], file: 'login', budgetMs: 0, clock: () => (tick += 10) });
+  ok(code === 'bad-query' && part.partial === true && part.scanned === 2000 && part.results.length === 0, 'ricerca: una richiesta vuota è un errore; oltre il tempo massimo si ferma e dice quanti passi ha guardato');
+  store.close();
+  // il test del piano: un segreto messo in un comando non si trova cercandolo, e non è nel file del database
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-ricerca-'));
+  try {
+    const h = new History({ dir: tmp, backend: 'sqlite', log() {} });
+    h.keys.exec = async () => null;
+    const sess = { id: 'sess-segreta', cwd: path.join(tmp, 'progetto'), demo: false };
+    const st = (id, sig) => ({ id, t: T, tool: 'Bash', act: 'run', target: 'cmd:x', sig, err: true, dur: 1, phase: '', fail: { kind: 'command', excerpt: 'exit 1' } });
+    h.recordStep(sess, { id: 'main' }, st('a1', 'run:mysql -u root -phunter2 shop'));
+    h.recordStep(sess, { id: 'main' }, st('a2', 'run:curl -H "Authorization: Bearer abcdef123456" https://api.example.org/v1?token=zz9secret'));
+    h.recordStep(sess, { id: 'main' }, st('a3', 'run:psql postgres://admin:pw4secret@db/app'));
+    h.flush();
+    const found = ['hunter2', 'abcdef123456', 'zz9secret', 'pw4secret'].map(x => searchSteps(h.store, { command: x }).results.length);
+    const cmds = h.store.collection('steps').find({}, { sort: { _id: 1 } }).map(x => x.cmd).join(' | ');
+    h.stop();
+    let raw = '';
+    for (const f of fs.readdirSync(tmp)) if (f.startsWith('platypus.db')) raw += fs.readFileSync(path.join(tmp, f)).toString('latin1');
+    ok(found.every(n => n === 0) && cmds === 'mysql | curl | psql' && !['hunter2', 'abcdef123456', 'zz9secret', 'pw4secret'].some(x => raw.includes(x)),
+      `ricerca: una password o un token in un comando non si trovano cercandoli e non sono nel file del database (dei comandi resta: ${cmds})`);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+}
+
+module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); await retentionTests(ok); await forgetTests(ok); await experimentTests(ok); await historyQueryTests(ok); await searchTests(ok); } };
 if (require.main === module) {
   let failed = 0;
   module.exports.run((c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) failed++; })

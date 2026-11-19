@@ -698,6 +698,15 @@ body.tiny .balloon .ung { display: none; }
 #bottega .htable th { color: var(--dim); font-weight: normal; }
 #bottega .htable td:first-child, #bottega .htable th:first-child { text-align: left; }
 @media (max-width: 520px) { #bottega .hist .hrow { grid-template-columns: 1fr; } }
+#bottega .hfind { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 8px; }
+#bottega .hfind input[type=text] { flex: 1 1 160px; min-width: 0; }
+#bottega .hfind .chk { display: flex; align-items: center; gap: 4px; font-size: 14px; color: var(--dim); }
+#bottega .hres { border: 2px solid #2a2440; padding: 6px 8px; margin: 0 0 10px; font-size: 14px; max-height: 260px; overflow: auto; }
+#bottega .hres .hfound { padding: 3px 0; border-bottom: 1px solid #2a2440; word-break: break-word; }
+#bottega .hres .hfound b { color: var(--ink); font-weight: normal; }
+#bottega .hres .hfound button { font-size: 7px; margin-left: 4px; }
+#bottega .hres .bad { color: var(--pink); }
+#bottega .hres .ok { color: var(--green); }
 /* feedback agli agenti in ufficio: l'ultimo messaggio di Platypus nel fumetto di chi l'ha ricevuto (in ombra: tratteggiato) */
 .balloon .fbk { color: #1d2b53; border-top: 1px solid #1d2b53; margin-top: 2px; padding-top: 1px;
   white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.05; } /* due righe, il resto al passaggio del mouse */
