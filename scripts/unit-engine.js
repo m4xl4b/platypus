@@ -176,7 +176,9 @@ function statsRenameTests(ok) {
     let cost = 0.8, label = 'Report';
     const s = { id: 'sess-cw-0001', kind: 'cowork', project: 'cowork', createdAt: Date.now(), tok: { in: 1, out: 1, cr: 0, cw: 0 }, completed: 0, completedByType: {}, errByType: {}, toolsByType: {}, wByType: {}, releases: [], alerts: [] };
     const st = { sessions: new Map([[s.id, s]]), label: () => label, costOf: () => cost, rateOf: () => 0 };
-    const stats = new Stats(st, path.join(tmp, 'stats.json'));
+    // nello storico, come nel motore: sqlite nella cartella di prova
+    const db = testStore('sqlite', path.join(tmp, 'db'));
+    const stats = new Stats(st, { store: db.store });
     stats.collect();
     label = 'Report trimestrale per il cliente'; cost = 1.6;
     stats.collect();
@@ -188,17 +190,23 @@ function statsRenameTests(ok) {
     const mk = id => ({ ...s, id });
     const a = mk('sess-cw-000a'), b = mk('sess-cw-000b'), labels = { [a.id]: 'outputs', [b.id]: 'outputs' };
     const st2 = { sessions: new Map([[a.id, a], [b.id, b]]), label: x => labels[x.id], costOf: () => 0.5, rateOf: () => 0 };
-    const stats2 = new Stats(st2, path.join(tmp, 'stats2.json'));
+    const stats2 = new Stats(st2);
     stats2.collect();
     labels[b.id] = 'Report Q3';
     stats2.collect();
     const r2 = stats2.report(Object.keys(stats2.data.days)[0]);
     ok(r2.totals.sessions === 2, `nome condiviso da due sessioni, una cambia titolo: ${r2.totals.sessions} sessioni in tutto (${r2.projects.map(p => p.name + ':' + p.sessions).join(', ')})`);
     stats2.stop();
-    const again = new Stats(st, path.join(tmp, 'stats.json')); // il vecchio stats.json (senza «name») resta leggibile
-    ok(Object.keys(again.data.days).length === 1, 'stats.json riletto');
+    db.store.close();
+    const db2 = testStore('sqlite', path.join(tmp, 'db'));
+    const again = new Stats(st, { store: db2.store }); // dopo un riavvio
+    const r3 = again.report(Object.keys(again.data.days)[0]);
+    ok(Object.keys(again.data.days).length === 1 && r3.projects.length === 1 && r3.projects[0].name === label && Math.abs(r3.projects[0].cost - 1.6) < 1e-6 && again.data.last[s.id].cost === 1.6 && db2.store.collection('daily').count({ kind: 'day' }) === 1,
+      'statistiche rilette dallo storico dopo un riavvio: il giorno, il progetto, l\'ultimo stato della sessione');
     again.stop();
-  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+    db2.store.close();
+    ok(!fs.readdirSync(tmp).some(f => f.endsWith('.json')), 'nessun stats.json: le statistiche stanno nello storico');
+  } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
 // una domanda di Claude all'utente (AskUserQuestion) senza risposta: l'agente aspetta, e dopo un po' scatta l'avviso
@@ -281,22 +289,23 @@ function forgetTests(ok) {
   try {
     const cwd = path.join(tmp, 'shop'), now = Date.now();
     const old = [{ kind: 'ghost-path', key: 'src/old-cart.ts', sid: 's1', t: now - 20000, agent: 'Claude', excerpt: 'File does not exist.' }];
-    const b = new Bottega(path.join(tmp, 'bottega'));
+    const book = () => { const st = testStore('sqlite', path.join(tmp, 'db')); const bk = new Bottega({ store: st.store, keys: st.keys }); bk.close = () => { bk.stop(); st.store.close(); }; return bk; };
+    const b = book();
     const ghosts = bk => bk.view(cwd).lessons.filter(l => l.kind === 'ghost-path');
     b.learn(cwd, old);
     const id = ghosts(b)[0].id;
     b.act(cwd, 'forget', id);
     b.learn(cwd, old); // il giro successivo dell'apprendimento dal vivo
     ok(!ghosts(b).length, 'lezione dimenticata: gli stessi casi non la riportano indietro');
-    b.stop();
-    const b2 = new Bottega(path.join(tmp, 'bottega')); // anche dopo un riavvio
+    b.close();
+    const b2 = book(); // anche dopo un riavvio
     b2.learn(cwd, old);
     ok(!ghosts(b2).length, 'dimenticata anche dopo il riavvio dell\'app');
     b2.learn(cwd, [{ ...old[0], sid: 's2', t: Date.now() + 60000 }]);
     const g = ghosts(b2);
     ok(g.length === 1 && g[0].count === 1, 'un caso nuovo, dopo «Dimentica», ricomincia la lezione da capo');
-    b2.stop();
-  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+    b2.close();
+  } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
 // finestra: la posizione salvata su un monitor che non c'è più non deve aprirla fuori dallo schermo
@@ -444,11 +453,38 @@ function dataDirTests(ok) {
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 
-// lanciatore: con quali versioni di Node.js si apre la finestra (Electron 44 vuole la 22.12)
+// Node.js minimo (22.13, per node:sqlite): lo stesso per lanciatore, modalità browser, finestra e guscio Tauri
 function nodeVersionTests(ok) {
-  const { windowNodeOk } = require(path.join(ROOT, 'scripts', 'requirements'));
-  ok(['22.12.0', 'v22.23.4', '24.13.0', '25.0.0'].every(windowNodeOk), 'Node.js 22.12, 22.23, 24 e 25: finestra desktop');
-  ok(!['20.20.2', '22.11.0', '18.20.0', 'v20.0.0'].some(windowNodeOk), 'Node.js 20, 22.11 e 18: solo modalità browser');
+  const { spawnSync } = require('child_process');
+  const req = require(path.join(ROOT, 'src', 'requirements'));
+  ok(['22.13.0', 'v22.23.4', '23.4.0', '24.13.0', '25.0.0'].every(req.nodeOk), 'Node.js 22.13, 22.23, 23.4, 24 e 25: vanno bene');
+  ok(!['20.20.2', '22.12.0', '22.5.1', '23.3.0', '18.20.0', 'v20.0.0', '', 'boh'].some(req.nodeOk), 'Node.js 18, 20, 22.12 e 23.3: rifiutati');
+  const cmd = (p, env) => req.updateCommand(p, env || {});
+  ok(cmd('win32') === 'winget install OpenJS.NodeJS.LTS' && cmd('darwin') === 'brew install node' && cmd('linux') === 'nvm install --lts' &&
+    cmd('darwin', { NVM_DIR: '/x' }) === 'nvm install --lts' && cmd('win32', { NVM_HOME: 'C:\\nvm' }) === 'nvm install lts', 'Node.js vecchio: il comando per aggiornare secondo il sistema (winget, brew, nvm)');
+  const msg = req.nodeMessages('v20.20.2', 'win32', {});
+  ok(msg.length === 2 && msg.every(l => l.includes('22.13') && l.includes('20.20.2') && l.includes('winget install OpenJS.NodeJS.LTS')), 'Node.js vecchio: messaggio in italiano e in inglese, con la versione che hai e il comando');
+  // il guscio Tauri controlla il Node.js del sistema con lo stesso minimo
+  const rs = fs.readFileSync(path.join(ROOT, 'shells', 'tauri', 'src-tauri', 'src', 'engine.rs'), 'utf8');
+  const m = /pub const MIN_NODE: \(u32, u32\) = \((\d+), (\d+)\);/.exec(rs);
+  ok(m && `${m[1]}.${m[2]}.0` === req.MIN_NODE && require(path.join(ROOT, 'package.json')).engines.node === `>=${m[1]}.${m[2]}`, 'Node.js minimo: uguale in src/requirements.js, package.json e nel guscio Tauri');
+  // lanciatore e modalità browser si fermano prima di caricare altro: provati con un Node.js finto (versione riscritta)
+  const pre = path.join(os.tmpdir(), `pl-oldnode-${process.pid}.js`);
+  fs.writeFileSync(pre, `Object.defineProperty(process.versions, 'node', { value: '22.12.0' });`);
+  try {
+    for (const [name, file] of [['lanciatore', path.join(ROOT, 'scripts', 'launch.js')], ['modalità browser', path.join(ROOT, 'src', 'standalone.js')]]) {
+      const r = spawnSync(process.execPath, ['-r', pre, file, '--web', '--no-open'], { encoding: 'utf8', timeout: 20000 });
+      ok(r.status === 1 && /Serve Node\.js 22\.13/.test(r.stderr) && /Node\.js 22\.13 or newer is required: you have 22\.12\.0/.test(r.stderr) && !/in ascolto|listening/.test(r.stdout),
+        `${name} con Node.js 22.12: non parte e dice come aggiornare`);
+    }
+  } finally { fs.rmSync(pre, { force: true }); }
+  // node:sqlite: si toglie solo il suo avviso sperimentale, gli altri restano
+  const code = `const { loadSqlite } = require(${JSON.stringify(path.join(ROOT, 'src', 'core', 'store', 'sqlite-load'))});
+    const s = loadSqlite(); new s.DatabaseSync(':memory:').exec('create table t(x)');
+    process.emitWarning('altro avviso sperimentale', 'ExperimentalWarning'); process.emitWarning('avviso normale'); console.log(s === loadSqlite() ? 'ok' : 'no');`;
+  const w = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8', timeout: 20000 });
+  ok(w.status === 0 && w.stdout.trim() === 'ok' && !/SQLite/.test(w.stderr) && /altro avviso sperimentale/.test(w.stderr) && /avviso normale/.test(w.stderr),
+    'node:sqlite si carica senza il suo avviso sperimentale; gli altri avvisi si vedono ancora');
 }
 
 // lavagna B: il piano arriva dal file che Claude Code scrive (ExitPlanMode non lo passa più nell'input)
@@ -574,6 +610,23 @@ function workflowTests(ok) {
     rp.stop();
     ok(rs && rs.status === 'completed' && rs.name === 'review-orders' && rs.phases.find(p => p.title === 'Review').failed === 1 && ok3 && ok3.label === 'verify:bugs', 'replay dall\'archivio: esecuzione, fasi ed esiti ricostruiti');
   } finally { w.stop(); st.stop && st.stop(); fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
+// il registro dei messaggi su uno store di prova: in memoria, con le collezioni vere e la guardia che rifiuta;
+// le chiavi dei progetti non chiamano git (ogni cartella è il suo progetto)
+function testStore(backend = 'memory', dir) {
+  const { openStore } = require(path.join(ROOT, 'src', 'core', 'store'));
+  const { declareCollections } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
+  const { ProjectKeys } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
+  const store = declareCollections(openStore({ backend, dir, guard: 'reject', requireFields: true }));
+  return { store, keys: new ProjectKeys({ store, exec: async () => null }) };
+}
+function testFeedbackLog(backend = 'memory', dir) {
+  const { FeedbackLog } = require(path.join(ROOT, 'src', 'core', 'feedbacklog'));
+  const { store, keys } = testStore(backend, dir);
+  const log = new FeedbackLog({ store, keys });
+  log.close = () => store.close();
+  return log;
 }
 
 function run(ok) {
@@ -1061,9 +1114,8 @@ function feedbackShownTests(ok, fb, inp, rules) {
     ok(m.text && !('local' in m) && !('local' in r2.entry) && !('name' in r2.entry), 'messaggi in due lingue: con l\'ufficio in inglese basta un testo');
   } finally { i18n.setLang(lang); }
   // i conteggi accanto agli interruttori: per funzione, mandati e in ombra, da un certo giorno in poi, in tutti i progetti
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-fbcount-'));
+  const fl = testFeedbackLog();
   try {
-    const fl = new FeedbackLog(tmp);
     ok(JSON.stringify(fl.counts(0)) === '{}', 'conteggi: registro vuoto');
     const row = (cwd, t, feature, mode) => fl.append(cwd, { t, sid: 's', agent: 'main', feature, mode, event: 'PostToolUse', text: 'Platypus: x' });
     row('/p/app', now - 10 * 86400000, 'elder', 'on');   // troppo vecchio
@@ -1078,7 +1130,7 @@ function feedbackShownTests(ok, fb, inp, rules) {
     ok(c.elder.on === 2 && c.elder.shadow === 1 && c.claims.shadow === 1 && c.claims.on === 0 && !c.loop, `conteggi degli ultimi 7 giorni: ${JSON.stringify(c)} (non contano i vecchi né le risposte in ritardo)`);
     fl.setOutcome('/p/app', late.id, 'helped', 'ha lanciato i test');
     ok(fl.recent('/p/app').find(r => r.id === late.id).why === 'ha lanciato i test', 'registro: l\'esito porta con sé il perché');
-  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  } finally { fl.close(); }
   // il registro della demo: la stessa interfaccia, in memoria, svuotabile, e fuori dai conteggi
   const { MemoryFeedbackLog } = require(path.join(ROOT, 'src', 'core', 'feedbacklog'));
   const ml = new MemoryFeedbackLog(3);
@@ -1216,34 +1268,45 @@ function feedbackModeTests(ok, fb, inp) {
   go(on, {}, gate, {}, fresh);
   r = fb.respond(inp('Stop'), ctx({ fbClaims: 'on' }), gate, stopRules);
   ok(r.out === null && r.entry && r.entry.mode === 'shadow' && r.entry.feature === 'claims', 'feedback: il controllo a fine turno nella 2.11 registra soltanto, anche subito dopo un altro messaggio');
-  // registro: righe aggiunte in coda, esiti, un file per progetto, rotazione
-  const { FeedbackLog } = require(path.join(ROOT, 'src', 'core', 'feedbacklog'));
+  // registro: nello storico (collezione feedback), un progetto per cartella, esiti aggiunti dopo; lo stesso su disco
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-fblog-'));
   try {
-    const fl = new FeedbackLog(tmp, { maxBytes: 600 });
-    const e1 = fl.append('/p/app', { t: 1000, sid: 's', agent: 'main', feature: 'elder', mode: 'shadow', event: 'PostToolUseFailure', lessonId: 'L1', text: 'Platypus: uno' });
-    const e2 = fl.append('/p/app', { t: 2000, sid: 's', agent: 'sub-1', feature: 'loop', mode: 'on', event: 'PostToolUseFailure', lessonId: null, text: 'Platypus: due' });
-    fl.append('/p/altro', { t: 3000, sid: 'x', agent: 'main', feature: 'elder', mode: 'on', event: 'PostToolUse', text: 'Platypus: altrove' });
-    ok(fl.setOutcome('/p/app', e1.id, 'helped') && !fl.setOutcome('/p/app', '', 'x'), 'registro: l\'esito si aggiunge dopo');
-    let rec = fl.recent('/p/app');
-    ok(rec.length === 2 && rec[0].id === e2.id && rec[1].id === e1.id && rec[1].outcome === 'helped' && !rec[0].outcome && e1.id !== e2.id, 'registro: gli ultimi messaggi del progetto, dal più recente, con il loro esito');
-    ok(fl.recent('/p/altro').length === 1 && fl.recent('/p/nessuno').length === 0 && fs.readdirSync(tmp).length === 2, 'registro: un file per progetto');
-    for (let i = 0; i < 12; i++) fl.append('/p/app', { t: 4000 + i, sid: 's', agent: 'main', feature: 'elder', mode: 'on', event: 'PostToolUse', text: 'Platypus: riga ' + i + ' ' + 'x'.repeat(60) });
-    const files = fs.readdirSync(tmp).filter(f => f.startsWith(path.basename(fl.file('/p/app'), '.jsonl')));
-    rec = fl.recent('/p/app', 5);
-    ok(files.length === 2 && fs.statSync(fl.file('/p/app')).size < 1500 && rec.length === 5 && /riga 11/.test(rec[0].text), `registro: oltre il limite il file ruota e non cresce senza fine (${files.length} file)`);
-  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+    for (const backend of ['memory', 'sqlite']) {
+      let fl = testFeedbackLog(backend, path.join(tmp, backend));
+      const e1 = fl.append('/p/app', { t: 1000, sid: 's', agent: 'main', feature: 'elder', mode: 'shadow', event: 'PostToolUseFailure', lessonId: 'L1', text: 'Platypus: uno', about: { kind: 'flaky-command', cmd: 'npm test' }, name: 'Claude', toolUseId: 'toolu_1' });
+      const e2 = fl.append('/p/app', { t: 2000, sid: 's', agent: 'sub-1', feature: 'loop', mode: 'on', event: 'PostToolUseFailure', lessonId: null, text: 'Platypus: due', local: 'Platypus: due (it)', tag: 'x/y' });
+      fl.append('/p/altro', { t: 3000, sid: 'x', agent: 'main', feature: 'elder', mode: 'on', event: 'PostToolUse', text: 'Platypus: altrove' });
+      ok(e1.id && e1.text === 'Platypus: uno' && e1.lessonId === 'L1' && fl.setOutcome('/p/app', e1.id, 'helped') && !fl.setOutcome('/p/app', '', 'x') && !fl.setOutcome('/p/app', 'non-esiste', 'helped'), `registro (${backend}): append restituisce il messaggio con il suo id; l'esito si aggiunge dopo, solo a un messaggio che c'è`);
+      let rec = fl.recent('/p/app');
+      ok(rec.length === 2 && rec[0].id === e2.id && rec[1].id === e1.id && rec[1].outcome === 'helped' && rec[1].at > 0 && !rec[0].outcome && e1.id !== e2.id && rec[1].about.cmd === 'npm test' && rec[1].name === 'Claude' && rec[1].toolUseId === 'toolu_1' &&
+        rec[0].local === 'Platypus: due (it)' && rec[0].tag === 'x/y' && !('lessonId' in rec[0]) && !('project' in rec[0]) && !('_id' in rec[0]), `registro (${backend}): gli ultimi messaggi del progetto, dal più recente, con il loro esito e i loro campi`);
+      ok(fl.recent('/p/altro').length === 1 && fl.recent('/p/nessuno').length === 0 && fl.recent('/P/APP/').length === (process.platform === 'win32' ? 2 : 0), `registro (${backend}): ogni cartella vede solo i suoi messaggi`);
+      for (let i = 0; i < 12; i++) fl.append('/p/app', { t: 4000 + i, sid: 's', agent: 'main', feature: 'elder', mode: 'on', event: 'PostToolUse', text: 'Platypus: riga ' + i + ' ' + 'x'.repeat(60) });
+      rec = fl.recent('/p/app', 5);
+      ok(rec.length === 5 && /riga 11/.test(rec[0].text) && /riga 7/.test(rec[4].text) && fl.recent('/p/app').length === 14, `registro (${backend}): recent si ferma al numero chiesto`);
+      const secret = fl.append('/p/app', { t: 9000, sid: 's', agent: 'main', feature: 'loop', mode: 'on', event: 'PostToolUse', text: 'Platypus: the last error said password=hunter2' });
+      ok(secret.text.includes('hunter2') && fl.recent('/p/app', 1)[0].text === 'Platypus: the last error said password=[secret]', `registro (${backend}): all'agente va il testo intero, nello storico resta senza segreti`);
+      if (backend === 'sqlite') {
+        fl.close();
+        fl = testFeedbackLog(backend, path.join(tmp, backend));
+        ok(fl.recent('/p/app').length === 15 && fl.recent('/p/app').find(r => r.id === e1.id).outcome === 'helped' && fl.counts(0).elder.on === 13 && !fs.existsSync(path.join(tmp, backend, 'feedback')), 'registro (sqlite): dopo un riavvio c\'è tutto, nel database e non in file a parte');
+      }
+      fl.close();
+    }
+  } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
   // il Libro ricorda il progetto zittito
   const bt = require(path.join(ROOT, 'src', 'core', 'bottega'));
   const bdir = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-mute-'));
   try {
-    const b1 = new bt.Bottega(bdir);
+    // nello storico, come nel motore: sqlite nella cartella di prova; stop() chiude anche lo store
+    const mkBook = () => { const st = testStore('sqlite', path.join(bdir, 'db')); const b = new bt.Bottega({ store: st.store, keys: st.keys, log() {} }); const stop = b.stop.bind(b); b.stop = () => { stop(); st.store.close(); }; return b; };
+    const b1 = mkBook();
     ok(b1.muted('/p/app') === false && b1.setMute('/p/app', true) === true && b1.view('/p/app').mute === true, 'Libro: «non parlare agli agenti di questo progetto»');
     b1.stop();
-    const b2 = new bt.Bottega(bdir);
+    const b2 = mkBook();
     ok(b2.muted('/p/app') === true && b2.muted('/p/altro') === false && b2.setMute('/p/app', false) === false, 'Libro: la scelta resta salvata, progetto per progetto');
     b2.stop();
-  } finally { fs.rmSync(bdir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(bdir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
 // il fumetto di un comando senza descrizione mostra il comando vero, non il "cd" davanti

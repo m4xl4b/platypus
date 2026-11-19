@@ -98,10 +98,23 @@ function connect() {
     lastPayload = key;
     try { snap = JSON.parse(ev.data); } catch { return; }
     if (snap.lang && snap.lang !== LANG) { location.reload(); return; } // lingua cambiata nelle opzioni
+    storeNotice(snap.history && snap.history.notice);
     reconcile();
   };
   es.addEventListener('replay', ev => { let d = null; try { d = JSON.parse(ev.data); } catch {} onReplayFrame(d); });
   es.onerror = () => { $('#offline').hidden = false; };
+}
+
+// lo storico non è disponibile (il database non si apre): l'avviso resta finché non lo si chiude con un clic,
+// e torna se il motivo cambia. L'ufficio intanto funziona come sempre
+function storeNotice(text) {
+  const el = $('#storenotice');
+  if (!text) { el.hidden = true; storeNotice.closed = ''; return; }
+  if (storeNotice.closed === text) return;
+  el.textContent = text;
+  el.title = tr('Clic per chiudere');
+  el.hidden = false;
+  el.onclick = () => { storeNotice.closed = text; el.hidden = true; };
 }
 
 function sessions() { return snap ? snap.sessions : []; }
@@ -586,7 +599,7 @@ function costsHtml() {
   return `<h2>${tr('COSTI NEL TEMPO')} <span>${tr('ultimi 14 giorni · totale {sum} · ultimi 7 giorni {week}', { sum: money(sum), week: money(week) })}</span></h2>` +
     `<svg class="costs" viewBox="0 0 ${Wd} ${Hd}" preserveAspectRatio="none" role="img" aria-label="${esc(tr('Costi degli ultimi 14 giorni'))}">${svg}</svg>` +
     `<div class="legend2">${top.map((p, k) => `<span><i style="background:${pal[k]}"></i>${esc(p)} · ${money(projTot[p])}</span>`).join('')}${Object.keys(projTot).length > top.length ? `<span><i style="background:${pal[6]}"></i>${tr('altri')}</span>` : ''}</div>` +
-    `<div class="foot">${esc(snap && snap.demo && !d.some(x => x.total && !snap.demo) ? tr('Le statistiche si accumulano mentre l\'ufficio è aperto e restano salvate in .platypus/stats.json (in demo: dati finti).') : tr('Le statistiche si accumulano mentre l\'ufficio è aperto e restano salvate in .platypus/stats.json.'))}</div>`;
+    `<div class="foot">${esc(snap && snap.demo && !d.some(x => x.total && !snap.demo) ? tr('Le statistiche si accumulano mentre l\'ufficio è aperto e restano salvate nello storico, .platypus/platypus.db (in demo: dati finti).') : tr('Le statistiche si accumulano mentre l\'ufficio è aperto e restano salvate nello storico, .platypus/platypus.db.'))}</div>`;
 }
 function honorsHtml() {
   const h = honorsData || {};
@@ -3201,10 +3214,11 @@ function feedbackStateHtml() {
 function feedbackHooksHtml(st) {
   const opt = (v, l, cur) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${esc(l)}</option>`;
   const row = ([k, label, canOn, feature]) => { const cur = (st && st[k]) || 'off'; return `<label><span>${esc(label)}<small class="fbn" data-fbn="${feature}"></small></span><select name="${k}" data-fb>` +
-    opt('off', tr('spenta'), cur) + opt('shadow', tr('ombra'), cur) + (canOn ? opt('on', tr('accesa'), cur) : '') + '</select></label>'; };
+    opt('off', tr('spenta'), cur) + opt('shadow', tr('ombra'), cur) + (canOn ? opt('on', tr('accesa'), cur) + opt('experiment', tr('esperimento'), cur) : '') + '</select></label>'; };
   return `<fieldset class="fbhooks"><legend>${esc(tr('FEEDBACK AGLI AGENTI'))}</legend>` +
     `<p>${esc(tr('Platypus può dire all\'agente quello che vede (una lezione del Libro, un giro in tondo) attraverso gli hook di Claude Code. Servono hook a parte, che si installano solo da qui e solo dopo la tua conferma.'))}</p>` +
     FEEDBACK_FEATURES.map(row).join('') +
+    `<p class="dim">${esc(tr('«Esperimento»: ogni sessione nuova finisce a caso, metà e metà, in un gruppo dove i messaggi partono o in uno dove si registrano soltanto. I due gruppi lavorano negli stessi giorni, con gli stessi modelli: un confronto prima e dopo mescolerebbe l\'effetto del messaggio con i cambi di modello. I risultati sono nel Libro, scheda FEEDBACK.'))}</p>` +
     `<p class="dim">${esc(tr('«Ombra» registra che cosa avrebbe detto, senza dirlo: serve a vedere se aiuterebbe. I messaggi sono rari (uno ogni 2 minuti per agente, 6 all\'ora per sessione) e mai due volte la stessa lezione. Le ultime tre funzioni per ora arrivano solo all\'ombra.'))}</p>` +
     `<div class="fbstate">${feedbackStateHtml()}</div></fieldset>`;
 }
@@ -3250,7 +3264,7 @@ function toggleSettings() {
   const box = $('#settings');
   if (!box.hidden) { if (box._tryClose) box._tryClose(); else box.hidden = true; return; }
   const st = (snap && snap.settings) || {};
-  box.innerHTML = '<span class="x">X</span><h3>' + tr('OPZIONI') + '</h3>' + settingsGroupsHtml(st) + (window.embedOptionsHtml ? embedOptionsHtml(st) : '') + feedbackHooksHtml(st) + settingsStatus() +
+  box.innerHTML = '<span class="x">X</span><h3>' + tr('OPZIONI') + '</h3>' + settingsGroupsHtml(st) + (window.embedOptionsHtml ? embedOptionsHtml(st) : '') + feedbackHooksHtml(st) + (window.storeOptionsHtml ? storeOptionsHtml(st) : '') + settingsStatus() +
     `<p class="dim">${tr('Le opzioni restano salvate anche alla prossima apertura.')}</p>` +
     `<div class="btns save-bar"><button data-do="save">${tr('SALVA')}</button><span class="dirty" hidden>${tr('Modifiche non salvate')}</span></div>`;
   // chiudere con X dopo una modifica: la prima volta avvisa, la seconda chiude senza salvare
@@ -3263,6 +3277,7 @@ function toggleSettings() {
   box.querySelector('.x').onclick = box._tryClose;
   bindFeedbackHooks(box);
   if (window.embedOptionsBind) embedOptionsBind(box); // motore del significato (embed-ui.js)
+  if (window.storeOptionsBind) storeOptionsBind(box); // lo storico (store-ui.js)
   box.querySelector('[data-do=rescan]').onclick = async () => {
     const r = await api('/api/cowork-scan', {});
     if (r) { snap.cowork = r; toast(tr('Cowork: {found} cartelle trovate, {watched} seguite', { found: r.found, watched: r.watched })); box.hidden = true; toggleSettings(); }

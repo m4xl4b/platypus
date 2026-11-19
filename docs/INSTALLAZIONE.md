@@ -18,7 +18,7 @@ Platypus si usa direttamente dai sorgenti: si clona il repository e si lancia. N
 
 | | |
 |---|---|
-| **Node.js** | 22.12 o più recente (LTS consigliata). Con versioni più vecchie (Node.js 20 non riceve più aggiornamenti di sicurezza) il lanciatore apre solo la modalità browser. |
+| **Node.js** | 22.13 o più recente (LTS consigliata). È la prima versione con il SQLite incorporato che il motore usa, quindi serve in ogni modalità: finestra, modalità browser e guscio Tauri. Con una più vecchia Platypus non parte e scrive il comando per aggiornare (`winget install OpenJS.NodeJS.LTS`, `brew install node` oppure `nvm install --lts`). |
 | **Git** | per clonare e aggiornare. |
 | **Claude Code** | quello che l'ufficio osserva: terminale, VS Code/JetBrains, app desktop. |
 | **Spazio** | circa 300 MB nella cartella `node_modules` (Electron). |
@@ -64,7 +64,7 @@ Note:
 
 ## Linux
 
-1. Installa Node.js 22.12+ e Git. Le versioni nei repository delle distribuzioni sono spesso vecchie: conviene [nvm](https://github.com/nvm-sh/nvm) oppure i pacchetti di [NodeSource](https://github.com/nodesource/distributions).
+1. Installa Node.js 22.13+ e Git. Le versioni nei repository delle distribuzioni sono spesso vecchie: conviene [nvm](https://github.com/nvm-sh/nvm) oppure i pacchetti di [NodeSource](https://github.com/nodesource/distributions).
    ```sh
    # con nvm (qualsiasi distribuzione)
    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
@@ -105,7 +105,7 @@ Per riavere il primo piano premi `PIN` (Platypus propone di riavviarsi) oppure s
 
 Il lanciatore (`scripts/launch.js`, chiamato da `start.cmd`, `start.command` e `start.sh`):
 
-1. controlla la versione di Node.js;
+1. controlla la versione di Node.js (22.13 o più recente; altrimenti si ferma e scrive il comando per aggiornare);
 2. installa le dipendenze con `npm ci`. L'unica è Electron, nella versione giusta per sistema e processore. Lo fa solo la prima volta o quando un aggiornamento le cambia;
 3. apre la finestra dell'ufficio e ti restituisce il terminale, che puoi chiudere;
 4. se la finestra non può partire (nessuno schermo, librerie mancanti), apre l'ufficio nel browser.
@@ -144,11 +144,11 @@ npm run hooks:uninstall -- --feedback
 ```
 
 - Sono hook `http` verso `http://127.0.0.1:47800/platypus-hook/feedback` su `SessionStart`, `PostToolUse`, `PostToolUseFailure`, `Stop` e `SubagentStop`, con un tempo massimo di 3 secondi. Se il tuo Claude Code è troppo vecchio per gli hook `http`, aggiungi `--curl` per installarli come comandi `curl`.
-- Installarli da solo non cambia niente: in OPZ → *Feedback agli agenti* ogni funzione parte *spenta*. *Ombra* registra che cosa Platypus avrebbe detto, senza dirlo; *accesa* lo dice. In questa versione tre funzioni si fermano all'ombra.
+- Installarli da solo non cambia niente: in OPZ → *Feedback agli agenti* ogni funzione parte *spenta*. *Ombra* registra che cosa Platypus avrebbe detto, senza dirlo; *accesa* lo dice. In questa versione tre funzioni si fermano all'ombra. Le tre che si possono accendere hanno anche *esperimento*: ogni sessione finisce a caso, metà e metà, in *accesa* o in *ombra*, e la scheda FEEDBACK del Libro confronta i due gruppi (con un intervallo al 95%, e "dati insufficienti" finché ci sono meno di 10 casi per gruppo).
 - Se Platypus è chiuso, o ci mette più di 300 ms a rispondere, Claude Code prosegue come sempre. Platypus non risponde mai al posto tuo a un permesso e non cambia mai l'input o l'output di uno strumento.
 - Per lasciare fuori un progetto: nel suo Libro spunta *Non parlare agli agenti di questo progetto*.
 
-Ogni messaggio, mandato o in ombra, finisce in un registro: `~/.platypus/feedback/<chiave>.jsonl`, un file per cartella di progetto (la stessa chiave del Libro della bottega), con che cosa è stato detto, a quale agente e che cosa ha fatto l'agente dopo. Oltre i 5 MB il file diventa `<chiave>.1.jsonl` e se ne comincia uno nuovo, quindi al massimo due file per progetto. Niente esce dal computer. Per cancellarlo chiudi Platypus e cancella il file, oppure l'intera cartella `~/.platypus/feedback`. La scheda FEEDBACK del Libro mostra lo stesso registro.
+Ogni messaggio, mandato o in ombra, finisce nel database dello storico, `~/.platypus/platypus.db`, sotto la chiave del progetto (la stessa del Libro della bottega), con che cosa è stato detto, a quale agente e che cosa ha fatto l'agente dopo. Il testo passa dal filtro dei segreti prima di essere tenuto, e i messaggi più vecchi di 365 giorni si cancellano. Niente esce dal computer. La scheda FEEDBACK del Libro mostra lo stesso registro; per cancellarlo usa *Dimentica questo progetto* (vedi *Lo storico* più sotto).
 
 ## Significato più preciso (facoltativo)
 
@@ -190,20 +190,38 @@ Poi una volta `npm run tauri:build` (la prima compilazione richiede alcuni minut
 2. togli la spunta *Avvia all'accesso al computer* dal menu dell'icona;
 3. cancella la cartella del repository;
 4. se vuoi, cancella anche:
-   - impostazioni, statistiche, Libro della bottega e registro dei messaggi agli agenti: `~/.platypus`;
+   - `~/.platypus`: le impostazioni e il database dello storico `platypus.db` (Libro della bottega, statistiche, messaggi agli agenti, passi e riassunti delle sessioni), con le sue copie di sicurezza;
    - preferenze della finestra: `%APPDATA%\Platypus`, `~/Library/Application Support/Platypus` oppure `~/.config/Platypus`;
    - i collegamenti creati con `npm run shortcut`.
 
 ### Il Libro della bottega
 
-Le lezioni che Platypus deduce dalle tue sessioni stanno in `~/.platypus/bottega`, un file JSON per cartella di progetto (il nome del file è una chiave calcolata dalla cartella). Niente esce dal computer.
+Le lezioni che Platypus deduce dalle tue sessioni stanno nel database dello storico, `~/.platypus/platypus.db`, sotto una chiave del progetto: il remote `origin` del suo repository git senza credenziali, oppure la cartella se non c'è un remote. Due copie dello stesso repository hanno un libro solo. Il database non tiene mai la cartella del progetto, il testo delle tue richieste né l'uscita dei comandi. Niente esce dal computer.
 
 Il libro impara dalle sessioni aperte una volta al minuto e, quando un progetto ha una sessione aperta, rilegge da sé in background le sue sessioni passate (al massimo ogni 6 ore; una sessione già letta e non cambiata si salta).
 
 - Per dimenticare una lezione: apri il Libro (LIBRO sul tabellone del piano, oppure BOTTEGA nell'atrio) e premi DIMENTICA.
-- Per dimenticare il libro di un progetto, o tutti: chiudi Platypus e cancella il suo file, oppure l'intera cartella `~/.platypus/bottega`.
+- Per dimenticare tutti i libri, e il resto dello storico: chiudi Platypus e cancella `~/.platypus/platypus.db` (con `platypus.db-wal` e `platypus.db-shm` accanto, se ci sono). Fino alla 2.12 i libri erano file in `~/.platypus/bottega`: la 2.13 non li legge né li scrive più.
 - Per non farlo più imparare: OPZ → *Il Libro della bottega impara dalle sessioni*. Il Nonno ha un suo interruttore lì accanto.
 - Se hai aggiunto la sezione del libro al `CLAUDE.md` di un progetto, sta tra `<!-- platypus:bottega:start -->` e `<!-- platypus:bottega:end -->`: cancella quelle righe per toglierla. La versione precedente del file è in `CLAUDE.md.platypus-backup`.
+
+### Lo storico
+
+Dalla 2.13 Platypus tiene uno storico delle tue sessioni in `~/.platypus/platypus.db`, un database SQLite che è già dentro Node.js (nessun programma in più). Tiene solo fatti ricavati dalle sessioni: per ogni azione lo strumento, il file relativo al progetto, com'è finita, la forma dell'errore e le prime parole di un comando; per ogni sessione i conteggi (azioni, errori, giri in tondo, fasi bloccate, affermazioni senza prove), il modello, il costo e gli orari. Mai il testo delle tue richieste, le risposte degli agenti, l'uscita dei comandi, il contenuto dei file, credenziali o indirizzi e-mail; i percorsi assoluti fuori dal progetto diventano un hash con il nome del file. Niente esce dal computer.
+
+- **Che cosa vedi:** la scheda STORIA del Libro (righe settimana per settimana per progetto, una frase come "giri in tondo: meno di un mese fa", sempre con il numero di sessioni dietro, e una ricerca nei passi salvati per file, comando o errore), la riga della tendenza nel report giornaliero e i risultati dell'esperimento nella scheda FEEDBACK.
+- **Quanto si tiene:** passi 90 giorni, riassunti delle sessioni e messaggi agli agenti 365 giorni, lezioni con peso basso 180 giorni, statistiche giornaliere per sempre. Ognuno si cambia in OPZ → *ARCHIVIO*, con un limite di dimensione (200 MB di base: oltre, se ne vanno per primi i passi più vecchi).
+- **OPZ → *ARCHIVIO*** ha anche COMPATTA (restituisce al disco lo spazio liberato), ESPORTA… (un file JSONL per collezione, di base in `Scaricati/platypus-export-<data>`) e DIMENTICA UN PROGETTO…. *Dimentica questo progetto* c'è anche in ogni Libro: toglie tutto quello che riguarda il progetto dal database, dalle sue copie di sicurezza e dai file della 2.12.
+- **Se il database non si può usare** (rovinato, scritto da una Platypus più nuova, cartella in sola lettura), Platypus continua a funzionare senza storico e lo dice in una barra gialla; un file rovinato viene messo da parte come `platypus.db.broken-<data>` e al giro dopo se ne crea uno nuovo. Prima di ogni cambio di schema resta una copia `platypus.db.bak-<versione>` (le ultime due).
+- **Per cancellare tutto:** chiudi Platypus e cancella `platypus.db` con `platypus.db-wal` e `platypus.db-shm`, e accanto `platypus.db.bak-*`, `platypus.db.broken-*` e `legacy-<data>/`.
+
+### Tornare alla 2.12
+
+Dalla 2.13 il Libro della bottega, le statistiche e il registro dei messaggi agli agenti stanno in un solo database, `~/.platypus/platypus.db`. La prima volta che la 2.13 parte, li copia lì dai file che usava la 2.12 (`bottega/`, `stats.json`, `feedback/`). Quei file non vengono né cambiati né cancellati, e una seconda copia resta in `~/.platypus/legacy-<data>/`.
+
+Quindi tornare indietro funziona: rimetti la 2.12 e avviala, e rilegge i suoi file com'erano quando la 2.13 è partita la prima volta. Quello che la 2.13 ha imparato dopo resta nel database, dove la 2.12 non guarda. Se poi torni alla 2.13, riprende dal suo database: i vecchi file si importano una volta sola.
+
+Un'eccezione: quando nella 2.13 usi *Dimentica questo progetto*, il progetto viene tolto anche da quei file della 2.12 e le copie di sicurezza accanto al database (`platypus.db.bak-*`, `platypus.db.broken-*`, `legacy-<data>/`) vengono cancellate, quindi nemmeno la 2.12 lo mostrerà più.
 
 ## Casi particolari
 
@@ -251,6 +269,7 @@ Cosa è stato provato su sistemi veri e cosa no. Le date sono quelle delle prove
 | Problema | Soluzione |
 |---|---|
 | `node` non trovato | Installa Node.js e riapri il terminale. Su macOS con nvm: `start.sh` carica nvm da solo; se usi un altro gestore, assicurati che `node` sia nel PATH. |
+| «Serve Node.js 22.13 o più recente» | Aggiorna Node.js con il comando scritto nel messaggio (`winget install OpenJS.NodeJS.LTS` su Windows, `brew install node` su macOS, `nvm install --lts` con nvm) e riapri il terminale. Serve anche alla modalità browser. Il guscio Tauri usa il `node` che trova nel `PATH`, oppure quello indicato in `PLATYPUS_NODE`. |
 | Windows: `start.cmd` «non è riconosciuto» in PowerShell | PowerShell non lancia i file della cartella corrente per nome: scrivi `.\start.cmd`, oppure fai doppio clic. |
 | Windows: *Avvia all'accesso* si spegne o si accende da solo | Windows tiene una sola voce di avvio, chiamata `com.platypus.desktop`, per tutte le copie di Platypus sul computer (un clone, una versione impacchettata). Accendila dalla copia che vuoi tenere. |
 | Il primo avvio si ferma durante `npm ci` | Rete o proxy: vedi [Proxy aziendale](#proxy-aziendale). Intanto puoi usare `npm run web`. |

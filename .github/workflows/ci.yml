@@ -1,5 +1,6 @@
 # Checks on Windows, macOS and Linux on every push and pull request.
-#  - "engine": npm test with Node 22 and 24 (nothing to install)
+#  - "engine": npm test with Node 22.13 (the minimum: the first with node:sqlite without a flag) and 24
+#    (nothing to install)
 #  - "window": installs Electron like a user would, runs scripts/platform-test.js (shortcuts, autostart,
 #    osint, Cowork folders, in a temporary home), opens the app with the demo, takes a screenshot and
 #    saves it among the run's artifacts; on macOS it also checks the mini mode and screenshots the reality map
@@ -26,7 +27,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-15-intel, windows-latest]
-        node: [22, 24]
+        node: ['22.13.0', 24]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

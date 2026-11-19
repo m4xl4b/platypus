@@ -8,7 +8,7 @@ Platypus runs straight from source: clone the repository and launch it. There ar
 
 | | |
 |---|---|
-| **Node.js** | 22.12 or newer (LTS recommended). With older versions (Node.js 20 no longer gets security updates) the launcher opens browser mode only. |
+| **Node.js** | 22.13 or newer (LTS recommended). It is the first version with the built-in SQLite the engine uses, so it is needed in every mode: window, browser mode and the Tauri shell. With an older one Platypus does not start and prints the command to update (`winget install OpenJS.NodeJS.LTS`, `brew install node` or `nvm install --lts`). |
 | **Git** | to clone and update. |
 | **Claude Code** | what the office watches: terminal, VS Code/JetBrains, desktop app. |
 | **Disk** | about 300 MB in `node_modules` (Electron). |
@@ -97,11 +97,11 @@ npm run hooks:uninstall -- --feedback
 ```
 
 - They are `http` hooks to `http://127.0.0.1:47800/platypus-hook/feedback` on `SessionStart`, `PostToolUse`, `PostToolUseFailure`, `Stop` and `SubagentStop`, with a 3-second timeout. If your Claude Code is too old for `http` hooks, add `--curl` to install them as `curl` commands instead.
-- Installing them changes nothing by itself: every feature in OPT → *Feedback to the agents* starts *off*. *Shadow* records what Platypus would have said without saying it; *on* says it. In this version three features stop at shadow.
+- Installing them changes nothing by itself: every feature in OPT → *Feedback to the agents* starts *off*. *Shadow* records what Platypus would have said without saying it; *on* says it. In this version three features stop at shadow. The three that can be turned on also have *experiment*: each session is assigned at random, half and half, to *on* or *shadow*, and the Book's FEEDBACK tab compares the two groups (with a 95% interval, and "not enough data" while there are fewer than 10 cases per group).
 - If Platypus is closed, or takes more than 300 ms to answer, Claude Code goes on as usual. Platypus never answers for you on a permission and never changes a tool's input or output.
 - To keep a project out of it: in its Book tick *Don't talk to this project's agents*.
 
-Every message, sent or in shadow, goes to a log: `~/.platypus/feedback/<key>.jsonl`, one file per project folder (the same key as the Workshop book), with what was said, to which agent, and what the agent did next. Past 5 MB the file becomes `<key>.1.jsonl` and a new one starts, so at most two files per project. Nothing leaves your computer. To delete it, close Platypus and delete the file or the whole `~/.platypus/feedback` folder. The Book's FEEDBACK tab shows the same log.
+Every message, sent or in shadow, goes to the history database, `~/.platypus/platypus.db`, under the project's key (the same as the Workshop book), with what was said, to which agent, and what the agent did next. The text is passed through the secret filter before it is kept, and messages older than 365 days are deleted. Nothing leaves your computer. The Book's FEEDBACK tab shows the same log; to delete it, use *Forget this project* (see *The history* below).
 
 ## More precise meaning (optional)
 
@@ -143,19 +143,37 @@ To uninstall:
 2. Untick *Start when I log in* in the tray menu.
 3. Delete the repository folder.
 4. Optionally, also delete:
-   - `~/.platypus`, the settings, the stats, the Workshop book and the log of the messages to the agents;
+   - `~/.platypus`: the settings and the history database `platypus.db` (Workshop book, statistics, messages to the agents, steps and session summaries), with its backups;
    - the window preferences folder `Platypus` under AppData (Windows), Application Support (macOS) or `~/.config` (Linux).
 
 ### The Workshop book
 
-The lessons Platypus deduces from your sessions live in `~/.platypus/bottega`, one JSON file per project folder (the file name is a key computed from the folder). Nothing leaves your computer.
+The lessons Platypus deduces from your sessions live in the history database, `~/.platypus/platypus.db`, under a key of the project: the `origin` remote of its git repository without any credentials, or the folder when there is no remote. Two clones of the same repository share one book. The database never holds the project's folder, the text of your prompts or the output of commands. Nothing leaves your computer.
 
 The book learns from the open sessions once a minute and, when a project has an open session, rereads that project's past sessions by itself in the background (every 6 hours at most; a session already read and unchanged is skipped).
 
 - To forget a single lesson: open the Book (BOOK on the floor's notice board, or WORKSHOP in the lobby) and press FORGET.
-- To forget a project's book, or all of them: close Platypus and delete its file, or the whole `~/.platypus/bottega` folder.
+- To forget all the books, and the rest of the history: close Platypus and delete `~/.platypus/platypus.db` (with `platypus.db-wal` and `platypus.db-shm` next to it, if they are there). Up to 2.12 the books were files in `~/.platypus/bottega`: 2.13 no longer reads or writes them.
 - To stop learning: OPT → *The Workshop book learns from sessions*. Grandpa has his own switch next to it.
 - If you added the book's section to a project's `CLAUDE.md`, it sits between `<!-- platypus:bottega:start -->` and `<!-- platypus:bottega:end -->`: delete those lines to remove it. The previous version of the file is in `CLAUDE.md.platypus-backup`.
+
+### The history
+
+From 2.13 Platypus keeps a history of your sessions in `~/.platypus/platypus.db`, an SQLite database built into Node.js (no extra program). It holds only facts derived from the sessions: for each action the tool, the file relative to the project, the outcome, the shape of the error and the first words of a command; for each session counts (actions, errors, loops, stuck phases, claims without evidence), model, cost and times. Never the text of your prompts, the agents' replies, the output of commands, the contents of files, credentials or e-mail addresses; absolute paths outside the project become a hash with the file name. Nothing leaves your computer.
+
+- **What you see:** the Book's HISTORY tab (weekly lines per project, a sentence like "loops: fewer than a month ago", always with the number of sessions behind it, and a search over the stored steps by file, command or error), the trend line of the daily report, and the experiment results in the FEEDBACK tab.
+- **How long it is kept:** steps 90 days, session summaries and messages to the agents 365 days, lessons with a low weight 180 days, daily statistics forever. Each can be changed in OPT → *ARCHIVE*, with a size limit (200 MB by default: over it, the oldest steps go first).
+- **OPT → *ARCHIVE*** also has COMPACT (gives the freed space back to the disk), EXPORT… (one JSONL file per collection, by default in `Downloads/platypus-export-<date>`) and FORGET A PROJECT…. *Forget this project* is also in each Book: it removes everything about the project from the database, its backups and the 2.12 files.
+- **If the database cannot be used** (damaged, written by a newer Platypus, read-only folder), Platypus keeps working without history and says so in a yellow bar; a damaged file is set aside as `platypus.db.broken-<date>` and a new one is created at the next start. Before each schema change a copy is kept as `platypus.db.bak-<version>` (the last two).
+- **To delete it all:** close Platypus and delete `platypus.db` with `platypus.db-wal` and `platypus.db-shm`, and the `platypus.db.bak-*`, `platypus.db.broken-*` and `legacy-<date>/` next to it.
+
+### Going back to 2.12
+
+From 2.13 the Workshop book, the statistics and the log of the messages to the agents live in one database, `~/.platypus/platypus.db`. The first time 2.13 starts, it copies them there from the files 2.12 used (`bottega/`, `stats.json`, `feedback/`). Those files are neither changed nor deleted, and a second copy of them is kept in `~/.platypus/legacy-<date>/`.
+
+So going back works: check out 2.12 and start it, and it reads its own files as they were when 2.13 first ran. What 2.13 learned after that stays in the database, where 2.12 does not look. If you return to 2.13 later, it carries on from its database: the old files are imported only once.
+
+One exception: when you use *Forget this project* in 2.13, the project is also removed from those 2.12 files and the backups next to the database (`platypus.db.bak-*`, `platypus.db.broken-*`, `legacy-<date>/`) are deleted, so 2.12 will not show it either.
 
 ## Special cases
 
@@ -180,6 +198,7 @@ What was tried on real systems, and what was not. Dates are when the test was ru
 | Problem | Fix |
 |---|---|
 | `node` not found | Install Node.js and reopen the terminal (`start.sh` loads nvm by itself). |
+| "Node.js 22.13 or newer is required" | Update Node.js with the command in the message (`winget install OpenJS.NodeJS.LTS` on Windows, `brew install node` on macOS, `nvm install --lts` with nvm) and reopen the terminal. Browser mode needs it too. The Tauri shell uses the `node` found in the `PATH`, or the one in `PLATYPUS_NODE`. |
 | Windows: `start.cmd` "is not recognized" in PowerShell | PowerShell does not run files from the current folder by name: type `.\start.cmd`, or double-click it. |
 | Windows: *Start when I log in* switches itself off or on | Windows keeps one start-up entry named `com.platypus.desktop` for every copy of Platypus on the computer (a clone, a packaged build). Turn it on from the copy you want to keep. |
 | `npm ci` hangs on first launch | Network or proxy (see above). Meanwhile, use `npm run web`. |

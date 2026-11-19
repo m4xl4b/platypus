@@ -50,6 +50,12 @@ const { Demo } = require('./demo');
 const { listArchive, findSessionFile, Replay } = require('./archive');
 const osint = require('./osint');
 const { Stats } = require('./stats');
+const { History } = require('./history');
+const { runRetention } = require('./retention');
+const experiments = require('./experiments');
+const historyQuery = require('./history-query');
+const search = require('./search');
+const { demoHistoryStore } = require('./demo-history');
 const hooks = require('./hooks');
 const feedback = require('./feedback');
 const { FeedbackLog, MemoryFeedbackLog } = require('./feedbacklog');
@@ -69,16 +75,23 @@ function defaultSettingsPath() { return path.join(dataDir(), 'settings.json'); }
 function loadSettings(p) { try { return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(p, 'utf8')) }; } catch { return { ...DEFAULT_SETTINGS }; } }
 function saveSettings(p, s) { try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(s, null, 2)); } catch {} }
 
-function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPath = defaultSettingsPath(), statsPath, bottegaDir, fetch: fetchImpl, osLocale } = {}) {
+function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPath = defaultSettingsPath(), fetch: fetchImpl, osLocale } = {}) {
   const initialSettings = loadSettings(settingsPath);
   i18n.setLang(i18n.resolveLang(initialSettings.lang, osLocale));
   const state = new OfficeState({ settings: initialSettings });
-  const stats = new Stats(state, statsPath || path.join(path.dirname(settingsPath), 'stats.json'));
-  const bottega = new Bottega(bottegaDir || path.join(path.dirname(settingsPath), 'bottega'));
+  // lo storico (store): accanto alle opzioni, in platypus.db. Se non si apre si va avanti in memoria e l'ufficio lo dice
+  const history = new History({ dir: path.dirname(settingsPath), settings: initialSettings });
+  // ogni azione finita diventa un passo nello storico; i riassunti delle sessioni ogni minuto e alla chiusura
+  state.on('step', (s, a, step) => { try { history.recordStep(s, a, step); } catch {} });
+  const summaryTimer = setInterval(() => { try { history.summarize(state, { counts: sessionCounts }); } catch {} }, 60000);
+  summaryTimer.unref && summaryTimer.unref();
+  const stats = new Stats(state, { store: history.store }); // nello storico, collezione daily
+  // il Libro della bottega, nello storico. La cartella di un progetto (lo storico non la tiene) la cerca il motore
+  const bottega = new Bottega({ store: history.store, keys: history.keys, cwdOf: projectFolder, isDemo: cwd => isDemoCwd(cwd) });
   // le notifiche (attese, avvisi, report): le decide il motore, le mostra la shell
   // (shellInfo: le voci del menu dei gusci esterni; si chiama solo più tardi, quando hook e demo esistono già)
   const notifier = new Notifier(state, {
-    stats, file: path.join(path.dirname(settingsPath), 'notify.json'),
+    stats, memo: { get: k => history.store.getMeta(k), set: (k, v) => history.store.setMeta(k, String(v)) }, // nello storico, non in notify.json
     shellInfo: () => ({ hooks: hooksInstalled(), demo: demo.on, cowork: !!state.includeCowork, base: base || claudeDir() }),
   }).start();
   // il libro impara dalle sessioni aperte: gli stessi fatti della mappa, una volta al minuto
@@ -223,7 +236,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   // e Claude Code prosegue come se Platypus non ci fosse.
   const FEEDBACK_MS = 300;
   const feedbackStats = { calls: 0, said: 0, shadow: 0, late: 0, errors: 0 };
-  const feedbackLog = new FeedbackLog(path.join(path.dirname(settingsPath), 'feedback')); // accanto alle opzioni: ~/.platypus/feedback
+  const feedbackLog = new FeedbackLog({ store: history.store, keys: history.keys }); // nello storico, collezione feedback
   const embedder = new Embedder({ settings: state.settings, dir: path.join(path.dirname(settingsPath), 'embed-cache'), deps: { modelsDir: path.join(path.dirname(settingsPath), 'models') } }); // significato neurale (embed/)
   const feedbackGate = new feedback.Gate(); // i limiti di frequenza, in memoria: ripartono con Platypus
   // la demo (C3): agenti finti, quindi ogni funzione nel modo più alto che ha nella 2.11, qualunque cosa dicano le
@@ -278,6 +291,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       }, feedbackGate);
       out = r.out; entry = r.entry;
       if (entry && entry.mode === 'shadow') feedbackStats.shadow++;
+      // in esperimento: il gruppo della sessione resta nello storico (mai per la demo)
+      if (entry && entry.group && !(s && s.demo)) history.recordExperiment({ cwd, sid: entry.sid, feature: entry.feature, group: entry.group, t: entry.t });
     } catch { feedbackStats.errors++; out = null; }
     // calcolata tardi: non la mandiamo (la regola del tempo massimo vale anche per noi)
     if (out && Date.now() - t0 > FEEDBACK_MS) {
@@ -317,7 +332,24 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     return n;
   }
   // la demo finisce: il suo registro si svuota, e i suoi messaggi non aspettano più un esito
+  // lo storico finto della demo (S14): in memoria, creato alla prima domanda mentre la demo è accesa, buttato quando finisce
+  let demoStore = null;
+  function demoHistory() {
+    if (!demo.on) { demoStore = null; return null; }
+    if (!demoStore) demoStore = demoHistoryStore();
+    return demoStore;
+  }
+  // su quale storico rispondere: quello vero, o quello della demo per un suo piano. null = progetto sconosciuto
+  function historyScope(q) {
+    if (!(q.sid || q.cwd || q.key)) return { store: history.store, projects: null, demo: false };
+    const cwd = projectCwd(q);
+    if (cwd && isDemoCwd(cwd)) { const ds = demoHistory(); return { store: ds, projects: [projectKey(cwd)], demo: true }; }
+    if (cwd) return { store: history.store, projects: history.keys.allKeys(history.keys.keyIfKnown(cwd)), demo: false };
+    if (q.key && /^[0-9a-f]{16}$/.test(q.key)) return { store: history.store, projects: history.keys.allKeys(q.key), demo: false };
+    return null;
+  }
   function dropDemoFeedback() {
+    demoStore = null;
     demoFeedbackLog.clear();
     for (const [id, p] of feedbackPending) if (p.log === demoFeedbackLog) feedbackPending.delete(id);
     feedbackSaid = feedbackSaid.filter(x => !String(x.sid).startsWith('demo-'));
@@ -343,6 +375,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     feedbackSaid = feedbackSaid.filter(x => nowMs - x.t < SAID_MS);
     snap.feedback = feedbackSaid;
     snap.replay = replay ? { key: replay.key } : null;
+    snap.history = history.info();
     return 'data: ' + JSON.stringify(snap) + '\n\n';
   }
   function broadcast(text) { for (const c of clients) c.write(text); }
@@ -394,6 +427,26 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     } catch (e) { return { ok: false, error: e.message }; }
   }
 
+  // i conteggi di una sessione per lo storico (S12): gli stessi fatti che l'ufficio mostra, contati.
+  //   surprises  i fallimenti inattesi (surprise.js)          loops  quelli in cui l'agente insiste con lo stesso comando
+  //   stuck      le volte che un agente entra nella fase "bloccato"   flaky  i comandi di verifica instabili (come il Libro)
+  //   claims     le affermazioni senza prove (grounding.js)    stale  le memorie non aggiornate e le modifiche alla cieca
+  //   lessons    i messaggi del Libro mandati davvero agli agenti della sessione
+  function sessionCounts(s) {
+    const agents = agentsOf(s), now = Date.now();
+    const sp = surprise.surprises(agents, { now }).surprises;
+    const loops = new Set(sp.filter(x => x.reaction === 'insists').map(x => x.sig || x.target || x.t));
+    let stuck = 0;
+    for (const a of agents) { let prev = ''; for (const st of a.world.steps) { if (st.phase === 'stuck' && prev !== 'stuck') stuck++; prev = st.phase; } }
+    const cases = digest(s, agents, now);
+    const flaky = new Set(cases.filter(c => c.kind === 'flaky-command').map(c => c.key)).size;
+    const g = grounding.checkStale(s, agents, s.cwd, { disk: false });
+    const claims = grounding.checkClaims(s, agents, s.cwd).claims.filter(c => c.status === 'ungrounded').length;
+    let lessons = 0;
+    try { lessons = history.store.collection('feedback').count({ sid: s.id, mode: 'on', lessonId: { $exists: true } }); } catch {}
+    return { surprises: sp.length, loops: loops.size, stuck, flaky, claims, stale: g.stale.length + g.blindEdits.length, lessons };
+  }
+
   // gli agenti di una sessione con la loro mappa, per grounding.js, surprise.js e bottega.js
   function agentsOf(s) {
     return [s.main, ...s.subs.values()].filter(a => a.world).map(a => ({ id: a.id, name: displayName(a), world: a.world, mind: a.mind }));
@@ -412,6 +465,21 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       const opts = { only, replay: isReplay };
       return { ok: true, sid: s.id, aid, now: st.now(), ...grounding.checkStale(s, agents, s.cwd, opts), ...grounding.findGhosts(s, agents, s.cwd, opts), ...grounding.checkClaims(s, agents, s.cwd, opts), ...surprise.surprises(agents, { ...opts, now: st.now() }) };
     } catch (e) { return { ok: false, error: e.message }; }
+  }
+
+  // la cartella di un progetto dalla sua chiave: tra le sessioni aperte, poi nell'archivio di Claude Code (rifatto al
+  // massimo ogni 30 s). Lo storico non tiene percorsi assoluti, quindi un progetto senza sessioni né archivio non ha cartella
+  let folders = { at: 0, map: new Map() };
+  function projectFolder(key) {
+    const keys = history.keys;
+    // keyIfKnown: cercare una cartella non deve chiedere niente a git né registrare progetti (un progetto dimenticato non rinasce)
+    for (const s of state.sessions.values()) if (!s.demo && s.cwd && (keys.keyIfKnown(s.cwd) === key || projectKey(s.cwd) === key)) return s.cwd;
+    if (Date.now() - folders.at > 30000) {
+      const map = new Map();
+      try { for (const x of listArchive({ base, limit: 400 })) if (x.cwd) for (const k of [keys.keyIfKnown(x.cwd), projectKey(x.cwd)]) if (!map.has(k)) map.set(k, x.cwd); } catch {}
+      folders = { at: Date.now(), map };
+    }
+    return folders.map.get(key) || '';
   }
 
   // la cartella del progetto: dalla sessione (anche in replay) o passata direttamente
@@ -499,6 +567,30 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         if (j.confirm !== true) return json(res, 400, { ok: false, reason: 'confirm' }); // mai in automatico
         if (!p.writable) return json(res, 409, { ok: false, reason: p.reason });
         return json(res, 200, { path: p.path, ...claudemd.upsertSection(p.path, p.markdown) });
+      }
+      // lo storico: compatta, esporta, dimentica un progetto, applica subito la conservazione
+      case '/api/store': {
+        if (j.action === 'compact') return json(res, 200, { ok: true, size: history.compact() });
+        if (j.action === 'retention') return json(res, 200, { ok: true, result: await retention() });
+        if (j.action === 'export') {
+          const dir = typeof j.dir === 'string' && j.dir.trim() ? j.dir.trim().slice(0, 500) : '';
+          if (dir && !path.isAbsolute(dir)) return json(res, 400, { ok: false, reason: tr('Serve un percorso completo per la cartella di esportazione.') });
+          try { return json(res, 200, { ok: true, ...history.exportAll(dir || undefined) }); }
+          catch (e) { return json(res, 200, { ok: false, reason: tr('Non sono riuscito a esportare lo storico: {error}', { error: e.message }) }); }
+        }
+        if (j.action === 'forget') {
+          // il progetto: dalla sua chiave, oppure dalla sessione o dalla cartella (dal Libro)
+          let key = typeof j.key === 'string' && /^[0-9a-f]{16}$/.test(j.key) ? j.key : '';
+          if (!key) {
+            const cwd = projectCwd(j);
+            if (cwd && isDemoCwd(cwd)) return json(res, 409, { ok: false, reason: tr('Il Libro della demo è finto e non sta nello storico.') });
+            if (cwd) key = history.keys.keyIfKnown(cwd);
+          }
+          if (!key) return json(res, 404, { ok: false });
+          if (j.confirm !== true) return json(res, 400, { ok: false, reason: 'confirm' }); // mai senza conferma
+          return json(res, 200, { ok: true, ...forgetProject(key) });
+        }
+        return json(res, 400, { ok: false, reason: 'action' });
       }
       case '/api/bottega/learn': {
         const cwd = projectCwd(j);
@@ -615,7 +707,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       return;
     }
     if (url.pathname === '/api/shell/events') return notifier.attach(req, res);
-    if (url.pathname === '/api/state') return json(res, 200, state.snapshot());
+    if (url.pathname === '/api/state') return json(res, 200, { ...state.snapshot(), history: history.info() });
     if (url.pathname === '/i18n.js') { // traduzioni per la pagina (la lingua scelta nelle opzioni)
       const lang = i18n.getLang();
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
@@ -624,6 +716,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     if (url.pathname === '/models.js') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' }); return res.end(fs.readFileSync(path.join(__dirname, 'models.js'))); } // nomi dei modelli, età e contesto: gli stessi del motore
     if (url.pathname === '/drift-rule.js') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' }); return res.end(fs.readFileSync(path.join(__dirname, 'drift-rule.js'))); } // la regola della deriva, la stessa del motore
     if (url.pathname === '/api/settings') return json(res, 200, state.settings);
+    if (url.pathname === '/api/store') return json(res, 200, storeInfo());
     if (url.pathname === '/api/cowork-scan') return json(res, 200, state.coworkScan || {});
     if (url.pathname === '/api/agentmap') return json(res, 200, agentMap(url.searchParams));
     if (url.pathname === '/api/agentmind') return json(res, 200, agentMind(url.searchParams));
@@ -641,6 +734,58 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       const cwd = projectCwd(Object.fromEntries(url.searchParams));
       if (!cwd) return json(res, 404, { ok: false });
       try { return json(res, 200, { ok: true, demo: isDemoCwd(cwd), entries: (isDemoCwd(cwd) ? demoFeedbackLog : feedbackLog).recent(cwd, 200).map(feedbackRow) }); } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+    }
+    // la ricerca nell'archivio sui passi salvati (S12b): per il progetto (sid, cwd o key) o per tutti
+    if (url.pathname === '/api/history/search') {
+      try {
+        history.flush();
+        const q = Object.fromEntries(url.searchParams);
+        const sc = historyScope(q);
+        if (!sc) return json(res, 404, { ok: false });
+        if (!sc.store) return json(res, 200, { ok: true, demo: true, results: [], scanned: 0, partial: false });
+        const projects = sc.projects;
+        const r = search.searchSteps(sc.store, {
+          projects, file: (q.file || '').slice(0, 200), command: (q.command || '').slice(0, 200), error: (q.error || '').slice(0, 200), outcome: q.outcome,
+          from: Number(q.from) || undefined, to: Number(q.to) || undefined, limit: Number(q.limit) || 50,
+        });
+        return json(res, 200, { ok: true, demo: sc.demo, ...r });
+      } catch (e) { return json(res, e.code === 'bad-query' ? 400 : 200, { ok: false, error: e.message }); }
+    }
+    // lo storico nel tempo (S12): per il progetto (sid, cwd o key) o per tutti; metric=all dà tutte le metriche con la loro lettura
+    if (url.pathname === '/api/history') {
+      try {
+        history.flush();
+        const q = Object.fromEntries(url.searchParams);
+        const sc = historyScope(q);
+        if (!sc) return json(res, 404, { ok: false });
+        if (!sc.store) return json(res, 200, { ok: true, demo: true });
+        const projects = sc.projects, hstore = sc.store;
+        // di base le ultime 26 settimane, compresa quella in corso, dall'inizio di una settimana
+        const now = Date.now(), to = Number(q.to) || now + 1, from = Number(q.from) || historyQuery.addDays(historyQuery.bucketStart(now, 'week'), -7 * 25);
+        const bucket = q.bucket || 'week', metric = q.metric || 'all';
+        const one = m => { const r = historyQuery.query(hstore, { projects, metric: m, from, to, bucket }); return m === 'feedback' ? r : { ...r, trend: historyQuery.trend(r, now) }; };
+        if (metric === 'all') {
+          // le metriche delle sessioni in una lettura sola, più il feedback
+          const all = historyQuery.queryAll(hstore, { projects, from, to, bucket });
+          for (const m of Object.keys(all)) all[m].trend = historyQuery.trend(all[m], now);
+          all.feedback = one('feedback');
+          return json(res, 200, { ok: true, demo: sc.demo, from, to, bucket, metrics: all });
+        }
+        return json(res, 200, { ok: true, demo: sc.demo, ...one(metric) });
+      } catch (e) { return json(res, e.code && /^bad-/.test(e.code) ? 400 : 200, { ok: false, error: e.message }); }
+    }
+    // l'esperimento sul feedback (S11): i due gruppi a confronto, per il progetto e per tutti i progetti
+    if (url.pathname === '/api/feedback/experiment') {
+      try {
+        history.flush();
+        const q = Object.fromEntries(url.searchParams);
+        const sc = historyScope(q);
+        if (!sc) return json(res, 404, { ok: false });
+        if (!sc.store) return json(res, 200, { ok: true, demo: true });
+        // nella demo il giro in tondo e le lezioni a inizio sessione sono in esperimento (dati finti, demo-history.js)
+        const modes = sc.demo ? { sessionLessons: 'experiment', elder: 'on', loop: 'experiment' } : Object.fromEntries(experiments.FEATURES.map(f => [f, feedback.modeOf(state.settings, f)]));
+        return json(res, 200, { ok: true, demo: sc.demo, modes, minN: experiments.MIN_N, project: sc.projects ? experiments.results(sc.store, sc.projects) : null, all: experiments.results(sc.store) });
+      } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
     }
     // quanti messaggi per funzione negli ultimi 7 giorni, in tutti i progetti (accanto agli interruttori delle opzioni)
     if (url.pathname === '/api/feedback/counts') {
@@ -660,7 +805,17 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     if (url.pathname === '/api/stats/honors') return json(res, 200, stats.honors());
     if (url.pathname === '/api/report') {
       const day = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('day') || '') ? url.searchParams.get('day') : undefined;
-      return json(res, 200, stats.report(day));
+      const r = stats.report(day);
+      // la tendenza della settimana (S12), come stava alla fine di quel giorno (o adesso, per oggi)
+      try {
+        history.flush();
+        const end = new Date(r.day + 'T00:00:00'); end.setDate(end.getDate() + 1);
+        // con la demo accesa, la tendenza dei suoi tre mesi finti (come i costi della demo nel report)
+        const ds = demoHistory();
+        r.trend = historyQuery.reportTrend(ds || history.store, Math.min(Date.now(), end.getTime() - 1));
+        if (ds) r.trend.demo = true;
+      } catch { r.trend = null; }
+      return json(res, 200, r);
     }
     if (url.pathname === '/api/archive') {
       try { return json(res, 200, listArchive({ base, liveIds: liveIds() })); } catch (e) { return json(res, 500, { error: e.message }); }
@@ -684,6 +839,18 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     });
   });
 
+  let historyReady = Promise.resolve(null);
+  let retentionRun = null;
+  function retention() {
+    if (retentionRun) return retentionRun; // un giro alla volta
+    bottega.save(); // quello che il Libro ha in memoria va nello storico prima di sfoltirlo
+    retentionRun = runRetention({ store: history.store, bottega, settings: state.settings })
+      .catch(e => { console.error('[platypus] store: conservazione non riuscita (' + (e && e.message || e) + ')'); return null; })
+      .finally(() => { retentionRun = null; });
+    return retentionRun;
+  }
+  const retentionTimer = setInterval(() => { retention(); }, 6 * 3600000);
+  retentionTimer.unref && retentionTimer.unref();
   const ready = new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', () => {
@@ -694,6 +861,14 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       scanExtraClaude().catch(() => {});
       // hook di una versione precedente (senza approvazione dall'ufficio): aggiornali
       try { if (hooks.status({ base }) && hooks.outdated({ base })) hooks.install({ port, base }); } catch {}
+      // i dati della 2.12 entrano nello storico la prima volta, senza far aspettare l'ufficio
+      historyReady = history.start().then(r => {
+        // la prima volta i dati della 2.12 arrivano dopo che statistiche e Libri sono partiti: si rileggono
+        if (r && r.done && r.imported) { stats.reload(); bottega.reloadFromStore(); }
+        return r;
+      }).catch(() => null);
+      // conservazione e dimensione: subito dopo, e poi ogni 6 ore, a piccoli blocchi
+      historyReady.then(() => retention()).catch(() => {});
       resolve({ port });
     });
   });
@@ -716,11 +891,38 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     bottega.stop();
     embedder.stop();
     state.stop();
+    clearInterval(summaryTimer);
+    clearInterval(retentionTimer);
+    try { history.summarize(state, { counts: sessionCounts, final: true }); } catch {}
+    history.stop(); // per ultimo: statistiche, Libro e registro hanno appena salvato
     for (const c of clients) try { c.end(); } catch {}
     server.close();
   }
 
-  return { state, stats, notify: notifier, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
+  // "Dimentica questo progetto" con tutto quello che il motore ha in memoria
+  function forgetProject(key) { return history.forgetProject(key, { state, bottega, stats }); }
+
+  // lo storico per la sezione ARCHIVIO delle opzioni: dove sta, quanto pesa, per quanto tiene, che cosa ha tolto
+  // l'ultima volta, le copie di sicurezza accanto, i progetti che conosce (per "Dimentica")
+  function storeInfo() {
+    const st = history.store, info = st.info(), s = state.settings;
+    let used = null, last = null, projects = [];
+    try { used = st.driver && typeof st.driver.usedBytes === 'function' ? st.driver.usedBytes() : null; } catch {}
+    try { last = JSON.parse(st.getMeta('retentionLast') || 'null'); } catch {}
+    try {
+      projects = st.collection('projects').find({}, { sort: { lastSeen: -1 }, limit: 300 })
+        .map(p => ({ key: p._id, name: p.name || '', remote: p.remote || '', lastSeen: p.lastSeen || 0 }));
+    } catch {}
+    const backups = history.backups(); // "Dimentica" cancella anche queste
+    return {
+      ok: true, backend: info.backend, persistent: !!info.persistent, file: info.file || '', sizeBytes: info.sizeBytes || 0, usedBytes: used,
+      notice: history.notice(), limitMB: s.storeMaxMB,
+      retention: { steps: s.storeKeepSteps, sessions: s.storeKeepSessions, feedback: s.storeKeepFeedback, lessons: s.storeKeepLessons },
+      collections: info.collections.map(c => ({ name: c.name, count: c.count })), last, backups, projects,
+    };
+  }
+
+  return { state, history, historyReady: () => historyReady, retention, forgetProject, sessionCounts, stats, notify: notifier, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
     install: () => hooks.install({ port, base }),
     uninstall: () => hooks.uninstall({ base }),
     status: () => hooks.status({ base }),

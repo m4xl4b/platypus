@@ -39,9 +39,9 @@ function sseFirst(port) {
     req.setTimeout(5000, () => { req.destroy(); resolve({}); });
   });
 }
-function get(port, p, method = 'GET', body) {
+function get(port, p, method = 'GET', body, extraHeaders = {}) {
   return new Promise(resolve => {
-    const req = http.request({ host: '127.0.0.1', port, path: p, method, headers: { 'Content-Type': 'application/json' } }, res => {
+    const req = http.request({ host: '127.0.0.1', port, path: p, method, headers: { 'Content-Type': 'application/json', ...extraHeaders } }, res => {
       let d = ''; res.on('data', c => { d += c; }); res.on('end', () => resolve({ status: res.statusCode, body: d }));
     });
     req.on('error', e => resolve({ status: 0, body: e.message }));
@@ -76,6 +76,20 @@ function shellEvents(port, headers = {}) {
 
 // mai nei dati veri: le prove partono solo con PLATYPUS_DATA_DIR in una cartella temporanea
 require('./test-guard').requireTempDataDir('npm test');
+// nelle prove lo store rifiuta i campi non dichiarati invece di scartarli: un campo dimenticato si vede subito
+if (!process.env.PLATYPUS_STORE_GUARD) process.env.PLATYPUS_STORE_GUARD = 'reject';
+
+// Le prove aspettano anche timer che il motore non tiene accesi (unref: per esempio il tempo massimo degli embedding).
+// Se in quel momento nient'altro tiene vivo il processo, Node uscirebbe da solo con codice 0 a metà delle prove, e
+// "npm test" sembrerebbe passato. Quindi: un timer acceso finché le prove non finiscono, e se il processo esce prima
+// della fine è un errore.
+let finished = false;
+const keepAlive = setInterval(() => {}, 60000);
+process.on('exit', code => {
+  if (finished || code) return;
+  console.error('\n[npm test] le prove si sono fermate prima della fine: qualcosa aspettava una promessa che non arriva mai.');
+  process.exitCode = 1;
+});
 
 (async () => {
   console.log(`Platypus smoke test · ${process.platform} ${process.arch} · Node ${process.versions.node}`);
@@ -97,6 +111,10 @@ require('./test-guard').requireTempDataDir('npm test');
   require('./unit-engine').run(ok);
   await require('./unit-embed').run(ok);
   require('./unit-notify').run(ok);
+  // lo store: le stesse prove per ogni backend
+  for (const backend of ['memory', 'sqlite']) await require('./store-conformance').run(ok, backend);
+  await require('./unit-store').run(ok);
+  await require('./unit-concurrency').run(ok); // processi veri: due che scrivono, uno ucciso, due motori
 
   console.log('motore');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-test-'));
@@ -129,18 +147,43 @@ require('./test-guard').requireTempDataDir('npm test');
   // il significato resta lessicale, anche se su questo computer gira un Ollama: i numeri delle prove non cambiano
   fs.writeFileSync(path.join(tmp, 'settings.json'), JSON.stringify({ embedEngine: 'tfidf' }));
   const port = 47900 + Math.floor(Math.random() * 90);
-  const core = startCore({ port, base, settingsPath: path.join(tmp, 'settings.json'), statsPath: path.join(tmp, 'stats.json'), fetch: async () => { throw new Error('offline'); } });
+  const core = startCore({ port, base, settingsPath: path.join(tmp, 'settings.json'), fetch: async () => { throw new Error('offline'); } });
   await core.ready;
   core.demo.start({ scale: 0.02 }); // gli scenari costruiti apposta, in velocità
   await sleep(2500);
   const st = JSON.parse((await get(port, '/api/state')).body);
   ok(st.sessions.length >= 4, `demo: ${st.sessions.length} piani, ${st.sessions.reduce((a, s) => a + s.subs.length, 0)} sottoagenti`);
+  // lo storico: il motore apre il database accanto alle opzioni e lo dice nello stato (S9 di docs/plans/2.13-storage.md)
+  const hist0 = await core.historyReady(), sse0 = await sseFirst(port);
+  ok(st.history && st.history.backend === 'sqlite' && st.history.notice === '' && sse0.history && sse0.history.notice === '' && fs.existsSync(path.join(tmp, 'platypus.db')) && hist0 && hist0.done === true && core.history.store.info().collections.length === 7,
+    'storico: il motore apre platypus.db accanto alle opzioni, con le sue sette collezioni, e non ha avvisi da dare');
+  {
+    // un database rovinato non ferma niente: l'ufficio parte lo stesso e lo dice
+    const tmpBad = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-rotto-'));
+    fs.mkdirSync(path.join(tmpBad, 'claude', 'projects'), { recursive: true });
+    fs.writeFileSync(path.join(tmpBad, 'settings.json'), JSON.stringify({ embedEngine: 'tfidf', lang: 'en' }));
+    fs.writeFileSync(path.join(tmpBad, 'platypus.db'), require('crypto').randomBytes(9000));
+    const portBad = port + 100;
+    const i18nBad = require(path.join(ROOT, 'src', 'i18n')), langWas = i18nBad.getLang();
+    const prevErr = console.error; console.error = () => {}; // il motore lo scrive anche nel registro: qui non serve
+    let stBad = {}, sseBad = {}, coreBad = null;
+    try {
+      coreBad = startCore({ port: portBad, base: path.join(tmpBad, 'claude'), includeCowork: false, settingsPath: path.join(tmpBad, 'settings.json'), fetch: async () => { throw new Error('offline'); } });
+      await coreBad.ready;
+      stBad = JSON.parse((await get(portBad, '/api/state')).body); sseBad = await sseFirst(portBad);
+    } finally { console.error = prevErr; if (coreBad) coreBad.stop(); }
+    const aside = fs.readdirSync(tmpBad).filter(n => n.startsWith('platypus.db.broken-'));
+    ok(stBad.history && stBad.history.backend === 'memory' && /^history not available: the database was damaged: I set it aside as platypus\.db\.broken-\d{8}-\d{6}$/.test(stBad.history.notice) && sseBad.history && sseBad.history.notice === stBad.history.notice &&
+      aside.length === 1 && !fs.existsSync(path.join(tmpBad, 'platypus.db')) && Array.isArray(stBad.sessions), 'storico: con un database rovinato l\'ufficio parte lo stesso, lo mette da parte e lo dice nello stato («history not available: …»)');
+    i18nBad.setLang(langWas); // il secondo motore ha cambiato lingua: si torna a quella delle prove
+    fs.rmSync(tmpBad, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
   const sid = st.sessions[0].id;
   const wfs = st.sessions.flatMap(s => s.workflows || []);
   const live = wfs.find(r => r.name === 'policy-review'), past = wfs.find(r => r.name === 'gap-analysis');
   ok(live && live.status === 'running' && live.phases.length === 4 && past && past.status === 'completed' && past.phases.some(p => p.failed), `demo: workflow in corso (${live && live.phases.map(p => p.done + '/' + p.total).join(' ')}) e uno finito con un fallimento`);
   ok(st.sessions.some(s => (s.messages || []).length), 'demo: un messaggio tra agenti (SendMessage)');
-  for (const p of ['/', '/i18n.js', '/i18n-runtime.js', '/game.js', '/worldmap.js', '/bottega.js', '/report', '/api/settings', '/api/stats/costs', '/api/report']) {
+  for (const p of ['/', '/i18n.js', '/i18n-runtime.js', '/game.js', '/worldmap.js', '/bottega.js', '/store-ui.js', '/report', '/api/settings', '/api/stats/costs', '/api/report']) {
     const r = await get(port, p);
     ok(r.status === 200, `GET ${p} → ${r.status}`);
   }
@@ -199,6 +242,17 @@ require('./test-guard').requireTempDataDir('npm test');
   ok(bk.ok && /^[0-9a-f]{16}$/.test(bk.key) && bk.lessons.length >= 5 && bk.lessons.length <= 6 && strongDemo >= 4, `libro finto della demo (piano 1): ${bk.lessons ? bk.lessons.length : '-'} lezioni, ${strongDemo} forti`);
   const demoKinds = new Set((bk.lessons || []).map(l => l.kind));
   ok(['stale-trap', 'ghost-path', 'flaky-command', 'known-fix', 'fragile-file'].every(k => demoKinds.has(k)), 'libro della demo coerente con gli scenari (file conteso, percorso inventato, test instabile, correzione nota, file fragile)');
+  {
+    // lo storico finto della demo (S14): risponde per i suoi piani, solo in memoria
+    const dh = JSON.parse((await get(port, '/api/history?metric=all&sid=' + p1.id)).body);
+    const dx = JSON.parse((await get(port, '/api/feedback/experiment?sid=' + p1.id)).body);
+    const ds = JSON.parse((await get(port, '/api/history/search?file=login&sid=' + p1.id)).body);
+    const dr = JSON.parse((await get(port, '/api/report')).body);
+    const loopX = dx.all && dx.all.find(r => r.feature === 'loop');
+    ok(dh.ok && dh.demo === true && dh.metrics.loops.trend.verdict === 'fewer' && dx.demo === true && dx.modes.loop === 'experiment' && loopX && loopX.enough && ds.results.length > 0 && dr.trend && dr.trend.demo === true &&
+      core.history.store.collection('sessions').count({ _id: { $gte: 'demo-', $lt: 'demo.' } }) === 0,
+      `demo: storico finto per i suoi piani (giri in tondo ${dh.metrics && dh.metrics.loops.trend.verdict}), esperimento con effetto, ricerca, tendenza nel report; niente nello storico vero`);
+  }
   const hd = JSON.parse((await get(port, '/api/bottega/hints?sid=' + p1.id)).body);
   ok(hd.ok && hd.hints.length >= 1, `il Nonno ha qualcosa da dire sul piano 1: «${hd.hints && hd.hints[0] ? hd.hints[0].text : '-'}»`);
   // C3 · feedback agli agenti nella demo: una scena per funzione sul piano 1 (e le lezioni a inizio sessione sul piano 2),
@@ -225,6 +279,40 @@ require('./test-guard').requireTempDataDir('npm test');
   const kindsFk = new Set((fk.lessons || []).map(l => l.kind));
   ok(learned > 0 && kindsFk.has('ghost-path') && kindsFk.has('loop-trap') && kindsFk.has('flaky-command'), `il libro impara da una sessione aperta: ${learned} casi, ${[...kindsFk].join(', ')}`);
   ok(core.learnLive() === 0, 'imparare di nuovo dalla stessa sessione non aggiunge nulla');
+  {
+    // lo storico: i passi della sessione aperta e il suo riassunto (la demo, che gira insieme, non lascia niente)
+    core.history.summarize(core.state, { counts: core.sessionCounts }); core.history.flush();
+    const hs = core.history.store;
+    const mySteps = hs.collection('steps').find({ session: 'bottega-smoke-0001' });
+    const demoIds = st.sessions.filter(x => x.demo).map(x => x.id);
+    ok(mySteps.length === 4 && mySteps.every(x => x.project && x.outcome === 'error') && mySteps.filter(x => x.cmd === 'npm test' && x.action === 'verify').length === 3 && mySteps.some(x => x.action === 'read' && x.target === 'src/vecchio.ts') && hs.collection('sessions').get('bottega-smoke-0001') !== null &&
+      hs.collection('steps').count({ session: { $in: demoIds } }) === 0 && hs.collection('sessions').count({ _id: { $in: demoIds } }) === 0,
+      `storico: ${mySteps.length} passi e il riassunto della sessione aperta; niente della demo`);
+    const sumS = hs.collection('sessions').get('bottega-smoke-0001');
+    ok(sumS && sumS.surprises >= 1 && sumS.loops >= 1 && Number.isFinite(sumS.claims) && Number.isFinite(sumS.stale) && Number.isFinite(sumS.stuck) && Number.isFinite(sumS.flaky) && sumS.lessons === 0,
+      `storico: il riassunto della sessione ha i conteggi (sorprese ${sumS && sumS.surprises}, giri in tondo ${sumS && sumS.loops}, bloccato ${sumS && sumS.stuck}, instabili ${sumS && sumS.flaky}, affermazioni senza prove ${sumS && sumS.claims}, memorie vecchie ${sumS && sumS.stale})`);
+    // la ricerca nei passi salvati (S12b)
+    const sr = JSON.parse((await get(port, '/api/history/search?command=' + encodeURIComponent('npm test') + '&cwd=' + encodeURIComponent(fakeCwd))).body);
+    const srF = JSON.parse((await get(port, '/api/history/search?file=vecchio&cwd=' + encodeURIComponent(fakeCwd))).body);
+    const srBad = await get(port, '/api/history/search?cwd=' + encodeURIComponent(fakeCwd));
+    ok(sr.ok && sr.results.length === 3 && sr.results.every(x => x.cmd === 'npm test' && x.outcome === 'error' && x.session === 'bottega-smoke-0001') && srF.ok && srF.results.length === 1 && srF.results[0].target === 'src/vecchio.ts' && srBad.status === 400,
+      `ricerca nell'archivio: i ${sr.results && sr.results.length} «npm test» falliti della sessione aperta, il file citato, una richiesta vuota rifiutata`);
+    // lo storico nel tempo (S12)
+    const rep = JSON.parse((await get(port, '/api/report')).body);
+    // con la demo accesa il report mostra la tendenza dei suoi dati finti; quella vera si controlla quando la demo finisce
+    ok(rep.trend && Object.keys(rep.trend.metrics).join() === 'loops,stuck,surprises,claims' && rep.trend.demo === true && rep.trend.min === 5 && rep.totals,
+      `report giornaliero con la demo accesa: la tendenza della settimana dai dati finti (${rep.trend && rep.trend.recent} sessioni)`);
+    const hy = JSON.parse((await get(port, '/api/history?metric=all&cwd=' + encodeURIComponent(fakeCwd))).body);
+    const hy1 = JSON.parse((await get(port, '/api/history?metric=loops&bucket=day')).body);
+    const hyBad = await get(port, '/api/history?metric=boh');
+    const lastWeek = hy.metrics && hy.metrics.loops.buckets[hy.metrics.loops.buckets.length - 1];
+    ok(hy.ok && Object.keys(hy.metrics).length === 11 && hy.metrics.loops.buckets.length === 26 && lastWeek.sessions >= 1 && lastWeek.sum >= 1 && hy.metrics.loops.trend.verdict === 'not-enough' && Array.isArray(hy.metrics.feedback.buckets) &&
+      hy1.ok && hy1.bucket === 'day' && hy1.buckets.length >= 176 && hy1.buckets.length <= 182 && hyBad.status === 400,
+      `storico, /api/history: 11 metriche, 26 settimane, la sessione aperta nell'ultima (giri in tondo ${lastWeek && lastWeek.sum}); per giorno; una metrica sconosciuta rifiutata (${hy.ok && Object.keys(hy.metrics).length} metriche, ${hy.metrics && hy.metrics.loops.buckets.length} settimane, ${hy1.buckets && hy1.buckets.length} giorni, ${hy.metrics && hy.metrics.loops.trend.verdict}, ${hyBad.status})`);
+    const rr = await core.retention();
+    ok(rr && rr.limitBytes === 200 * 1048576 && rr.trimmedForSize === 0 && Object.values(rr.removed).every(n => n === 0) && hs.collection('steps').count({ session: 'bottega-smoke-0001' }) === 4 && JSON.parse(hs.getMeta('retentionLast')).at === rr.at,
+      'storico: la conservazione gira nel motore e lascia stare i passi recenti');
+  }
   // dall'archivio, da sé e in background (senza il bottone): la sessione aperta si salta, quella passata si legge una volta sola
   let fk2 = {};
   for (let k = 0; k < 40; k++) { await sleep(100); fk2 = JSON.parse((await get(port, '/api/bottega?cwd=' + encodeURIComponent(fakeCwd))).body); if (fk2.learning && !fk2.learning.running) break; }
@@ -570,6 +658,9 @@ require('./test-guard').requireTempDataDir('npm test');
   core.demo.stop();
   const dAfter = p1Cwd ? JSON.parse((await get(port, '/api/feedback/log?cwd=' + encodeURIComponent(p1Cwd))).body) : {};
   ok(dAfter.ok && dAfter.demo === false && dAfter.entries.length === 0 && ![...core.feedbackPending.values()].some(p => /^demo-/.test(p.entry.sid)) && !core.feedbackSaid().some(x => /^demo-/.test(x.sid)), 'demo spenta: niente più righe di feedback della demo, né in attesa né nei fumetti');
+  const drAfter = JSON.parse((await get(port, '/api/report')).body);
+  ok(!core.demo.on && drAfter.trend && !drAfter.trend.demo && drAfter.trend.recent >= 1 && drAfter.trend.min === 5 && drAfter.trend.metrics.loops.verdict === 'not-enough',
+    `demo spenta: il report torna allo storico vero (${drAfter.trend && drAfter.trend.recent} sessioni nelle ultime 4 settimane: dati insufficienti)`);
 
   // Cowork su un albero finto di Windows (docs/plans/cowork-structure.md): percorso noto, titolo e stato dai metadati
   console.log('Cowork (albero finto di Windows)');
@@ -607,6 +698,46 @@ require('./test-guard').requireTempDataDir('npm test');
     const st2 = JSON.parse((await get(port, '/api/state')).body);
     ok(!st2.sessions.some(s => s.title === 'Sessione archiviata'), 'Cowork: la sessione archiviata nell\'app non compare');
     await get(port, '/api/settings', 'POST', JSON.stringify({ coworkDirs: '' }));
+  }
+  {
+    // le API dello storico (S10): stato, compatta, esporta, dimentica (con conferma), conservazione
+    const si = JSON.parse((await get(port, '/api/store')).body);
+    const fkKey = core.history.keys.keyNow(fakeCwd);
+    ok(si.ok && si.backend === 'sqlite' && si.persistent && si.sizeBytes > 0 && si.usedBytes > 0 && si.limitMB === 200 && si.retention.steps === 90 && si.collections.length === 7 && si.notice === '' && si.projects.some(p => p.key === fkKey && p.name === 'progetto') && Array.isArray(si.backups),
+      `storico, /api/store: ${si.backend}, ${si.sizeBytes} byte, ${si.collections.length} collezioni, ${si.projects.length} progetti`);
+    const cp = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'compact' }))).body);
+    const exDir = path.join(tmp, 'esportazione');
+    const ex = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'export', dir: exDir }))).body);
+    const exRel = await get(port, '/api/store', 'POST', JSON.stringify({ action: 'export', dir: 'relativa' }));
+    ok(cp.ok && cp.size && cp.size.after > 0 && ex.ok && ex.dir === exDir && fs.readdirSync(exDir).length === 7 && exRel.status === 400, 'storico: compatta, ed esporta in una cartella scelta (un percorso relativo è rifiutato)');
+    const noConfirm = await get(port, '/api/store', 'POST', JSON.stringify({ action: 'forget', cwd: fakeCwd }));
+    // con la demo accesa: il suo Libro è finto e non si dimentica
+    core.demo.start({ scale: 0.02 }); await sleep(800);
+    const demoCwd = ([...core.state.sessions.values()].find(s => s.demo) || {}).cwd;
+    const demoForget = await get(port, '/api/store', 'POST', JSON.stringify({ action: 'forget', cwd: demoCwd, confirm: true }));
+    core.demo.stop();
+    const strange = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'forget', cwd: path.join(tmp, 'mai-vista'), confirm: true }))).body);
+    await sleep(300);
+    const bad = await get(port, '/api/store', 'POST', JSON.stringify({ action: 'boh' }));
+    const other = await get(port, '/api/store', 'POST', JSON.stringify({ action: 'forget', key: fkKey, confirm: true }), { Origin: 'http://localhost:3000' });
+    ok(noConfirm.status === 400 && JSON.parse(noConfirm.body).reason === 'confirm' && core.history.store.collection('lessons').count({ project: fkKey }) > 0 && demoForget.status === 409 && bad.status === 400 && other.status === 403 && strange.ok && strange.documents === 0 && !core.history.store.collection('projects').find({}).some(p => p.name === 'mai-vista'),
+      `storico: «Dimentica» mai senza conferma, mai sul Libro della demo, mai da un'altra pagina; una cartella mai vista non crea un progetto (${noConfirm.status} ${noConfirm.body.slice(0, 40)}, lezioni ${core.history.store.collection('lessons').count({ project: fkKey })}, demo ${demoForget.status}, azione ${bad.status}, origine ${other.status})`);
+    const fg = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'forget', cwd: fakeCwd, confirm: true }))).body);
+    const after = JSON.parse((await get(port, '/api/bottega?cwd=' + encodeURIComponent(fakeCwd))).body);
+    ok(fg.ok && fg.documents > 0 && core.history.store.collection('lessons').count({ project: fkKey }) === 0 && core.history.store.collection('steps').count({ session: 'bottega-smoke-0001' }) === 0 && after.ok && after.lessons.length === 0,
+      `storico: «Dimentica questo progetto» dal Libro: ${fg.documents} documenti tolti, il Libro è vuoto`);
+    // l'esperimento sul feedback (S11): l'opzione, la rotta, e il gruppo che resta nello storico
+    await get(port, '/api/settings', 'POST', JSON.stringify({ fbLoop: 'experiment', fbClaims: 'experiment' }));
+    const setx = JSON.parse((await get(port, '/api/settings')).body);
+    const exp = JSON.parse((await get(port, '/api/feedback/experiment?cwd=' + encodeURIComponent(fakeCwd))).body);
+    const exD = JSON.parse((await get(port, '/api/feedback/experiment')).body);
+    ok(setx.fbLoop === 'experiment' && setx.fbClaims === 'shadow' && exp.ok && exp.modes.loop === 'experiment' && exp.minN === 10 && exp.project.length === 3 && exp.all.length === 3 && exD.ok && exD.project === null,
+      'esperimento: l\'opzione si salva (solo per le funzioni che possono essere accese), la rotta dà i risultati per il progetto e per tutti');
+    await get(port, '/api/settings', 'POST', JSON.stringify({ fbLoop: 'off', fbClaims: 'off' }));
+    const rt = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'retention' }))).body);
+    const names = core.history.store.collection('projects').find({}).map(p => p.name);
+    ok(!names.some(n => /portale-clienti|mes-clone|isms-docs/.test(n)) && !names.includes(''), `storico: nessuna cartella della demo e nessun progetto senza nome tra i progetti (${names.join(', ')})`);
+    ok(rt.ok && rt.result && rt.result.limitBytes === 200 * 1048576, 'storico: la conservazione si può applicare subito');
   }
   core.stop();
 
@@ -736,6 +867,8 @@ require('./test-guard').requireTempDataDir('npm test');
   ok(!/spawnSync\([^;]*\[[^\]]*\][^;]*shell:\s*(IS_WIN|true)/.test(launchSrc), 'avvio: nessun argomento separato con shell (avviso DEP0190 di Node 24)');
 
   fs.rmSync(tmp, { recursive: true, force: true });
+  finished = true;
+  clearInterval(keepAlive);
   console.log(failed ? `\n${failed} controlli falliti` : '\nTutto a posto.');
   process.exit(failed ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

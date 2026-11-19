@@ -41,7 +41,7 @@ const PROMPT = 'This is a test of hooks, do not fix anything. 1) Run `npm test` 
 
 process.env.PLATYPUS_FEEDBACK_CHECK = '1';
 const { startCore } = require(path.join(__dirname, '..', 'src', 'core'));
-const core = startCore({ port, base: path.join(data, 'claude'), includeCowork: false, settingsPath: path.join(data, 'settings.json'), statsPath: path.join(data, 'stats.json'), bottegaDir: path.join(data, 'bottega'), fetch: async () => { throw new Error('offline'); } });
+const core = startCore({ port, base: path.join(data, 'claude'), includeCowork: false, settingsPath: path.join(data, 'settings.json'), bottegaDir: path.join(data, 'bottega'), fetch: async () => { throw new Error('offline'); } });
 core.ready.then(() => {
   console.log(`
 Platypus feedback check · listening on ${url}

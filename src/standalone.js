@@ -1,6 +1,12 @@
 'use strict';
 // Modalità browser: avvia solo il server e apre l'ufficio nel browser predefinito.
 //   node src/standalone.js [--no-open] [--demo] [--parent-stdin]
+// prima di caricare il motore: con un Node.js troppo vecchio ci si ferma qui, con lo stesso messaggio del lanciatore
+const { nodeOk, nodeMessages } = require('./requirements');
+if (!nodeOk(process.versions.node)) {
+  for (const line of nodeMessages(process.versions.node)) console.error('[platypus] ' + line);
+  process.exit(1);
+}
 const { exec } = require('child_process');
 const { startCore } = require('./core');
 const { tr } = require('./i18n');

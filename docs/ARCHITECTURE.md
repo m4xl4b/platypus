@@ -31,7 +31,7 @@ Node.js modules only, no npm packages: that's why browser mode starts without `n
 | `hooks.js` | installing and removing the hooks in `settings.json`; the feedback hooks apart, with their own marker |
 | `archive.js` | archive and replay with a virtual clock |
 | `osint.js` | system integration: bring window to front, resume session, open folder (Windows / macOS / Linux) |
-| `stats.js` | daily and weekly statistics, report |
+| `stats.js` | daily and weekly statistics, report; kept in the store's `daily` collection |
 | `notify.js` | when there is something to notify (an agent waiting, a new alert, the daily report), the same for every shell; the `/api/shell/events` stream |
 | `worldmap.js` | map of reality: territory, frontier, 7-dimensional trajectory |
 | `semantic.js` | context bubble and north star (TF-IDF, PCA, clusters, alignment), with vectors of any length from any source ("meaning spaces") |
@@ -44,7 +44,11 @@ Node.js modules only, no npm packages: that's why browser mode starts without `n
 | `feedback.js` | feedback to the agents: from a hook's input to the answer for Claude Code, as pure functions; the three modes of each feature, the rate limits (`Gate`), the muted projects |
 | `feedback-rules.js` | what Platypus says: one rule per feature (lessons at session start, Grandpa, loop, edit over another agent's change, claims without evidence, back to the task), each text built in English for the agent and in the office language for the log |
 | `outcomes.js` | what an agent did after a message: likely helped, ignored or can't tell, from its next steps |
-| `feedbacklog.js` | the log of the messages, one append-only file per project; the demo uses an in-memory version with the same interface |
+| `feedbacklog.js` | the log of the messages, in the store's `feedback` collection, outcomes patched on the message; the demo uses an in-memory version with the same interface |
+| `store/` | the document store (see *History* below): `index.js` (`openStore`, `openStoreSafe`, the `Store` and `Collection` classes), `common.js` (filter language, ULIDs), `memory.js` and `sqlite.js` (the two backends), `migrations.js`, `privacy.js` (declared fields, `relPath`, `scrub`), `collections.js` (the seven collections), `project-key.js`, `legacy.js` (import of the 2.12 files), `sqlite-load.js` |
+| `history.js` | the engine's side of the store: opens it, imports the 2.12 files once, the write queue of steps and session summaries, retention, size limit, forget, compact, export |
+| `retention.js`, `history-query.js`, `search.js`, `experiments.js` | retention and size limit; metrics per day or week and their trend; search over the stored steps; experiment groups and their statistics |
+| `demo-history.js` | three months of fake history for the demo, in a memory store of its own |
 | `weather.js`, `releases.js`, `describe.js`, `demo.js`, `demoworld.js` | weather, git/gh releases, tool descriptions, demo |
 | `../i18n` | translations (key = Italian text, `locales/<language>/*.json`) |
 
@@ -76,6 +80,10 @@ Everything that depends on the operating system lives in three places: `osint.js
 | `POST /platypus-hook/feedback` | synchronous feedback hook: the answer for Claude Code, or an empty `204` |
 | `GET`/`POST /api/feedback/hooks` | whether the feedback hooks are installed and the exact lines; install or remove them (only with `confirm: true`) |
 | `GET /api/feedback/log`, `/api/feedback/counts` | a project's messages to agents with their outcomes (`sid`, `cwd` or `key`); how many per feature in the last 7 days |
+| `GET /api/feedback/experiment` | the modes of the feedback features and the experiment results per group, for a project (`sid`, `cwd` or `key`) and for all |
+| `GET /api/history` | metrics per day or week (`metric`, `from`, `to`, `bucket`, project by `sid`, `cwd` or `key`), each with its trend; `metric=all` for all of them |
+| `GET /api/history/search` | the stored steps by `file`, `command` or `error` (and `outcome`, `from`, `to`, `limit`), with a 150 ms budget |
+| `GET`/`POST /api/store` | the store's state (backend, size, retention, notice); `compact`, `export`, `forget` (only with `confirm: true`), retention and size limit |
 
 The server rejects requests whose `Host` or `Origin` is not `127.0.0.1`/`localhost` (protection against DNS rebinding and websites).
 
@@ -99,9 +107,21 @@ The bubble and the north star measure what an agent is talking about with vector
 - **Text and cache.** The pieces of an agent's context keep a short snippet of their text in memory (at most 320 characters, 480 for an action with its result), never on disk. The cache keeps vectors and sha1 hashes only: 5000 vectors in memory, and `embed-cache/<source>.bin` on disk, at most 50 MB per source.
 - **Thresholds per source.** Neural vectors have much higher background similarities than TF-IDF, so the drift rule has a row per source in `drift-rule.js` (background, widening, `rel`, `run`, `weak`), measured with `scripts/embed-eval.js` on a labelled set (results in `docs/plans/embedding-calibration.md`). A neural source without a row is "not calibrated": `auto` skips it; chosen by hand, its geometry is shown, but the drift rule says "not measurable". Measured so far: six Ollama models and the ONNX Qwen3-Embedding have a row; `nomic-embed-text:v1.5` and the old ONNX model `multilingual-e5-small` (replaced in 2.12.1) do not beat TF-IDF.
 
+## History (`src/core/store`, `src/core/history.js`)
+
+From 2.13 the engine keeps its data in a document store with one interface and two backends: `sqlite` (Node's built-in `node:sqlite`, file `platypus.db` in the data folder; this needs Node.js 22.13) and `memory` (tests, the demo, and the fallback when the database cannot be used). A MongoDB backend for the 3.0 server can be added with `registerBackend` without the engine depending on it; `scripts/store-conformance.js` is the suite every backend must pass.
+
+- **The interface.** `store.collection(name)` with `get`, `put`, `patch`, `delete`, `find(filter, {sort, limit, skip, fields})`, `count`, `deleteMany`, `append`; `store.transaction`, `declare`, `forgetProject`, `export`/`import`, `getMeta`/`setMeta`, `info`, `flush`, `close`. Filters are a strict subset of MongoDB's (equality, `$in`, `$gt`/`$gte`/`$lt`/`$lte`, `$exists`, `$or`, dotted paths): anything else is an error, never ignored. `_id` is a string (a ULID unless given), times are milliseconds. On this computer the calls are synchronous.
+- **SQLite.** One table per collection (`_id`, `project`, `t`, `doc` as JSON), indexes declared per collection, filters translated to SQL with parameters only; `busy_timeout` 3 s, WAL, `synchronous=NORMAL`. Appends wait in a queue and are written in one transaction every 2 s or at 500 documents; every read flushes it first. A `meta` table holds the schema version: migrations run in one `BEGIN IMMEDIATE` transaction after a `VACUUM INTO platypus.db.bak-<version>` copy (the last two kept). At start `quick_check` runs at once on a database up to 64 MB, in a worker thread otherwise. A damaged, newer or unwritable database makes `openStoreSafe` fall back to `memory`, set the file aside as `platypus.db.broken-<date>` when damaged, and the office shows "history not available: <reason>".
+- **Collections** (`collections.js`), each with its declared fields, indexes and default retention: `projects` (key, aliases, remote without credentials, folder name; forever), `lessons` (the Book; low weight and older than 180 days), `steps` (one per finished action; 90 days), `sessions` (one summary per session; 365 days), `feedback` (messages to the agents and their outcomes; 365 days), `experiments` (the group of a session for a feature; 365 days), `daily` (daily and weekly statistics; forever). Retention runs at start and every 6 hours in small batches; over the size limit (200 MB by default) the oldest steps go first.
+- **Project key** (`project-key.js`): the first 16 hex characters of the sha1 of the `origin` remote, normalised (host in lower case, no credentials, no port, no `.git`, ssh and https equal); without a remote, the key of the folder, as the 2.12 Book had. Old keys stay as aliases. `git` is read once per folder, never in the event path.
+- **Privacy by construction** (`privacy.js`): a collection accepts only its declared fields, each with a type; a free string is one line of at most 300 characters, so a prompt, a reply or an output cannot fit. Paths are relative to the project; outside it they become `ext:<hash>/<file name>`. Excerpts (error signatures, evidence lines, commit titles, the messages to the agents) pass through `scrub` (tokens, keys, passwords, connection strings, e-mail addresses, IBANs). A command keeps only its first simple words (`cmdShape`: `mysql -u root -p…` → `mysql`). Undeclared fields are dropped and reported once by name, or refused with `PLATYPUS_STORE_GUARD=reject` (the tests).
+- **The engine side** (`history.js`): `state.js` emits `step` when an action finishes; steps and session summaries go through the write queue, which keeps a batch when the database is busy. The Book, the statistics and the feedback log read and write through the store. The first start imports the 2.12 files once (`legacy.js`), leaving them in place and copying them to `legacy-<date>/`. Forgetting a project removes its key and aliases from every collection, its name from the statistics, the backups and its 2.12 files, then runs `VACUUM`. Export writes one JSONL file per collection. The demo never writes to the store: it has its own memory store (`demo-history.js`).
+- **Reading it** (`history-query.js`, `search.js`, `experiments.js`): metrics per day or week from `sessions`, `steps` and `feedback`, the trend of the last 4 weeks against the 4 before (at least 5 sessions on each side, otherwise "not enough data"); search over `steps`; and the experiment mode of the feedback, where each session is assigned to `on` or `shadow` from the sha1 of its id and the feature, with a 95% Newcombe interval for shares and Welch for errors per 100 actions. None of it runs in the SSE path.
+
 ## Interface (`renderer/`)
 
-Static page: `index.html`, `style.css`, `game.js` (building, floors, balloons), `worldmap.js` (map of reality), `bottega.js` (Workshop book), `teams.js` (TEAMS panel: workflows, teams, messages), `embed-ui.js` (the "Meaning engine" options), `report.html`, `i18n-runtime.js`, plus `/drift-rule.js` served by the engine. It talks to the engine only over HTTP and SSE. The only point of contact with the shell is the optional `window.officeApp` object (if it's missing, you're in the browser).
+Static page: `index.html`, `style.css`, `game.js` (building, floors, balloons), `worldmap.js` (map of reality), `bottega.js` (Workshop book, with its HISTORY and FEEDBACK tabs), `store-ui.js` (the ARCHIVE options), `teams.js` (TEAMS panel: workflows, teams, messages), `embed-ui.js` (the "Meaning engine" options), `report.html`, `i18n-runtime.js`, plus `/drift-rule.js` served by the engine. It talks to the engine only over HTTP and SSE. The only point of contact with the shell is the optional `window.officeApp` object (if it's missing, you're in the browser).
 
 ### The `window.officeApp` contract (from `src/preload.js`)
 
@@ -154,10 +174,10 @@ Electron stays the default. A second shell in Tauri 2 is being built next to it,
 |---|---|
 | `~/.claude/` | Claude Code's: read, never changed, except the hooks in `settings.json` if you install them |
 | `~/.platypus/settings.json` | office options |
-| `~/.platypus/stats.json` | daily and weekly statistics |
-| `~/.platypus/notify.json` | the day of the last daily report notification, shared by the shells |
-| `~/.platypus/bottega/<key>.json` | the Workshop book of each project (one file per project folder) |
-| `~/.platypus/feedback/<key>.jsonl` | the messages to the agents of each project, sent and in shadow, with their outcomes (rotated at 5 MB into `<key>.1.jsonl`) |
+| `~/.platypus/platypus.db` | the history (from 2.13): Workshop book, statistics, messages to the agents, steps, session summaries, experiment groups, and small markers such as the day of the last report notification; with `platypus.db-wal` and `platypus.db-shm` while it is open |
+| `~/.platypus/platypus.db.bak-<version>`, `platypus.db.broken-<date>` | the copy made before a schema migration (the last two); a damaged database set aside |
+| `~/.platypus/legacy-<date>/` | a copy of the 2.12 files made by the first import |
+| `~/.platypus/stats.json`, `bottega/`, `feedback/`, `notify.json` | the 2.12 files: read once by the first 2.13 start, then left as they are (for going back to 2.12) |
 | `~/.platypus/launch.log` | messages from the last window launch |
 | `~/.platypus/embed-cache/<source>.bin` | the vectors of the neural meaning sources, with the sha1 of their text (never the text), at most 50 MB per source |
 | `~/.platypus/models/` | the optional ONNX model, only after `npm run embed:onnx:install` |

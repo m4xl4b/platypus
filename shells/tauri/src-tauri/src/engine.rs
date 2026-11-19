@@ -50,6 +50,54 @@ pub fn find_node() -> Option<PathBuf> {
     None
 }
 
+/// The oldest Node.js the engine runs on (major, minor): the first with `node:sqlite` without a flag.
+/// The same minimum is in `src/requirements.js`; `npm test` checks that the two agree.
+pub const MIN_NODE: (u32, u32) = (22, 13);
+
+/// "v22.13.1" → (22, 13).
+pub fn parse_node_version(s: &str) -> Option<(u32, u32)> {
+    let mut it = s.trim().trim_start_matches('v').split('.');
+    let major = it.next()?.parse().ok()?;
+    let minor = it.next()?.parse().ok()?;
+    Some((major, minor))
+}
+
+/// Like `nodeOk` in `src/requirements.js`: 22.13+, 23.4+ (23.0–23.3 still want a flag for SQLite), 24 and newer.
+pub fn node_ok(v: (u32, u32)) -> bool {
+    match v.0 {
+        22 => v.1 >= MIN_NODE.1,
+        23 => v.1 >= 4,
+        m => m > 23,
+    }
+}
+
+/// What `node --version` says, or None if it cannot be run or read.
+pub fn node_version(node: &Path) -> Option<(u32, u32)> {
+    let mut cmd = Command::new(node);
+    cmd.arg("--version").stdin(Stdio::null()).stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let out = cmd.output().ok()?;
+    parse_node_version(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// The command that updates Node.js on this system, as in `updateCommand` of `src/requirements.js`.
+pub fn node_update_command() -> &'static str {
+    if cfg!(windows) {
+        if std::env::var_os("NVM_HOME").is_some() { "nvm install lts" } else { "winget install OpenJS.NodeJS.LTS" }
+    } else if std::env::var_os("NVM_DIR").is_some() {
+        "nvm install --lts"
+    } else if cfg!(target_os = "macos") {
+        "brew install node"
+    } else {
+        "nvm install --lts"
+    }
+}
+
 /// The port: `PLATYPUS_PORT`, or 47800.
 pub fn choose_port() -> u16 {
     std::env::var("PLATYPUS_PORT").ok().and_then(|v| v.trim().parse::<u16>().ok()).filter(|p| *p > 0).unwrap_or(DEFAULT_PORT)
@@ -274,5 +322,24 @@ pub fn hooks_cli(node: &Path, root: &Path, port: u16, cmd: &str) -> (bool, Strin
             (o.status.success(), text)
         }
         Err(e) => (false, e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn node_versions() {
+        assert_eq!(parse_node_version("v22.13.1\n"), Some((22, 13)));
+        assert_eq!(parse_node_version("24.13.0"), Some((24, 13)));
+        assert_eq!(parse_node_version("boh"), None);
+        assert_eq!(parse_node_version(""), None);
+        for v in [(22, 13), (22, 23), (23, 4), (24, 0), (25, 0)] {
+            assert!(node_ok(v), "{v:?} should be accepted");
+        }
+        for v in [(18, 20), (20, 20), (22, 12), (22, 5), (23, 3)] {
+            assert!(!node_ok(v), "{v:?} should be refused");
+        }
     }
 }

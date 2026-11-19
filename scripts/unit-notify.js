@@ -58,27 +58,28 @@ function run(ok) {
     n.checkAlerts();
     ok(got.filter(e => e.kind === 'alert').length === 1, 'avvisi spenti nelle opzioni: niente notifica');
 
-    // report: dopo l'ora scelta, una volta al giorno, solo se qualcuno ascolta, ricordato su disco
-    const file = path.join(tmp, 'notify.json');
+    // report: dopo l'ora scelta, una volta al giorno, solo se qualcuno ascolta, ricordato nello storico (qui un memo finto)
+    const saved = new Map();
+    const memo = { get: k => saved.get(k) || null, set: (k, v) => saved.set(k, v) };
     let clock = new Date(2026, 10, 18, 17, 0);
     let report = { projects: [{}], totals: { cost: 1.5, sessions: 2, completed: 3, commits: 4 } };
     const st2 = fakeState({ reportHour: 18 });
-    const r = new Notifier(st2, { stats: { report: () => report }, file, now: () => clock });
-    ok(r.checkReport() === null && !fs.existsSync(file), 'nessuno ascolta: il report non si consuma');
+    const r = new Notifier(st2, { stats: { report: () => report }, memo, now: () => clock });
+    ok(r.checkReport() === null && !saved.size, 'nessuno ascolta: il report non si consuma');
     const rep = [];
     r.on('notify', e => rep.push(e));
     ok(r.checkReport() === null, 'prima dell\'ora scelta: niente report');
     clock = new Date(2026, 10, 18, 18, 5);
     r.checkReport(); r.checkReport();
     ok(rep.length === 1 && rep[0].kind === 'report' && rep[0].key === 'report:2026-11-18' && rep[0].body.split(' · ').length === 4, 'dopo l\'ora: un report solo → ' + (rep[0] && rep[0].body));
-    const r2 = new Notifier(st2, { stats: { report: () => report }, file, now: () => clock });
+    const r2 = new Notifier(st2, { stats: { report: () => report }, memo, now: () => clock });
     r2.on('notify', e => rep.push(e));
     r2.checkReport();
     ok(rep.length === 1, 'dopo un riavvio, lo stesso giorno: non torna');
     clock = new Date(2026, 10, 19, 19, 0);
     report = { projects: [], totals: {} };
     r2.checkReport();
-    ok(rep.length === 1 && JSON.parse(fs.readFileSync(file, 'utf8')).reportDay === clock.toDateString(), 'giornata vuota: niente avviso, ma il giorno è segnato');
+    ok(rep.length === 1 && saved.get('notifyReportDay') === clock.toDateString(), 'giornata vuota: niente avviso, ma il giorno è segnato');
     st2.settings.reportHour = -1; // fuori da 0–23: report spento
     const r3 = new Notifier(st2, { stats: { report: () => report }, now: () => new Date(2026, 10, 20, 23, 0) });
     r3.on('notify', () => rep.push(1));

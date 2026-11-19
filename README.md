@@ -32,7 +32,7 @@ What's new in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Quick start
 
-You need **[Node.js](https://nodejs.org) 22.12 or newer** (and Git to clone). The launcher installs everything else on first run.
+You need **[Node.js](https://nodejs.org) 22.13 or newer** (and Git to clone). The launcher installs everything else on first run.
 
 ```sh
 git clone https://github.com/m4xl4b/platypus.git platypus

@@ -143,11 +143,22 @@ fn start_engine(app: &tauri::AppHandle, demo: bool) -> Result<(), String> {
     }
     let node = engine::find_node().ok_or_else(|| {
         if it {
-            "Non trovo Node.js (node) nel PATH. Installalo da https://nodejs.org (versione 18 o più recente) e riprova.".to_string()
+            format!("Non trovo Node.js (node) nel PATH. Installalo (versione {}.{} o più recente) con: {}  (oppure da https://nodejs.org) e riprova.", engine::MIN_NODE.0, engine::MIN_NODE.1, engine::node_update_command())
         } else {
-            "Node.js (node) was not found in the PATH. Install it from https://nodejs.org (version 18 or newer) and try again.".to_string()
+            format!("Node.js (node) was not found in the PATH. Install it (version {}.{} or newer) with: {}  (or from https://nodejs.org) and try again.", engine::MIN_NODE.0, engine::MIN_NODE.1, engine::node_update_command())
         }
     })?;
+    // the engine keeps its history in SQLite (node:sqlite): an older Node.js would stop at once, so say why here.
+    // If the version cannot be read, go on: the engine checks it again and prints the same message.
+    if let Some(v) = engine::node_version(&node) {
+        if !engine::node_ok(v) {
+            return Err(if it {
+                format!("Serve Node.js {}.{} o più recente: {} è la {}.{}. Per aggiornarlo: {}  (oppure https://nodejs.org).", engine::MIN_NODE.0, engine::MIN_NODE.1, node.display(), v.0, v.1, engine::node_update_command())
+            } else {
+                format!("Node.js {}.{} or newer is required: {} is {}.{}. To update it: {}  (or https://nodejs.org).", engine::MIN_NODE.0, engine::MIN_NODE.1, node.display(), v.0, v.1, engine::node_update_command())
+            });
+        }
+    }
     let root = engine::repo_root().ok_or_else(|| {
         if it {
             "Non trovo la cartella di Platypus (src/standalone.js). Indicala con PLATYPUS_ROOT.".to_string()

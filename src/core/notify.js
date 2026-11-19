@@ -9,7 +9,6 @@
 //     'notify' {kind, title, body, sid, key, n}
 
 const { EventEmitter } = require('events');
-const fs = require('fs');
 const { tr, trn, money } = require('../i18n');
 
 function agentLabel(a) {
@@ -43,16 +42,19 @@ function countsTexts(c) {
 }
 const isoDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
+const REPORT_DAY = 'notifyReportDay'; // il segno nello storico (fino alla 2.12: reportDay in notify.json)
+
 class Notifier extends EventEmitter {
-  // file: dove ricordare il giorno dell'ultimo report (accanto alle opzioni), così non torna dopo un riavvio
+  // memo: dove ricordare il giorno dell'ultimo report, così non torna dopo un riavvio ({ get(chiave), set(chiave, valore) };
+  // il motore gli passa i segni dello storico). Senza, il giorno resta in memoria
   // shellInfo: () => {hooks, demo, cowork, base}, lo stato delle voci del menu dei gusci (lo conosce index.js)
-  constructor(state, { stats, file, now = () => new Date(), shellInfo = () => ({}) } = {}) {
+  constructor(state, { stats, memo = null, now = () => new Date(), shellInfo = () => ({}) } = {}) {
     super();
-    this.state = state; this.stats = stats; this.file = file; this.now = now; this.shellInfo = shellInfo;
+    this.state = state; this.stats = stats; this.memo = memo; this.now = now; this.shellInfo = shellInfo;
     this.notified = new Set(); this.primed = false;
     this.alertSeen = new Set(); this.alertsPrimed = false;
     this.reportDay = '';
-    try { this.reportDay = String(JSON.parse(fs.readFileSync(file, 'utf8')).reportDay || ''); } catch {}
+    try { this.reportDay = String((memo && memo.get(REPORT_DAY)) || ''); } catch {}
     this.shells = new Set(); // le risposte SSE aperte su /api/shell/events
     this.lastCounts = ''; this.lastMenu = '';
     this.timer = null; this.reportTimer = null; this.pingTimer = null;
@@ -158,7 +160,7 @@ class Notifier extends EventEmitter {
     const day = now.toDateString();
     if (this.reportDay === day || now.getHours() < hour) return null;
     this.reportDay = day;
-    if (this.file) { try { fs.writeFileSync(this.file, JSON.stringify({ reportDay: day }, null, 2)); } catch {} }
+    if (this.memo) { try { this.memo.set(REPORT_DAY, day); } catch {} }
     let r = null;
     try { r = this.stats.report(); } catch {}
     if (!r || (!r.projects.length && !process.env.PLATYPUS_NOTIFY_TEST)) return null; // giornata vuota: niente avviso
