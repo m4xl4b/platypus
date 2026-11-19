@@ -4,9 +4,11 @@
 // È un "driver": le operazioni elementari su documenti già controllati e copiati da Store (index.js), che fa
 // il resto. Lo stesso contratto vale per sqlite.js (S3):
 //   ensureCollection(decl) · get · put · insert · delete · find(ast, opts) · count(ast) · deleteMany(ast)
-//   begin · commit · rollback · flush · info · close
+//   begin · commit · rollback · flush · info · close · getMeta(chiave) · setMeta(chiave, valore)
 
 const { matches, comparator, project, fail } = require('./common');
+
+const META = '\u0000meta';
 
 class MemoryDriver {
   constructor() {
@@ -14,7 +16,11 @@ class MemoryDriver {
     this.persistent = false;
     this.data = new Map(); // collezione → Map(_id → documento)
     this.undo = null;      // dentro una transazione: cosa rimettere a posto se fallisce
+    this.data.set(META, new Map()); // i segni dello store (getMeta/setMeta): una collezione nascosta, così seguono le transazioni
   }
+
+  getMeta(key) { const d = this.coll(META).get(key); return d ? d.value : null; }
+  setMeta(key, value) { this.put(META, { _id: key, value: String(value) }); }
 
   ensureCollection(decl) { if (!this.data.has(decl.name)) this.data.set(decl.name, new Map()); }
   coll(name) { return this.data.get(name); }

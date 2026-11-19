@@ -22,7 +22,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { matches, comparator, project, fail, StoreError } = require('./common');
 const { loadSqlite } = require('./sqlite-load');
-const { migrate, setMeta, schemaVersion } = require('./migrations');
+const { migrate, setMeta, getMeta, schemaVersion } = require('./migrations');
 
 const FLUSH_MS = 2000, FLUSH_DOCS = 500, STMT_CACHE = 200;
 const SAFE_SEGMENT = /^[A-Za-z0-9_ -]+$/;
@@ -269,6 +269,10 @@ class SqliteDriver {
     this.atomic(() => { for (const d of docs) del.run(d._id); });
     return docs.length;
   }
+
+  // i segni dello store, nella tabella meta: stanno nel database, quindi seguono le transazioni
+  getMeta(key) { return getMeta(this.db, key); }
+  setMeta(key, value) { setMeta(this.db, key, value); }
 
   // ------------------------------------------------------------ transazioni e coda
   begin() { this.flush(); this.db.exec('BEGIN IMMEDIATE'); this.inTx = true; }

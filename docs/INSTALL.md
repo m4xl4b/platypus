@@ -157,6 +157,12 @@ The book learns from the open sessions once a minute and, when a project has an 
 - To stop learning: OPT → *The Workshop book learns from sessions*. Grandpa has his own switch next to it.
 - If you added the book's section to a project's `CLAUDE.md`, it sits between `<!-- platypus:bottega:start -->` and `<!-- platypus:bottega:end -->`: delete those lines to remove it. The previous version of the file is in `CLAUDE.md.platypus-backup`.
 
+### Going back to 2.12
+
+From 2.13 the Workshop book, the statistics and the log of the messages to the agents live in one database, `~/.platypus/platypus.db`. The first time 2.13 starts, it copies them there from the files 2.12 used (`bottega/`, `stats.json`, `feedback/`). Those files are neither changed nor deleted, and a second copy of them is kept in `~/.platypus/legacy-<date>/`.
+
+So going back works: check out 2.12 and start it, and it reads its own files as they were when 2.13 first ran. What 2.13 learned after that stays in the database, where 2.12 does not look. If you return to 2.13 later, it carries on from its database: the old files are imported only once.
+
 ## Special cases
 
 - **WSL**: on Windows the office also follows Claude Code inside *running* WSL distributions. Hooks inside WSL can't reach Windows' `127.0.0.1` unless WSL mirrored networking is on; without it, the office works from the transcripts. You can also run Platypus inside WSL (`./start.sh`, with WSLg).

@@ -518,7 +518,164 @@ async function collectionsTests(ok) {
   }
 }
 
-module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); } };
+// S8: i dati di prima (Libri, statistiche, registro dei messaggi) entrano nello store, una volta sola
+async function legacyTests(ok) {
+  console.log('store: dati di prima');
+  const crypto = require('crypto');
+  const { openStore } = require(path.join(ROOT, 'src', 'core', 'store'));
+  const { declareCollections } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
+  const { importLegacy, weekStart, dayStart } = require(path.join(ROOT, 'src', 'core', 'store', 'legacy'));
+  const { ProjectKeys, normDir, keyFor } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
+  const { Bottega, projectKey } = require(path.join(ROOT, 'src', 'core', 'bottega'));
+  const { FeedbackLog } = require(path.join(ROOT, 'src', 'core', 'feedbacklog'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-prima-'));
+  const T = 1763500000000, NOW = T + 86400000;
+  const A = '/home/max-segreto/lavoro/platypus', B = '/home/max-segreto/copie/platypus-due', C = '/home/max-segreto/senza-remote';
+  const REMOTE = 'git@github.com:m4xl4b/platypus.git';
+  const hashDir = dir => { const h = crypto.createHash('sha1'); const walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true }).sort((x, y) => (x.name < y.name ? -1 : 1))) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else h.update(e.name).update(fs.readFileSync(f)); } }; walk(dir); return h.digest('hex'); };
+  // scrive i file come li scriveva la 2.12, con le sue stesse classi
+  const makeOld = dataDir => {
+    const bot = new Bottega(path.join(dataDir, 'bottega'));
+    const c = (kind, key, sid, t, excerpt) => ({ kind, key, sid, t, agent: 'Claude', excerpt });
+    bot.learn(A, [c('flaky-command', 'npm run test:e2e', 'sess-a1', T, 'FAIL e2e/login.spec.js'), c('flaky-command', 'npm run test:e2e', 'sess-a2', T + 1000, 'FAIL e2e/login.spec.js con token ghp_abcdefghijklmnopqrstuvwxyz012345'),
+      c('fragile-file', 'src/core/state.js', 'sess-a1', T + 2000, 'TypeError: x is not a function'), c('ghost-path', 'src/auth/oldToken.ts', 'sess-a2', T + 3000, 'ENOENT'), c('slow-step', 'npm run build', 'sess-a2', T + 4000, '7 min')]);
+    bot.learn(B, [c('flaky-command', 'npm run test:e2e', 'sess-b1', T + 5000, 'FAIL e2e/cart.spec.js'), c('loop-trap', 'cargo build', 'sess-b1', T + 6000, 'error[E0308]')]);
+    bot.learn(C, [c('known-fix', 'ENOENT <path> → package.json', 'sess-c1', T + 7000, 'ENOENT: no such file')]);
+    const idOf = (cwd, kind) => Object.values(bot.book(cwd).lessons).find(l => l.kind === kind).id;
+    const pinned = idOf(A, 'fragile-file'), forgotten = idOf(A, 'slow-step');
+    bot.act(A, 'pin', pinned);
+    bot.act(A, 'forget', forgotten);
+    bot.book(A).learned = { 'sess-arch-1': T - 5 };
+    bot.book(A).dirty = true;
+    bot.stop();
+    const log = new FeedbackLog(path.join(dataDir, 'feedback'));
+    const m1 = log.append(A, { t: T + 10, sid: 'sess-a1', agent: 'main', feature: 'loop', mode: 'on', event: 'PreToolUse', lessonId: idOf(A, 'flaky-command'), text: 'Platypus: this command failed 4 times in a row.\nChange something first.', local: 'Platypus: questo comando è fallito 4 volte di fila.', about: { kind: 'loop', cmd: 'npm run test:e2e', pat: 'FAIL <path>' }, toolUseId: 'toolu_01AbC', name: 'Claude' });
+    const m2 = log.append(A, { t: T + 20, sid: 'sess-a2', agent: 'agent-7', feature: 'claims', mode: 'shadow', event: 'Stop', text: 'Platypus: you said the tests pass, but no test ran.', tag: 'tests/ungrounded', about: { kind: 'tests' } });
+    const m3 = log.append(B, { t: T + 30, sid: 'sess-b1', agent: 'main', feature: 'stale', mode: 'shadow', event: 'PreToolUse', text: 'Platypus: src/a.js changed since you read it.', about: { file: 'src/a.js' } });
+    const m4 = log.append(C, { t: T + 40, sid: 'sess-c1', agent: 'main', feature: 'elder', mode: 'on', event: 'PreToolUse', text: 'Platypus: password=hunter2 was in the last error.' });
+    log.setOutcome(A, m1.id, 'helped', 'il comando è poi riuscito');
+    log.setOutcome(B, m3.id, 'ignored');
+    log.setOutcome(A, 'messaggio-perso', 'unclear');
+    // un file ruotato (il giro di prima) con un altro messaggio, e una riga rotta
+    fs.writeFileSync(path.join(dataDir, 'feedback', projectKey(A) + '.1.jsonl'), JSON.stringify({ id: 'vecchio1', t: T - 100, sid: 'sess-a0', agent: 'main', feature: 'loop', mode: 'shadow', event: 'PreToolUse', text: 'Platypus: older message.' }) + '\nquesta riga è rotta\n');
+    const stats = {
+      days: {
+        '2026-11-17': { projects: { platypus: { cost: 1.5, tokens: 300000, sessions: ['sess-a1'], completed: 4, commits: 2, prs: 1, tests: 3, wing: 'code' }, ['Report trimestrale ' + 'x'.repeat(200)]: { cost: 0.5, tokens: 1000, sessions: ['sess-w1'], completed: 1, commits: 0, prs: 0, tests: 0, wing: 'cowork' } },
+          releases: [{ t: T - 9, kind: 'commit', text: 'S5: add the project key', url: 'https://github.com/m4xl4b/platypus/commit/07c3f20', agent: 'Claude', project: 'platypus' }, { t: T - 8, kind: 'tests', text: '12 passed', agent: 'Claude', project: 'platypus' }], alerts: 2 },
+        '2026-11-18': { projects: { platypus: { cost: 2.25, tokens: 500000, sessions: ['sess-a2', 'sess-b1'], completed: 6, commits: 1, prs: 0, tests: 5, wing: 'code' } }, releases: [], alerts: 0 },
+      },
+      weeks: { '2026-W47': { Claude: { completed: 10, errors: 1, tools: 200, cost: 3.75 }, Explore: { completed: 2, errors: 0, tools: 40, cost: 0.5 } } },
+      last: { 'sess-a2': { t: T, cost: 2.25, tok: 500000, completed: 6, cbt: { Claude: 6 }, err: { Claude: 1 }, tools: { Claude: 80 }, costType: { Claude: 2.25 }, rel: 'r-3', alerts: ['a1'], name: 'platypus' } },
+    };
+    fs.writeFileSync(path.join(dataDir, 'stats.json'), JSON.stringify(stats));
+    return { pinned, forgotten, ids: { m1: m1.id, m2: m2.id, m3: m3.id, m4: m4.id }, stats, flakyA: idOf(A, 'flaky-command') };
+  };
+  const open = [];
+  // uguali, qualunque sia l'ordine delle chiavi
+  const sorted = v => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k, sorted(v[k])])) : Array.isArray(v) ? v.map(sorted) : v);
+  const same = (x, y) => JSON.stringify(sorted(x)) === JSON.stringify(sorted(y));
+  try {
+    ok(new Date(weekStart('2026-W47')).getDay() === 1 && new Date(weekStart('2026-W47')).getDate() === 16 && new Date(weekStart('2026-W01')).getFullYear() === 2025 && new Date(dayStart('2026-11-19')).getDate() === 19 && weekStart('boh') === 0, 'giorni e settimane ISO diventano date (il lunedì della settimana)');
+    for (const backend of ['memory', 'sqlite']) {
+      const dataDir = path.join(tmp, backend, 'dati');
+      fs.mkdirSync(dataDir, { recursive: true });
+      const old = makeOld(dataDir);
+      const before = hashDir(dataDir);
+      const mk = extra => { const st = declareCollections(openStore({ backend, dir: path.join(tmp, backend, 'db'), guard: 'drop', requireFields: true, onGuard() {}, ...extra })); open.push(st); return st; };
+      let store = mk();
+      const exec = async cwd => ({ [normDir(A)]: REMOTE, [normDir(B)]: 'https://github.com/m4xl4b/platypus' }[normDir(cwd)] || null);
+      const keys = new ProjectKeys({ store, exec, clock: () => NOW });
+      const r = await importLegacy(store, dataDir, { keys, clock: () => NOW });
+      store.flush();
+      const K = keyFor(A, REMOTE).key, KC = projectKey(C);
+      const lessons = store.collection('lessons'), projects = store.collection('projects'), daily = store.collection('daily'), fb = store.collection('feedback');
+      ok(r.done === true && JSON.stringify(r.imported) === '{"projects":2,"lessons":5,"daily":4,"feedback":5}' && r.skipped.feedback === 1 && r.skipped.outcomes === 1 && lessons.count({}) === 5 && projects.count({}) === 2 && daily.count({}) === 4 && fb.count({}) === 5,
+        `${backend}: tre Libri (sei lezioni, di cui una in due cartelle dello stesso repository), le statistiche e i messaggi entrano nello store, e i conti tornano`);
+      // lezioni: ogni lezione dei vecchi file c'è, sotto la chiave del repository; due cartelle dello stesso repository si sommano
+      const bot = new Bottega(path.join(dataDir, 'bottega'));
+      let all = true;
+      for (const cwd of [A, B, C]) for (const l of Object.values(bot.book(cwd).lessons)) {
+        const d = lessons.get(`${cwd === C ? KC : K}:${l.id}`);
+        if (!d || d.kind !== l.kind || d.lesson !== l.id || d.count < l.count || d.pinned !== (cwd === A ? l.pinned : d.pinned) || !l.sessions.every(x => d.sessions.includes(x))) { all = false; ok(false, `${backend}: lezione persa o diversa: ${l.kind} ${l.key}`); }
+      }
+      const oldCounts = [A, B, C].map(cwd => Object.keys(bot.book(cwd).lessons).length);
+      bot.stop();
+      const flaky = lessons.get(`${K}:${old.flakyA}`);
+      ok(all && oldCounts.join() === '3,2,1' && flaky.count === 3 && flaky.sessions.length === 3 && flaky.evidence.length === 3 && flaky.evidence[0].t === T + 5000 && flaky.last === T + 5000 && flaky.t === T + 5000 && flaky.first === T &&
+        lessons.get(`${K}:${old.pinned}`).pinned === true && lessons.count({ project: K }) === 4 && lessons.count({ project: KC, kind: 'known-fix' }) === 1,
+        `${backend}: ogni lezione dei vecchi Libri si ritrova; la stessa lezione in due cartelle dello stesso repository diventa una, con i casi di tutte e due`);
+      const pk = projects.get(K), pc = projects.get(KC);
+      ok(pk.remote === 'github.com/m4xl4b/platypus' && Object.keys(pk.aliases).sort().join() === [projectKey(A), projectKey(B)].sort().join() && pk.forgotten[old.forgotten] > 0 && pk.learned['sess-arch-1'] === T - 5 && pk.firstSeen === T &&
+        pc.name === 'senza-remote' && !('remote' in pc) && Object.keys(pc.aliases).length === 0 && lessons.get(`${K}:${old.forgotten}`) === null,
+        `${backend}: il progetto tiene il remote, le vecchie chiavi come alias, le lezioni dimenticate e le sessioni già lette`);
+      // messaggi: con l'esito, sotto il progetto giusto, senza segreti
+      const f1 = fb.get(old.ids.m1), f3 = fb.get(old.ids.m3), f4 = fb.get(old.ids.m4), fOld = fb.get('vecchio1');
+      ok(f1.project === K && f1.outcome === 'helped' && f1.why === 'il comando è poi riuscito' && f1.at > 0 && f1.text.includes('\nChange something first.') && f1.local.startsWith('Platypus: questo') && f1.about.cmd === 'npm run test:e2e' && f1.toolUseId === 'toolu_01AbC' && f1.name === 'Claude' &&
+        fb.get(old.ids.m2).outcome === undefined && fb.get(old.ids.m2).tag === 'tests/ungrounded' && f3.project === K && f3.outcome === 'ignored' && f3.about.file === 'src/a.js' && f4.project === KC && f4.text === 'Platypus: password=[secret] was in the last error.' && fOld.project === K && fOld.t === T - 100 &&
+        fb.count({ project: K, feature: 'loop' }) === 2 && fb.count({ mode: 'on' }) === 2,
+        `${backend}: ogni messaggio si ritrova con il suo esito, anche quelli del file ruotato; i segreti nei testi non passano`);
+      // statistiche: gli stessi numeri
+      const d17 = daily.get('day:2026-11-17'), d18 = daily.get('day:2026-11-18'), wk = daily.get('week:2026-W47'), ls = daily.get('last:sess-a2');
+      const longName = Object.keys(d17.projects).find(n => n.startsWith('Report'));
+      ok(same(d17.projects.platypus, old.stats.days['2026-11-17'].projects.platypus) && d17.alerts === 2 && d17.releases.length === 2 && d17.releases[0].text === 'S5: add the project key' && d17.releases[0].url.endsWith('/commit/07c3f20') && d17.releases[1].url === undefined &&
+        longName.length === 128 && d17.projects[longName].cost === 0.5 && d17.t === dayStart('2026-11-17') && d18.projects.platypus.cost === 2.25 && d18.projects.platypus.sessions.length === 2 && same(wk.types, old.stats.weeks['2026-W47']) && wk.t === weekStart('2026-W47') &&
+        ls.t === T && ls.last.cost === 2.25 && ls.last.cbt.Claude === 6 && ls.last.alerts[0] === 'a1' && daily.count({ kind: 'day' }) === 2,
+        `${backend}: ogni giorno, settimana e ultimo stato delle statistiche si ritrova con gli stessi numeri`);
+      // gli originali: copiati, non toccati; la 2.12 li rilegge
+      const copyOk = fs.existsSync(path.join(r.legacyDir, 'stats.json')) && fs.readdirSync(path.join(r.legacyDir, 'bottega')).length === 3 && fs.readdirSync(path.join(r.legacyDir, 'feedback')).length === 4 && r.files === 8 && /^legacy-\d{8}$/.test(path.basename(r.legacyDir));
+      const untouched = (() => { const h = crypto.createHash('sha1'); for (const sub of ['bottega', 'feedback']) for (const n of fs.readdirSync(path.join(dataDir, sub)).sort()) h.update(n).update(fs.readFileSync(path.join(dataDir, sub, n))); return h.update(fs.readFileSync(path.join(dataDir, 'stats.json'))).digest('hex'); })();
+      const copied = (() => { const h = crypto.createHash('sha1'); for (const sub of ['bottega', 'feedback']) for (const n of fs.readdirSync(path.join(r.legacyDir, sub)).sort()) h.update(n).update(fs.readFileSync(path.join(r.legacyDir, sub, n))); return h.update(fs.readFileSync(path.join(r.legacyDir, 'stats.json'))).digest('hex'); })();
+      const log2 = new FeedbackLog(path.join(dataDir, 'feedback'));
+      ok(copyOk && untouched === copied && fs.readdirSync(dataDir).filter(n => n.startsWith('legacy-')).length === 1 && log2.recent(A).length === 3 && log2.recent(A).find(x => x.id === old.ids.m1).outcome === 'helped' && before !== hashDir(dataDir),
+        `${backend}: gli originali restano dove sono, identici, con una copia in legacy-<data>; la 2.12 li rilegge come prima`);
+      // una volta sola, anche dopo un riavvio
+      const again = await importLegacy(store, dataDir, { keys, clock: () => NOW + 5 });
+      fs.writeFileSync(path.join(dataDir, 'stats.json'), JSON.stringify({ days: { '2026-11-19': { projects: {}, releases: [], alerts: 9 } }, weeks: {}, last: {} }));
+      if (backend === 'sqlite') { store.close(); store = mk(); }
+      const third = await importLegacy(store, dataDir, { clock: () => NOW + 9 });
+      ok(again.done === false && again.reason === 'already' && again.at === NOW && third.done === false && store.collection('daily').count({}) === 4 && store.collection('lessons').count({}) === 5 && store.collection('feedback').count({}) === 5 && store.getMeta('legacyImported') === String(NOW),
+        `${backend}: rifarlo non cambia niente${backend === 'sqlite' ? ', nemmeno dopo aver chiuso e riaperto' : ''}`);
+      if (backend === 'sqlite') {
+        store.close();
+        let rawBytes = '';
+        for (const f of fs.readdirSync(path.join(tmp, backend, 'db'))) rawBytes += fs.readFileSync(path.join(tmp, backend, 'db', f)).toString('latin1');
+        const leaks = ['max-segreto', 'lavoro/platypus', 'copie/', 'hunter2', 'ghp_abcdefghijklmnop'].filter(x => rawBytes.includes(x));
+        ok(leaks.length === 0 && rawBytes.includes('github.com/m4xl4b/platypus') && rawBytes.includes('senza-remote'), 'sqlite: nel file del database non ci sono le cartelle dei vecchi Libri né i segreti che stavano nei testi' + (leaks.length ? ': ' + leaks.join(', ') : ''));
+      }
+
+      // se fallisce a metà non resta niente, e al prossimo avvio riprova
+      const dataDir2 = path.join(tmp, backend, 'dati-2');
+      fs.mkdirSync(dataDir2, { recursive: true });
+      makeOld(dataDir2);
+      const strict = mk({ dir: path.join(tmp, backend, 'db-2'), guard: 'reject' });
+      const st2 = JSON.parse(fs.readFileSync(path.join(dataDir2, 'stats.json'), 'utf8'));
+      const good = JSON.stringify(st2);
+      st2.days['2026-11-18'].projects.platypus.sessions = ['una sessione con spazi'];
+      fs.writeFileSync(path.join(dataDir2, 'stats.json'), JSON.stringify(st2));
+      let err = null;
+      try { await importLegacy(strict, dataDir2, { clock: () => NOW }); } catch (e) { err = e; }
+      strict.flush();
+      const empty = ['projects', 'lessons', 'daily', 'feedback'].every(n => strict.collection(n).count({}) === 0);
+      fs.writeFileSync(path.join(dataDir2, 'stats.json'), good);
+      const retry = await importLegacy(strict, dataDir2, { clock: () => NOW + 1 });
+      ok(err && err.code === 'undeclared-field' && empty && retry.done === true && strict.collection('lessons').count({}) === 6 && strict.collection('daily').count({}) === 4 && strict.collection('projects').count({}) === 3 && strict.getMeta('legacyImported') === String(NOW + 1) &&
+        fs.readdirSync(dataDir2).filter(n => n.startsWith('legacy-')).length === 1,
+        `${backend}: se l'importazione fallisce a metà nello store non resta niente e il segno non c'è; al tentativo dopo va a buon fine (senza chiavi dei repository: un progetto per cartella)`);
+      // una cartella dei dati vuota: installazione nuova
+      const dataDir3 = path.join(tmp, backend, 'dati-3');
+      fs.mkdirSync(dataDir3, { recursive: true });
+      const fresh = mk({ dir: path.join(tmp, backend, 'db-3') });
+      const none = await importLegacy(fresh, dataDir3, { clock: () => NOW });
+      ok(none.done === true && JSON.stringify(none.imported) === '{"projects":0,"lessons":0,"daily":0,"feedback":0}' && none.legacyDir === null && fs.readdirSync(dataDir3).length === 0 && (await importLegacy(fresh, dataDir3)).reason === 'already',
+        `${backend}: su un'installazione nuova non c'è niente da portare, non si creano cartelle e non si guarda più`);
+    }
+  } finally {
+    for (const s of open) { try { s.close(); } catch {} }
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); } };
 if (require.main === module) {
   let failed = 0;
   module.exports.run((c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) failed++; })

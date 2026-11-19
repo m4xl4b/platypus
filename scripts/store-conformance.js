@@ -259,6 +259,13 @@ async function run(ok, backend = process.env.PLATYPUS_STORE_BACKEND || 'memory')
     const must = await fresh({ requireFields: true });
     ok(await throwsCode(() => must.declare('x', {}), 'invalid-argument') && (await must.declare('x', { fields: { a: 'number' } })) === undefined && (await must.info()).collections[0].guarded === true, 'con requireFields ogni collezione deve dichiarare i suoi campi');
 
+    // ---------------------------------------------------------- i segni dello store
+    await store.setMeta('segno', 'uno');
+    let metaErr = null;
+    try { await store.transaction(async () => { await store.setMeta('segno', 'due'); await store.setMeta('altro', 'x'); throw new Error('annulla'); }); } catch (e) { metaErr = e; }
+    ok(await store.getMeta('segno') === 'uno' && await store.getMeta('altro') === null && await store.getMeta('mai-messo') === null && metaErr && await throwsCode(() => store.setMeta('k', 5), 'invalid-argument') && await throwsCode(() => store.getMeta(''), 'invalid-argument') &&
+      (await store.info()).collections.every(c => !c.name.includes('meta')), 'getMeta e setMeta: piccoli segni che seguono le transazioni e non compaiono tra le collezioni');
+
     // ---------------------------------------------------------- info, store separati, chiusura
     const info = await store.info();
     const fi = info.collections.find(c => c.name === 'things');

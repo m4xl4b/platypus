@@ -205,6 +205,12 @@ Il libro impara dalle sessioni aperte una volta al minuto e, quando un progetto 
 - Per non farlo più imparare: OPZ → *Il Libro della bottega impara dalle sessioni*. Il Nonno ha un suo interruttore lì accanto.
 - Se hai aggiunto la sezione del libro al `CLAUDE.md` di un progetto, sta tra `<!-- platypus:bottega:start -->` e `<!-- platypus:bottega:end -->`: cancella quelle righe per toglierla. La versione precedente del file è in `CLAUDE.md.platypus-backup`.
 
+### Tornare alla 2.12
+
+Dalla 2.13 il Libro della bottega, le statistiche e il registro dei messaggi agli agenti stanno in un solo database, `~/.platypus/platypus.db`. La prima volta che la 2.13 parte, li copia lì dai file che usava la 2.12 (`bottega/`, `stats.json`, `feedback/`). Quei file non vengono né cambiati né cancellati, e una seconda copia resta in `~/.platypus/legacy-<data>/`.
+
+Quindi tornare indietro funziona: rimetti la 2.12 e avviala, e rilegge i suoi file com'erano quando la 2.13 è partita la prima volta. Quello che la 2.13 ha imparato dopo resta nel database, dove la 2.12 non guarda. Se poi torni alla 2.13, riprende dal suo database: i vecchi file si importano una volta sola.
+
 ## Casi particolari
 
 ### WSL (Claude Code dentro Linux su Windows)

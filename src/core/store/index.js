@@ -10,6 +10,7 @@
 //             count(filtro) · deleteMany(filtro) · append(doc)
 // STORE       collection(nome) · declare(nome, { fields, indexes, retention, projectField }) · transaction(fn)
 //             forgetProject(chiave) · export(nome, cartella) · import(nome, file) · flush() · info() · close()
+//             getMeta(chiave) · setMeta(chiave, valore)
 //
 // Documenti, filtri e ordinamento: le regole sono in common.js, e sono le stesse per tutti.
 //
@@ -204,6 +205,17 @@ class Store {
       });
       return { count, collection: c.name };
     });
+  }
+
+  // piccoli segni dello store, come "i dati di prima sono già stati portati qui" (legacy.js): stringhe, e seguono
+  // le transazioni come tutto il resto
+  getMeta(key) {
+    if (typeof key !== 'string' || !key) fail('invalid-argument', 'getMeta vuole una chiave');
+    return this.use().getMeta(key);
+  }
+  setMeta(key, value) {
+    if (typeof key !== 'string' || !key || typeof value !== 'string') fail('invalid-argument', 'setMeta vuole una chiave e un valore, tutti e due stringhe');
+    this.use().setMeta(key, value);
   }
 
   flush() { this.use().flush(); }
