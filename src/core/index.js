@@ -862,7 +862,11 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       // hook di una versione precedente (senza approvazione dall'ufficio): aggiornali
       try { if (hooks.status({ base }) && hooks.outdated({ base })) hooks.install({ port, base }); } catch {}
       // i dati della 2.12 entrano nello storico la prima volta, senza far aspettare l'ufficio
-      historyReady = history.start().catch(() => null);
+      historyReady = history.start().then(r => {
+        // la prima volta i dati della 2.12 arrivano dopo che statistiche e Libri sono partiti: si rileggono
+        if (r && r.done && r.imported) { stats.reload(); bottega.reloadFromStore(); }
+        return r;
+      }).catch(() => null);
       // conservazione e dimensione: subito dopo, e poi ogni 6 ore, a piccoli blocchi
       historyReady.then(() => retention()).catch(() => {});
       resolve({ port });

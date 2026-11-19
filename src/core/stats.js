@@ -8,6 +8,7 @@
 
 const { tr } = require('../i18n');
 
+const { toFieldName, fromFieldName, mapKeys } = require('./store/common');
 const MAX_NAME = 128, MAX_LIST = 200; // i limiti della guardia dello store (privacy.js)
 
 function dayKey(t) {
@@ -52,13 +53,23 @@ class Stats {
     if (!this.store) return;
     try {
       for (const d of this.store.collection('daily').find({})) {
-        if (d.kind === 'day' && d.day) this.data.days[d.day] = { projects: d.projects || {}, releases: d.releases || [], alerts: d.alerts || 0 };
-        else if (d.kind === 'week' && d.week) this.data.weeks[d.week] = d.types || {};
-        else if (d.kind === 'last') this.data.last[d._id.slice(5)] = { ...(d.last || {}), t: d.t };
+        // i nomi tornano com'erano (toFieldName li ha scritti con %2E, %24, %25)
+        if (d.kind === 'day' && d.day) this.data.days[d.day] = { projects: mapKeys(d.projects, fromFieldName), releases: d.releases || [], alerts: d.alerts || 0 };
+        else if (d.kind === 'week' && d.week) this.data.weeks[d.week] = mapKeys(d.types, fromFieldName);
+        else if (d.kind === 'last') this.data.last[d._id.slice(5)] = { ...lastMaps(d.last || {}, fromFieldName), t: d.t };
         else continue;
         this.saved.set(d._id, JSON.stringify(d));
       }
     } catch (e) { this.log('statistiche: non riesco a leggere lo storico (' + (e && e.message || e) + ')'); }
+  }
+
+  // di nuovo dallo storico, buttando quello che c'era in memoria: dopo l'import dei dati della 2.12, che arriva quando
+  // le statistiche sono già partite. Quello che il primo giro aveva contato si riconta dal "last" importato
+  reload() {
+    this.data = { days: {}, weeks: {}, last: {} };
+    this.saved = new Map();
+    this.load();
+    this.dirty = false;
   }
 
   // i documenti per lo storico, con i limiti della guardia (nomi di progetto e elenchi tagliati)
@@ -68,17 +79,17 @@ class Stats {
     const out = [];
     for (const [day, d] of Object.entries(this.data.days)) {
       const projects = {};
-      for (const [n, p] of Object.entries(d.projects || {})) projects[name(n)] = { ...p, sessions: cap(p.sessions) };
+      for (const [n, p] of Object.entries(d.projects || {})) projects[toFieldName(n, MAX_NAME)] = { ...p, sessions: cap(p.sessions) };
       out.push({ _id: 'day:' + day, t: new Date(day + 'T00:00:00').getTime() || 0, kind: 'day', day, projects, releases: cap(d.releases).map(r => ({ ...r, project: r.project === undefined ? undefined : name(r.project) })), alerts: d.alerts || 0 });
     }
     for (const [week, types] of Object.entries(this.data.weeks)) {
       const t = {};
-      for (const [type, v] of Object.entries(types || {})) t[name(type)] = v;
+      for (const [type, v] of Object.entries(types || {})) t[toFieldName(type, MAX_NAME)] = v;
       out.push({ _id: 'week:' + week, t: weekStart(week), kind: 'week', week, types: t });
     }
     for (const [sid, v] of Object.entries(this.data.last)) {
       const { t, ...last } = v;
-      out.push({ _id: 'last:' + sid, t: t || 0, kind: 'last', last: { ...last, alerts: cap(last.alerts), ...(last.name !== undefined ? { name: String(last.name).slice(0, 200) } : {}) } });
+      out.push({ _id: 'last:' + sid, t: t || 0, kind: 'last', last: { ...lastMaps(last, k => toFieldName(k, MAX_NAME)), alerts: cap(last.alerts), ...(last.name !== undefined ? { name: String(last.name).slice(0, 200) } : {}) } });
     }
     return out;
   }
@@ -275,6 +286,13 @@ function demoWeek(state) {
   }
   for (const v of Object.values(w)) v.tools = v.completed * 12;
   return w;
+}
+
+// l'ultimo stato di una sessione ha quattro mappe con i tipi di lavoro o gli strumenti come chiavi
+function lastMaps(last, f) {
+  const o = { ...last };
+  for (const m of ['cbt', 'err', 'tools', 'costType']) if (o[m] && typeof o[m] === 'object') o[m] = mapKeys(o[m], f);
+  return o;
 }
 
 module.exports = { Stats, dayKey, weekKey, forgetIn };

@@ -281,7 +281,23 @@ function parseDeclaration(name, spec) {
   return out;
 }
 
+// Un nome usato come nome di campo (un progetto o un tipo di lavoro nelle statistiche). I nomi di campo non possono
+// avere "." né "$" (vale anche per MongoDB), e un progetto può chiamarsi "helm-configurator.tar_4": si scrivono come
+// %2E e %24 (e "%" come %25), così si torna indietro senza ambiguità. max: la lunghezza massima di una chiave per la guardia.
+function toFieldName(name, max = 128) {
+  const s = String(name);
+  for (let n = Math.min(s.length, max); n >= 0; n--) {
+    const e = s.slice(0, n).replace(/%/g, '%25').replace(/\./g, '%2E').replace(/\$/g, '%24');
+    if (e.length <= max) return e;
+  }
+  return '';
+}
+function fromFieldName(key) { return String(key).replace(/%(25|2E|24)/gi, m => decodeURIComponent(m)); }
+// le chiavi di un oggetto, una per una
+const mapKeys = (o, f) => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [f(k), v]));
+
 module.exports = {
+  toFieldName, fromFieldName, mapKeys,
   StoreError, fail, ulid, ulidTime, checkName, checkId, cleanDoc, cleanValue, clone, isPlain, getPath, checkPath,
   parseFilter, matches, parseSort, parseFindOptions, comparator, cmpStr, cmpValues, project, parseDeclaration,
 };

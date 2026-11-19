@@ -19,6 +19,7 @@ const path = require('path');
 const { fail } = require('./common');
 
 const MARK = 'legacyImported';
+const { toFieldName, mapKeys } = require('./common');
 const MAX_NAME = 128, MAX_RELEASES = 200;
 
 const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
@@ -117,7 +118,7 @@ async function readLegacy(dataDir, { keys = null, clock = Date.now } = {}) {
       for (const [name, v] of Object.entries(obj(d && d.projects))) {
         const o = { cost: num(v.cost), tokens: num(v.tokens), completed: num(v.completed), commits: num(v.commits), prs: num(v.prs), tests: num(v.tests), sessions: (v.sessions || []).map(String) };
         if (typeof v.wing === 'string') o.wing = v.wing;
-        doc.projects[name.slice(0, MAX_NAME)] = o;
+        doc.projects[toFieldName(name, MAX_NAME)] = o;
       }
       for (const r of ((d && d.releases) || []).slice(-MAX_RELEASES)) {
         const o = { t: num(r.t), kind: String(r.kind || ''), text: String(r.text || '') };
@@ -130,11 +131,12 @@ async function readLegacy(dataDir, { keys = null, clock = Date.now } = {}) {
     }
     for (const [week, w] of Object.entries(obj(stats.weeks))) {
       const types = {};
-      for (const [type, v] of Object.entries(obj(w))) types[type.slice(0, MAX_NAME)] = { completed: num(v.completed), errors: num(v.errors), tools: num(v.tools), cost: num(v.cost) };
+      for (const [type, v] of Object.entries(obj(w))) types[toFieldName(type, MAX_NAME)] = { completed: num(v.completed), errors: num(v.errors), tools: num(v.tools), cost: num(v.cost) };
       daily.push({ _id: `week:${week}`, t: weekStart(week), kind: 'week', week, types });
     }
     for (const [sid, v] of Object.entries(obj(stats.last))) {
-      const last = { cost: num(v.cost), tok: num(v.tok), completed: num(v.completed), cbt: numMap(v.cbt), err: numMap(v.err), tools: numMap(v.tools), costType: numMap(v.costType), rel: String(v.rel || ''), alerts: (v.alerts || []).map(String) };
+      const fk = m => mapKeys(numMap(m), k => toFieldName(k, MAX_NAME));
+      const last = { cost: num(v.cost), tok: num(v.tok), completed: num(v.completed), cbt: fk(v.cbt), err: fk(v.err), tools: fk(v.tools), costType: fk(v.costType), rel: String(v.rel || ''), alerts: (v.alerts || []).map(String) };
       if (typeof v.name === 'string') last.name = v.name.slice(0, 200);
       daily.push({ _id: `last:${sid}`, t: num(v.t, now), kind: 'last', last });
     }

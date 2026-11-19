@@ -143,6 +143,37 @@ async function run(ok) {
     const logs = engines.map(x => x.out()).join('\n');
     ok(up.every(r => r.json && r.json.backend === 'sqlite' && r.json.notice === '') && c1.json && c1.json.ok && c2.json && c2.json.ok && after.every(r => r.status === 200 && r.json.backend === 'sqlite') && !/locked|SQLITE_BUSY|errore|Error/.test(logs),
       'due motori su porte diverse con la stessa cartella dei dati: tutti e due aprono lo storico, scrivono, compattano e applicano la conservazione senza errori' + (/locked|SQLITE_BUSY|Error/.test(logs) ? ': ' + logs.slice(0, 300) : ''));
+
+    // ---------------------------------------------------------- il primo avvio della 2.13 su una cartella della 2.12
+    // (trovato migrando i dati veri: l'import arrivava dopo che statistiche e Libri erano partiti, e al primo avvio
+    // l'ufficio mostrava costi, onori, report e Libri vuoti)
+    {
+      const old = path.join(tmp, 'dati-212'), proj = path.join(tmp, 'progetto.vecchio');
+      fs.mkdirSync(proj, { recursive: true });
+      fs.mkdirSync(old, { recursive: true });
+      fs.writeFileSync(path.join(old, 'settings.json'), JSON.stringify({ embedEngine: 'tfidf' }));
+      const d = new Date(), today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      fs.writeFileSync(path.join(old, 'stats.json'), JSON.stringify({ days: { [today]: { projects: { 'progetto.vecchio': { cost: 4.25, tokens: 1000, sessions: ['s-vecchia'], completed: 3, commits: 1, prs: 0, tests: 0, wing: 'code' } }, releases: [{ t: Date.now() - 60000, kind: 'commit', text: 'una release', project: 'progetto.vecchio' }], alerts: 1 } }, weeks: {}, last: {} }));
+      const { FileBottega } = require(path.join(ROOT, 'scripts', 'legacy-212'));
+      const bot = new FileBottega(path.join(old, 'bottega'));
+      bot.learn(proj, [{ kind: 'flaky-command', key: 'npm run e2e', sid: 's-vecchia', t: Date.now() - 3600000, agent: 'Claude', excerpt: 'FAIL e2e' }]);
+      bot.stop();
+      const pC = 47990 + Math.floor(Math.random() * 9);
+      const e = spawn(process.execPath, [path.join(ROOT, 'src', 'standalone.js'), '--no-open', '--no-cowork'], { env: { ...env(pC), PLATYPUS_DATA_DIR: old }, stdio: ['ignore', 'pipe', 'pipe'] });
+      kids.push(e);
+      let costs = null, book = null, report = null;
+      for (let i = 0; i < 60; i++) {
+        const c = await get(pC, '/api/stats/costs?days=3');
+        const day = c.json && c.json.find && c.json.find(x => x.day === today);
+        if (day && day.projects['progetto.vecchio']) { costs = day; break; }
+        await sleep(250);
+      }
+      book = (await get(pC, '/api/bottega?cwd=' + encodeURIComponent(proj))).json;
+      report = (await get(pC, '/api/report')).json;
+      e.kill();
+      ok(costs && costs.projects['progetto.vecchio'] === 4.25 && book && book.lessons && book.lessons.length === 1 && report && report.releases && report.releases.length === 1,
+        `primo avvio su una cartella della 2.12: costi, report e Libro mostrano subito i dati di prima (${costs ? costs.projects['progetto.vecchio'] + ' $' : 'nessun costo'}, ${book && book.lessons ? book.lessons.length : 0} lezione, ${report && report.releases ? report.releases.length : 0} release)`);
+    }
   } finally {
     for (const k of kids) { try { k.kill('SIGKILL'); } catch {} }
     await sleep(300);

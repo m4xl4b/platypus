@@ -190,6 +190,21 @@ class Bottega {
     b.dirty = true;
   }
 
+  // i Libri già aperti si rileggono dallo storico: dopo l'import dei dati della 2.12, che arriva quando l'ufficio è già
+  // partito. Quello che un Libro aveva imparato nel frattempo resta (absorb), e il Libro si salverà con tutto
+  reloadFromStore() {
+    let n = 0;
+    for (const [k, b] of [...this.books]) {
+      if (b.demo) continue;
+      const fresh = this.loadBook(b.key, b.cwd);
+      fresh.name = b.name || fresh.name;
+      if (Object.keys(b.lessons).length || Object.keys(b.learned).length || Object.keys(b.forgotten).length || b.mute || b.job) this.absorb(fresh, b);
+      this.books.set(k, fresh);
+      n++;
+    }
+    return n;
+  }
+
   // "Dimentica questo progetto": i suoi Libri escono dalla memoria senza essere salvati (lo storico lo svuota chi chiama)
   forgetBooks(keys) {
     const set = new Set(keys);

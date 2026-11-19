@@ -1250,7 +1250,45 @@ async function demoHistoryTests(ok) {
   a.close(); b.close();
 }
 
-module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); await retentionTests(ok); await forgetTests(ok); await experimentTests(ok); await historyQueryTests(ok); await searchTests(ok); await demoHistoryTests(ok); } };
+// S15: un progetto con "." o "$" nel nome (trovato migrando i dati veri: "helm-configurator.tar_4" bloccava tutto l'import)
+async function fieldNameTests(ok) {
+  console.log('store: nomi di progetto con punti e dollari');
+  const { toFieldName, fromFieldName } = require(path.join(ROOT, 'src', 'core', 'store', 'common'));
+  const { openStore } = require(path.join(ROOT, 'src', 'core', 'store'));
+  const { declareCollections } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
+  const { importLegacy } = require(path.join(ROOT, 'src', 'core', 'store', 'legacy'));
+  const { Stats } = require(path.join(ROOT, 'src', 'core', 'stats'));
+  const names = ['helm-configurator.tar_4', 'a$b', '50%', 'già %2E scritto', 'x.y.z', 'semplice'];
+  const long = 'n.'.repeat(100), lk = toFieldName(long, 128);
+  ok(names.every(n => fromFieldName(toFieldName(n)) === n && !/[.$]/.test(toFieldName(n))) && toFieldName('semplice') === 'semplice' && lk.length <= 128 && long.startsWith(fromFieldName(lk)),
+    'nome di campo: "." "$" "%" scritti come %2E %24 %25 e riletti uguali; un nome lungo resta entro i 128 caratteri');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-nomi-'));
+  try {
+    const day = '2026-11-18', T = new Date(day + 'T10:00:00').getTime();
+    fs.writeFileSync(path.join(tmp, 'stats.json'), JSON.stringify({
+      days: { [day]: { projects: { 'helm-configurator.tar_4': { cost: 1.5, tokens: 10, sessions: ['s1'], completed: 1, commits: 0, prs: 0, tests: 0, wing: 'code' }, 'a$b': { cost: 2, tokens: 5, sessions: ['s2'], completed: 0, commits: 0, prs: 0, tests: 0, wing: 'cowork' } }, releases: [{ t: T, kind: 'commit', text: 'v1', project: 'helm-configurator.tar_4' }], alerts: 0 } },
+      weeks: { '2026-W47': { 'mcp.tool': { completed: 1, errors: 0, tools: 2, cost: 1 } } },
+      last: { s1: { t: T, cost: 1, tok: 1, completed: 1, cbt: { 'mcp.tool': 1 }, err: {}, tools: { 'mcp.tool': 2 }, costType: {}, rel: '', alerts: [], name: 'helm-configurator.tar_4' } },
+    }));
+    const store = declareCollections(openStore({ backend: 'sqlite', dir: tmp, requireFields: true, guard: 'reject' }));
+    const r = await importLegacy(store, tmp, {});
+    const st = new Stats({ sessions: new Map() }, { store, log() {} });
+    const d = st.data.days[day] || { projects: {} };
+    const imported = r.done && Object.keys(d.projects).sort().join('|') === 'a$b|helm-configurator.tar_4' && d.projects['helm-configurator.tar_4'].cost === 1.5 &&
+      Object.keys(st.data.weeks['2026-W47'] || {}).join() === 'mcp.tool' && (st.data.last.s1 || {}).tools['mcp.tool'] === 2;
+    // e dal vivo: un progetto nuovo con il punto si salva e si rilegge dopo un riavvio
+    d.projects['sito.github.io'] = { cost: 3, tokens: 1, sessions: ['s3'], completed: 0, commits: 0, prs: 0, tests: 0, wing: 'code' };
+    st.dirty = true; st.save();
+    store.close();
+    const store2 = declareCollections(openStore({ backend: 'sqlite', dir: tmp, requireFields: true, guard: 'reject' }));
+    const st2 = new Stats({ sessions: new Map() }, { store: store2, log() {} });
+    const again = Object.keys(st2.data.days[day].projects).sort().join('|');
+    store2.close();
+    ok(imported && again === 'a$b|helm-configurator.tar_4|sito.github.io', `statistiche con "." e "$" nei nomi: l'import della 2.12 passa (prima falliva tutto), i nomi tornano uguali, anche dopo un riavvio (${again})`);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+}
+
+module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); await retentionTests(ok); await forgetTests(ok); await experimentTests(ok); await historyQueryTests(ok); await searchTests(ok); await demoHistoryTests(ok); await fieldNameTests(ok); } };
 if (require.main === module) {
   let failed = 0;
   module.exports.run((c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) failed++; })
