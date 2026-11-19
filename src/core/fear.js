@@ -8,8 +8,9 @@
 // Dell'azione restano la regola, il livello, le prudenze, la forma del comando e il bersaglio relativo al progetto:
 // mai il comando, mai un percorso fuori dal progetto, mai il messaggio dell'utente.
 
-const { classify, RULES } = require('./risk');
+const { classify, undoOf, RULES } = require('./risk');
 const { assess, missedFear, adviceFor } = require('./prudence');
+const { tr } = require('../i18n');
 
 const MAX_LIMIT = 500;
 
@@ -123,7 +124,7 @@ function queryRisks(store, q = {}) {
   const rows = store.collection('risks').find(where, { sort: { t: -1 }, limit });
   return rows.map(({ _id, ...r }) => {
     const top = RULES[(r.ruleIds || [])[0]];
-    return { ...r, reasons: (r.ruleIds || []).filter(id => RULES[id]).map(id => RULES[id].text()), undo: top && top.undo ? top.undo() : '', category: top ? top.category : '' };
+    return { ...r, reasons: (r.ruleIds || []).filter(id => RULES[id]).map(id => RULES[id].text()), undo: undoOf(r.ruleIds), category: top ? top.category : '' };
   });
 }
 
@@ -138,15 +139,37 @@ function fearView(a, now = Date.now()) {
   const out = {};
   if (last && now - last.t < FRESH_MS) {
     const r = last.risk;
-    const top = RULES[(r.ruleIds || [])[0]];
     out.last = {
       id: String(last.id || last.t), t: last.t, level: r.level, missed: !!r.missed, prudence: r.prudence, shape: r.shape || '', target: r.target || '',
       reasons: (r.ruleIds || []).filter(id => RULES[id]).slice(0, 3).map(id => RULES[id].text()), advice: adviceFor(r.missing),
-      undo: top && top.undo ? top.undo() : '', outcome: r.outcome || '',
+      undo: undoOf(r.ruleIds), outcome: r.outcome || '',
     };
   }
   if (w.scarAt) out.scarAt = w.scarAt;
   return out.last || out.scarAt ? out : null;
 }
 
-module.exports = { fearOf, fearView, queryRisks, scars, markScars, lastGoal, MAX_LIMIT, SCAR_WINDOW, FRESH_MS };
+// ---- la richiesta di permesso (R6): quanto è rischiosa l'azione che Claude Code ti chiede di approvare.
+// I passi già aperti per questa stessa azione non contano come prudenza (sarebbe lei a giustificare se stessa).
+const LEVEL_NAMES = { 1: () => tr('ATTENZIONE'), 2: () => tr('PERICOLO'), 3: () => tr('IRREVERSIBILE') };
+function permissionView({ s, a, tool, input } = {}) {
+  const w = a && a.world;
+  const open = new Set(w && w.open ? w.open.values() : []);
+  const f = fearOf({ s, a, tool, input, steps: w ? w.steps.filter(x => !open.has(x)) : [] });
+  if (!f.event) return null;
+  return {
+    level: f.risk.level, name: LEVEL_NAMES[f.risk.level](), missed: f.missed, shape: f.risk.shape,
+    reasons: f.risk.ruleIds.filter(id => RULES[id]).slice(0, 3).map(id => RULES[id].text()), advice: adviceFor(f.prudence.missing),
+    undo: f.risk.undo,
+  };
+}
+// una riga sola per la notifica e per il fumetto: "IRREVERSIBILE (probabile): spinge sul branch principale. Manca: …. Non si torna indietro."
+function permissionLine(p) {
+  if (!p) return '';
+  const parts = [tr('{level} (probabile): {why}.', { level: p.name, why: p.reasons.join(tr('; ')) })];
+  if (p.advice.length) parts.push(tr('Manca: {what}.', { what: p.advice.join(tr(', ')) }));
+  parts.push(p.undo ? tr('Per tornare indietro: {how}.', { how: p.undo }) : tr('Non si torna indietro.'));
+  return parts.join(' ');
+}
+
+module.exports = { permissionView, permissionLine, fearOf, fearView, queryRisks, scars, markScars, lastGoal, MAX_LIMIT, SCAR_WINDOW, FRESH_MS };

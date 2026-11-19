@@ -388,6 +388,12 @@ process.on('exit', code => {
   ok(!!(await shellSt.wait(e => e.event === 'counts' && e.data.waiting >= 1)), 'stream delle shell: i contatori vedono l\'attesa');
   await sleep(700);
   ok(shellSt.events.filter(e => e.event === 'notify' && e.data.sid === 'smoke-1').length === 1, 'nessun doppione della notifica');
+  // 2.14 (R6): una richiesta di permesso rischiosa dice livello, perché, prudenza mancante e se si torna indietro
+  await get(port, '/platypus-hook/permission', 'POST', JSON.stringify({ session_id: 'smoke-risk', cwd: tmp, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'git push --force origin main' } }));
+  const nRisk = await shellSt.wait(e => e.event === 'notify' && e.data.kind === 'wait' && e.data.sid === 'smoke-risk');
+  const stRisk = JSON.parse((await get(port, '/api/state')).body).sessions.find(s => s.id === 'smoke-risk');
+  ok(nRisk && /IRREVERSIB/.test(nRisk.data.body) && /(Non si torna indietro|no going back)/.test(nRisk.data.body) && stRisk && stRisk.main.perm && stRisk.main.perm.level === 3 && stRisk.main.perm.missed === true,
+    'paura, permesso: la notifica e lo stato dicono che è irreversibile → ' + (nRisk ? nRisk.data.body.replace(/\n/g, ' / ') : '-'));
   core.notify.off('notify', onNotify);
   shellSt.close();
   const shellBad = shellEvents(port, { Origin: 'http://127.0.0.1:1' });

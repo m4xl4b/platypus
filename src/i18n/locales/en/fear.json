@@ -78,5 +78,11 @@
   "{stamp}, probabile: {why}.": "{stamp}, probably: {why}.",
   "Paura: l'ufficio mostra le azioni rischiose, e il Nonno arriva quando manca la prudenza": "Fear: the office shows risky actions, and Grandpa comes when prudence is missing",
   "PAURA E CICATRICI": "FEAR AND SCARS",
-  "Platypus non è una protezione: riconosce schemi noti e può non vedere quello che non conosce. Ogni giudizio è probabile. Qui osserva soltanto, non ferma niente.": "Platypus is not a protection: it recognises known patterns and can miss what it does not know. Every judgement is probable. Here it only observes, it stops nothing."
+  "Platypus non è una protezione: riconosce schemi noti e può non vedere quello che non conosce. Ogni giudizio è probabile. Qui osserva soltanto, non ferma niente.": "Platypus is not a protection: it recognises known patterns and can miss what it does not know. Every judgement is probable. Here it only observes, it stops nothing.",
+  "ATTENZIONE": "ATTENTION",
+  "{level} (probabile): {why}.": "{level} (probably): {why}.",
+  "Manca: {what}.": "Missing: {what}.",
+  "Per tornare indietro: {how}.": "To go back: {how}.",
+  "Non si torna indietro.": "There is no going back.",
+  "SEMPRE per un'azione irreversibile?": "ALWAYS for an irreversible action?"
 }

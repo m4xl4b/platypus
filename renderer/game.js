@@ -2750,7 +2750,7 @@ function updateBalloon(c) {
   const ap = c.npc ? null : approvalFor(c.sid, c.id);
   const gc = (groundFor(c) || {}).claim;
   const fbk = c.npc ? null : saidTo(c);
-  const sig = status + '|' + action + '|' + a.description + '|' + a.type + '|' + a.seq + '|' + (focusId === c.id) + '|' + !!c.alert + '|' + (c.errand ? c.errand.type : '') + '|' + (ap ? ap.id : '') + '|' + (gc ? gc.status + gc.t : '') + '|' + (fbk ? fbk.mode + fbk.t : '');
+  const sig = status + '|' + action + '|' + a.description + '|' + a.type + '|' + a.seq + '|' + (focusId === c.id) + '|' + !!c.alert + '|' + (c.errand ? c.errand.type : '') + '|' + (ap ? ap.id + (permRiskOf(ap) ? permRiskOf(ap).level : '') : '') + '|' + (gc ? gc.status + gc.t : '') + '|' + (fbk ? fbk.mode + fbk.t : '');
   if (sig !== c.last) {
     c.last = sig;
     c.el.className = 'balloon st-' + (c.npc ? 'npc' : c.errand && c.errand.type === 'rage' ? 'rage' : c.alert && status !== 'waiting' ? 'alert' : status) + (focusId === c.id ? ' focus' : '') + (a.kind === 'main' || !a.description ? ' compact' : '') + (ap ? ' asking' : '') + (gc ? ' unground' : '');
@@ -2791,12 +2791,29 @@ function approvalFor(sid, aid) {
   }
   return null;
 }
+// 2.14 (R6): quanto è rischiosa l'azione da approvare: livello, perché, prudenza mancante, come tornare indietro
+function permRiskOf(ap) {
+  if (!ap || !fearOn()) return null;
+  if (ap.risk) return ap.risk;
+  const s = sessionById(ap.sid), a = s && (ap.agentId === 'main' ? s.main : s.subs.find(x => x.id === ap.agentId));
+  return (a && a.perm) || null;
+}
+function permRiskHtml(p) {
+  if (!p) return '';
+  const parts = [tr('{level} (probabile): {why}.', { level: p.name, why: p.reasons.join(tr('; ')) })];
+  if (p.advice && p.advice.length) parts.push(tr('Manca: {what}.', { what: p.advice.join(tr(', ')) }));
+  parts.push(p.undo ? tr('Per tornare indietro: {how}.', { how: p.undo }) : tr('Non si torna indietro.'));
+  return '<span class="risk lv' + p.level + '">' + esc(parts.join(' ')) + '</span>';
+}
 function askButtons(ap) {
-  return '<span class="ask"><button data-d="allow" title="' + esc(tr('Consenti questa volta')) + '">' + tr('SÌ') + '</button>' +
+  return permRiskHtml(permRiskOf(ap)) + '<span class="ask"><button data-d="allow" title="' + esc(tr('Consenti questa volta')) + '">' + tr('SÌ') + '</button>' +
     (ap.always ? '<button data-d="always" title="' + esc(tr('Consenti e non chiedere più per questa sessione')) + '">' + tr('SEMPRE') + '</button>' : '') +
     '<button data-d="deny" class="no" title="' + esc(tr('Rifiuta')) + '">' + tr('NO') + '</button></span>';
 }
 async function answerApproval(ap, decision) {
+  // SEMPRE su un'azione irreversibile: una conferma in più (2.14, R6)
+  const pr = permRiskOf(ap);
+  if (decision === 'always' && pr && pr.level >= 3 && !window.confirm(tr('SEMPRE per un\'azione irreversibile?') + '\n\n' + pr.reasons.join('\n'))) return;
   answered.add(ap.id);
   for (const c of chars.values()) c.last = ''; // ridisegna i fumetti senza pulsanti
   if (widgetOn) renderWidget();

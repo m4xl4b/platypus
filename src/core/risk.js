@@ -558,7 +558,7 @@ class Scan {
       category: top.category,
       reasons: ids.map(id => RULES[id].text()),
       reach: REACH[Math.max(...tops.map(id => REACH.indexOf(RULES[id].reach)))],
-      undo: top.undo ? top.undo() : '',
+      undo: undoOf(ids),
       prudence: [...new Set(tops.flatMap(id => RULES[id].prudence))],
       shape: top.shape,
       targets: [...targets].slice(0, 5),
@@ -573,6 +573,15 @@ class RemoteScan extends Scan {
     super({ cwd: '/', root: '/__nessun_progetto__', home: '/__nessuna_home__' });
     this.hits = parent.hits; this.marks = parent.marks;
   }
+}
+
+// come si torna indietro: solo se tutte le regole del livello più alto hanno un rimedio (un force push su main non si
+// rimedia con un revert, anche se un push normale su main sì)
+function undoOf(ruleIds) {
+  const ids = (ruleIds || []).filter(id => RULES[id]);
+  if (!ids.length) return '';
+  const level = Math.max(...ids.map(id => RULES[id].level)), tops = ids.filter(id => RULES[id].level === level);
+  return tops.every(id => RULES[id].undo) ? RULES[tops[0]].undo() : '';
 }
 
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
@@ -608,4 +617,4 @@ function classify(action) {
   return scan.result();
 }
 
-module.exports = { classify, lex, sqlRules, makePaths, RULES };
+module.exports = { classify, lex, sqlRules, makePaths, undoOf, RULES };

@@ -10,6 +10,7 @@
 
 const { EventEmitter } = require('events');
 const { tr, trn, money } = require('../i18n');
+const { permissionLine } = require('./fear'); // 2.14: il rischio di una richiesta di permesso
 
 function agentLabel(a) {
   if (a.kind === 'main') return 'CLAUDE';
@@ -113,7 +114,7 @@ class Notifier extends EventEmitter {
         ? tr('{agent} ti aspetta', { agent: agentLabel(first.a) }) // un permesso, una domanda o un piano: lo dice la riga sotto
         : tr('{n} agenti ti aspettano', { n: fresh.length }),
       body: fresh.length === 1
-        ? tr('Piano {n}', { n: first.floor }) + ' · ' + sessionLabel(first.s) + '\n' + (first.a.action || '')
+        ? tr('Piano {n}', { n: first.floor }) + ' · ' + sessionLabel(first.s) + '\n' + (first.a.action || '') + (first.a.perm ? '\n' + permissionLine(first.a.perm) : '')
         : fresh.slice(0, 4).map(f => agentLabel(f.a) + ' · ' + tr('piano {n}', { n: f.floor }) + ' ' + sessionLabel(f.s)).join('\n'),
       sid: first.s.id,
       key: 'wait:' + first.k,

@@ -1039,6 +1039,8 @@ class OfficeState extends EventEmitter {
       }
       case 'PermissionRequest': {
         const a = getA();
+        // 2.14 (R6): quanto è rischiosa l'azione da approvare; il fumetto e la notifica lo dicono
+        try { a.permRisk = fear.permissionView({ s, a, tool: ev.tool_name, input: ev.tool_input }); } catch { a.permRisk = null; }
         this.setAgent(a, 'waiting', tr('Serve il tuo OK: {what}', { what: describeTool(ev.tool_name, ev.tool_input) }));
         this.addLog(s, tr('{agent} chiede il permesso: {tool}', { agent: a.kind === 'main' ? 'CLAUDE' : displayName(a), tool: ev.tool_name || '' }), 'wait');
         break;
@@ -1248,7 +1250,7 @@ class OfficeState extends EventEmitter {
       registry: this.registrySeen,
       demo: this.demo,
       weather: this.weather || null,
-      approvals: this.approvals ? [...this.approvals.values()].map(a => ({ id: a.id, sid: a.sid, agentId: a.agentId, tool: a.tool, text: a.text, always: !!a.always, t: a.t })) : [],
+      approvals: this.approvals ? [...this.approvals.values()].map(a => ({ id: a.id, sid: a.sid, agentId: a.agentId, tool: a.tool, text: a.text, always: !!a.always, t: a.t, risk: a.risk || null })) : [],
       cowork: this.coworkScan || null,
       lang: i18n.getLang(),
     };
@@ -1357,6 +1359,7 @@ function pub(a, rate, now = Date.now()) {
     errStreak: a.errStreak || 0, interruptedAt: a.interruptedAt || 0,
     model: a.model || '', effort: a.effort || '',
     fear: fear.fearView(a, now), // 2.14: l'ultima azione rischiosa, se recente, e la cicatrice
+    perm: a.status === 'waiting' && a.permRisk ? a.permRisk : null, // 2.14: il rischio della richiesta di permesso in attesa
   };
 }
 

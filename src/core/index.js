@@ -204,6 +204,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       res, t: Date.now(),
     };
     ap.always = !!(ap.suggestions && ap.suggestions.length);
+    // 2.14 (R6): il rischio l'ha appena calcolato state.applyHook sull'agente
+    try { const s = state.sessions.get(ap.sid); const a = s && (ap.agentId === 'main' ? s.main : s.subs.get(ap.agentId)); ap.risk = (a && a.permRisk) || null; } catch { ap.risk = null; }
     ap.timer = setTimeout(() => finishApproval(id, null), wait * 1000);
     approvals.set(id, ap);
     // se rispondi nel terminale, Claude Code chiude l'hook: togliamo la richiesta

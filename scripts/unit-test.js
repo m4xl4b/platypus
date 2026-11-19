@@ -1104,6 +1104,26 @@ function fearViewTests(ok) {
     fear.markScars(s2, [{ id: 'main', name: 'Claude', world: s2.main.world, mind: s2.main.mind }]);
     ok(s2.main.world.scarAt > 0 && st2.snapshot().sessions.find(x => x.id === S2).main.fear.scarAt === s2.main.world.scarAt, 'ufficio: markScars mette la cicatrice sul personaggio');
     st2.stop && st2.stop();
+    // R6: il rischio di una richiesta di permesso
+    const pv = (cmd, steps = []) => fear.permissionView({ s, a: { world: { steps, open: new Map() } }, tool: 'Bash', input: { command: cmd } });
+    ok(pv('ls -la') === null, 'permesso: un comando innocuo non ha rischio');
+    const pf = pv('git push --force origin main');
+    ok(pf.level === 3 && /IRREVERSIB/.test(pf.name) && pf.missed && pf.undo === '' && /(Non si torna indietro|no going back)/.test(fear.permissionLine(pf)), 'permesso: force push su main, irreversibile, senza rimedio: ' + fear.permissionLine(pf));
+    const pr = pv('git reset --hard HEAD~1', [{ t: 1, act: 'run', sig: 'run:git commit -m wip', err: false }]);
+    ok(pr.level === 2 && !pr.missed && /reflog/.test(pr.undo) && /reflog/.test(fear.permissionLine(pr)), 'permesso: reset --hard dopo un commit, con il modo di tornare indietro');
+    const pp = pv('git push origin main');
+    ok(pp.level === 3 && /revert/.test(pp.undo), 'permesso: un push normale su main si rimedia con un revert, un force push no');
+    // il passo aperto per la stessa azione non è prudenza
+    const self = { t: 2, act: 'look', sig: 'run:git status', err: null };
+    const open = new Map([['x', self]]);
+    ok(fear.permissionView({ s, a: { world: { steps: [self], open } }, tool: 'Bash', input: { command: 'git reset --hard' } }).missed === true, 'permesso: l\'azione ancora aperta non conta come prudenza');
+    // nello stato solo mentre aspetta
+    st.applyHook({ session_id: S, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'git clean -fd' } });
+    const waitView = st.snapshot().sessions.find(x => x.id === S).main;
+    ok(waitView.status === 'waiting' && waitView.perm && waitView.perm.level === 2 && waitView.perm.reasons.length === 1, 'permesso: nello stato, il rischio dell\'agente che aspetta');
+    st.applyTranscriptLine(S, null, line('user', [{ type: 'tool_result', tool_use_id: 'zz', content: 'ok' }]));
+    st.setAgent(s.main, 'working', 'ok');
+    ok(st.snapshot().sessions.find(x => x.id === S).main.perm === null, 'permesso: quando non aspetta più, il rischio sparisce');
     // l'opzione si spegne e si riaccende come le altre
     st.setSettings({ fearEnabled: false });
     ok(st.settings.fearEnabled === false && st.snapshot().settings.fearEnabled === false, 'ufficio: fearEnabled si spegne dalle opzioni');
