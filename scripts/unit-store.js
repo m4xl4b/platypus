@@ -872,7 +872,70 @@ async function historyTests(ok) {
   }
 }
 
-module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); } };
+// S10: conservazione per collezione e limite di dimensione (src/core/retention.js)
+async function retentionTests(ok) {
+  console.log('store: conservazione e dimensione');
+  const { openStore } = require(path.join(ROOT, 'src', 'core', 'store'));
+  const { declareCollections } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
+  const { runRetention, retentionFromSettings, maxBytes } = require(path.join(ROOT, 'src', 'core', 'retention'));
+  const { Bottega } = require(path.join(ROOT, 'src', 'core', 'bottega'));
+  const { ProjectKeys } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
+  const DAY = 86400000, NOW = Date.now();
+  ok(JSON.stringify(retentionFromSettings({ storeKeepSteps: 30, storeKeepSessions: 0, storeKeepFeedback: '400', storeKeepLessons: -5, other: 1 })) === '{"steps":30,"sessions":0,"feedback":400,"experiments":400}' &&
+    JSON.stringify(retentionFromSettings({ storeKeepSteps: 99999 })) === '{"steps":3650}' && maxBytes({}) === 200 * 1048576 && maxBytes({ storeMaxMB: 0 }) === 0 && maxBytes({ storeMaxMB: 'boh' }) === 0,
+    'dalle opzioni: giorni per collezione (0 = per sempre, al massimo 10 anni, i valori senza senso non contano) e il limite in MB');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-conserva-'));
+  const open = [];
+  try {
+    for (const backend of ['memory', 'sqlite']) {
+      const store = declareCollections(openStore({ backend, dir: path.join(tmp, backend), guard: 'reject', requireFields: true }));
+      open.push(store);
+      const steps = store.collection('steps'), sessions = store.collection('sessions'), fb = store.collection('feedback'), ex = store.collection('experiments'), les = store.collection('lessons'), daily = store.collection('daily'), projects = store.collection('projects');
+      store.transaction(() => {
+        for (let d = 0; d < 200; d++) for (let k = 0; k < 6; k++) steps.put({ _id: `s${d}-${k}`, project: 'p', t: NOW - d * DAY - k, session: 's' + d, action: 'read', tool: 'Read', outcome: 'ok' });
+        for (let d = 0; d < 400; d += 10) { sessions.put({ _id: 'sess' + d, project: 'p', t: NOW - d * DAY, actions: 1 }); fb.put({ _id: 'fb' + d, project: 'p', t: NOW - d * DAY, feature: 'loop', mode: 'on', text: 'Platypus: x' }); ex.put({ _id: 'ex' + d, project: 'p', t: NOW - d * DAY, sid: 's', feature: 'loop', group: 'on' }); }
+        const L = (id, days, count, sess, pinned) => les.put({ _id: 'p:' + id, project: 'p', t: NOW - days * DAY, lesson: id, kind: 'flaky-command', key: 'npm test ' + id, count, sessions: Array.from({ length: sess }, (_, i) => 's' + i), first: NOW - days * DAY, last: NOW - days * DAY, evidence: [], seen: [], pinned, ignored: false });
+        L('old-weak', 200, 1, 1, false); L('old-pinned', 300, 1, 1, true); L('old-strong', 200, 400, 50, false); L('new-weak', 10, 1, 1, false);
+        daily.put({ _id: 'day:2020-01-01', t: NOW - 2000 * DAY, kind: 'day', day: '2020-01-01', alerts: 1 });
+        projects.put({ _id: 'p', name: 'progetto', firstSeen: NOW - 3000 * DAY, lastSeen: NOW });
+      });
+      const book = new Bottega({ store, keys: new ProjectKeys({ store, exec: async () => null }), log() {} });
+      book.books.set('p', { key: 'p', name: 'progetto', cwd: '/p', lessons: { 'old-weak': { id: 'old-weak' }, 'new-weak': { id: 'new-weak' } }, learned: {}, forgotten: {}, mute: false, strays: new Set(), dirty: false });
+      const r = await runRetention({ store, bottega: book, settings: {}, now: NOW });
+      ok(r.removed.steps === 659 && steps.count({}) === 541 && steps.find({}, { sort: { t: 1 }, limit: 1 })[0].t >= NOW - 90 * DAY && r.removed.sessions === 3 && sessions.count({}) === 37 && r.removed.feedback === 3 && r.removed.experiments === 3,
+        `${backend}: di base i passi restano 90 giorni, sessioni, messaggi ed esperimenti 365 (${JSON.stringify(r.removed)})`);
+      ok(les.get('p:old-weak') === null && les.get('p:old-pinned') !== null && les.get('p:old-strong') !== null && les.get('p:new-weak') !== null && r.removed.lessons === 1 && !book.books.get('p').lessons['old-weak'] && book.books.get('p').lessons['new-weak'],
+        `${backend}: delle lezioni vecchie se ne vanno solo le deboli non fissate, anche dal Libro in memoria`);
+      ok(daily.get('day:2020-01-01') !== null && projects.get('p') !== null && JSON.parse(store.getMeta('retentionLast')).at === NOW, `${backend}: statistiche e progetti restano; quello che è successo resta scritto per le opzioni`);
+      const r2 = await runRetention({ store, bottega: book, settings: { storeKeepSteps: 30, storeKeepSessions: 0 }, now: NOW });
+      ok(steps.count({}) === 181 && sessions.count({}) === 37 && r2.removed.steps === 360 && !('sessions' in r2.removed), `${backend}: la conservazione scelta nelle opzioni (passi 30 giorni, sessioni per sempre)`);
+      const again = await runRetention({ store, bottega: book, settings: { storeKeepSteps: 30, storeKeepSessions: 0 }, now: NOW });
+      ok(Object.values(again.removed).every(n => n === 0) && again.trimmedForSize === 0, `${backend}: rifarlo subito non toglie niente`);
+      book.stop();
+    }
+    // il limite di dimensione: con sqlite, i passi più vecchi se ne vanno finché lo storico ci sta
+    const dir = path.join(tmp, 'grande');
+    const store = declareCollections(openStore({ backend: 'sqlite', dir, guard: 'reject', requireFields: true }));
+    open.push(store);
+    const steps = store.collection('steps');
+    for (let b = 0; b < 20; b++) store.transaction(() => { for (let i = 0; i < 1000; i++) { const n = b * 1000 + i; steps.put({ _id: 'x' + String(n).padStart(6, '0'), project: 'p', t: NOW - (20000 - n) * 1000, session: 's', action: 'read', tool: 'Read', outcome: 'ok', target: 'src/' + 'cartella/'.repeat(8) + n + '.js' }); } });
+    const before = store.driver.usedBytes(), limitMB = Math.floor(before / 1048576 / 2) || 1;
+    const t0 = Date.now();
+    const r = await runRetention({ store, settings: { storeMaxMB: limitMB }, now: NOW });
+    const left = steps.find({}, { sort: { t: 1 }, limit: 1 })[0];
+    ok(before > 2 * 1048576 && r.trimmedForSize > 0 && r.usedBytes <= limitMB * 1048576 && steps.count({}) === 20000 - r.trimmedForSize && left._id === 'x' + String(r.trimmedForSize).padStart(6, '0') && Date.now() - t0 < 10000,
+      `limite di dimensione: da ${(before / 1048576).toFixed(1)} MB a sotto ${limitMB} MB togliendo i ${r.trimmedForSize} passi più vecchi`);
+    const r3 = await runRetention({ store, settings: { storeMaxMB: 0 }, now: NOW });
+    ok(r3.trimmedForSize === 0 && r3.limitBytes === 0, 'senza limite (0) non si toglie niente per la dimensione');
+    const mem = declareCollections(openStore({ backend: 'memory' }));
+    ok((await runRetention({ store: mem, settings: { storeMaxMB: 1 }, now: NOW })).usedBytes === null && await runRetention({ store: null }) === null, 'in memoria la dimensione non conta; senza store non fa niente');
+  } finally {
+    for (const st of open) { try { st.close(); } catch {} }
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); await retentionTests(ok); } };
 if (require.main === module) {
   let failed = 0;
   module.exports.run((c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) failed++; })

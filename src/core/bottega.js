@@ -180,6 +180,17 @@ class Bottega {
     b.dirty = true;
   }
 
+  // le lezioni che la conservazione ha tolto dallo storico ([{ project, id }]) escono anche dai Libri in memoria,
+  // altrimenti il prossimo salvataggio le riscriverebbe
+  dropLessons(list) {
+    let n = 0;
+    for (const { project, id } of list || []) {
+      const b = this.books.get(project);
+      if (b && !b.demo && b.lessons[id]) { delete b.lessons[id]; n++; }
+    }
+    return n;
+  }
+
   // scrive nello storico i Libri cambiati, uno per transazione. Se non ci riesce resta "da salvare" e riprova
   save() {
     if (!this.store) return;
@@ -466,4 +477,4 @@ function describe(l) {
   }
 }
 
-module.exports = { Bottega, digest, hints, elderLine, renderSection, lessonLines, sameCmd, cmdCore, projectKey, normDir, errorPattern, weightOf, KINDS, HALF_LIFE };
+module.exports = { Bottega, digest, hints, elderLine, renderSection, lessonLines, sameCmd, cmdCore, projectKey, normDir, errorPattern, weightOf, KINDS, HALF_LIFE, LESSON_WEIGHT };

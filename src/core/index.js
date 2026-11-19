@@ -51,6 +51,7 @@ const { listArchive, findSessionFile, Replay } = require('./archive');
 const osint = require('./osint');
 const { Stats } = require('./stats');
 const { History } = require('./history');
+const { runRetention } = require('./retention');
 const hooks = require('./hooks');
 const feedback = require('./feedback');
 const { FeedbackLog, MemoryFeedbackLog } = require('./feedbacklog');
@@ -708,6 +709,17 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   });
 
   let historyReady = Promise.resolve(null);
+  let retentionRun = null;
+  function retention() {
+    if (retentionRun) return retentionRun; // un giro alla volta
+    bottega.save(); // quello che il Libro ha in memoria va nello storico prima di sfoltirlo
+    retentionRun = runRetention({ store: history.store, bottega, settings: state.settings })
+      .catch(e => { console.error('[platypus] store: conservazione non riuscita (' + (e && e.message || e) + ')'); return null; })
+      .finally(() => { retentionRun = null; });
+    return retentionRun;
+  }
+  const retentionTimer = setInterval(() => { retention(); }, 6 * 3600000);
+  retentionTimer.unref && retentionTimer.unref();
   const ready = new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', () => {
@@ -720,6 +732,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       try { if (hooks.status({ base }) && hooks.outdated({ base })) hooks.install({ port, base }); } catch {}
       // i dati della 2.12 entrano nello storico la prima volta, senza far aspettare l'ufficio
       historyReady = history.start().catch(() => null);
+      // conservazione e dimensione: subito dopo, e poi ogni 6 ore, a piccoli blocchi
+      historyReady.then(() => retention()).catch(() => {});
       resolve({ port });
     });
   });
@@ -743,13 +757,14 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     embedder.stop();
     state.stop();
     clearInterval(summaryTimer);
+    clearInterval(retentionTimer);
     try { history.summarize(state); } catch {}
     history.stop(); // per ultimo: statistiche, Libro e registro hanno appena salvato
     for (const c of clients) try { c.end(); } catch {}
     server.close();
   }
 
-  return { state, history, historyReady: () => historyReady, stats, notify: notifier, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
+  return { state, history, historyReady: () => historyReady, retention, stats, notify: notifier, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
     install: () => hooks.install({ port, base }),
     uninstall: () => hooks.uninstall({ base }),
     status: () => hooks.status({ base }),

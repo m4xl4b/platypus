@@ -97,6 +97,13 @@ const DEFAULT_SETTINGS = {
   embedEngine: 'auto',
   embedModel: '',       // vuoto = il primo modello di embedding presente, preferendo i multilingue
   ollamaUrl: 'http://127.0.0.1:11434',
+  // lo storico (2.13): per quanti giorni tenere passi, sessioni, messaggi agli agenti e lezioni deboli (0 = per sempre),
+  // e il limite di dimensione in MB (0 = nessuno), oltre il quale se ne vanno i passi più vecchi (retention.js)
+  storeKeepSteps: 90,
+  storeKeepSessions: 365,
+  storeKeepFeedback: 365,
+  storeKeepLessons: 180,
+  storeMaxMB: 200,
 };
 const LONG_STRINGS = { coworkDirs: 600, claudeDirs: 600, embedModel: 80, ollamaUrl: 200 };
 const i18n = require('../i18n');

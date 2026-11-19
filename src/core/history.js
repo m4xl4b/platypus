@@ -11,6 +11,7 @@ const { cmdCore, errorPattern } = require('./bottega');
 const { declareCollections } = require('./store/collections');
 const { ProjectKeys } = require('./store/project-key');
 const { importLegacy } = require('./store/legacy');
+const { retentionFromSettings } = require('./retention');
 
 const FLUSH_MS = 2000, FLUSH_DOCS = 500; // come la coda di sqlite.js: al massimo ogni 2 s, o a 500 documenti
 
@@ -24,7 +25,7 @@ class History {
     this.damaged = ''; // il controllo in background ha trovato un danno (vedi start)
     this.check = null;
     // la conservazione scelta nelle opzioni; se non ha senso valgono i tempi di partenza
-    try { declareCollections(this.store, { retention: settings.storeRetention || undefined }); }
+    try { declareCollections(this.store, { retention: retentionFromSettings(settings) }); }
     catch (e) { log('store: ' + e.message); declareCollections(this.store); }
     this.keys = new ProjectKeys({ store: this.store, clock });
     this.imported = null; // che cosa ha fatto il passaggio dei dati di prima (per le prove e per il registro)

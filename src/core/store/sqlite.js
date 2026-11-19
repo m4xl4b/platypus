@@ -335,6 +335,13 @@ class SqliteDriver {
     });
   }
 
+  // i byte che lo storico occupa davvero, senza le pagine libere (che il database riusa; le ridà al disco solo VACUUM)
+  usedBytes() {
+    this.flush();
+    const one = sql => Object.values(this.db.prepare(sql).get())[0];
+    return (one('PRAGMA page_count') - one('PRAGMA freelist_count')) * one('PRAGMA page_size');
+  }
+
   info() {
     let size = 0;
     for (const f of [this.file, this.file + '-wal']) { try { size += fs.statSync(f).size; } catch {} }
