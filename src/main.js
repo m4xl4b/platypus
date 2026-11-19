@@ -365,13 +365,25 @@ app.whenReady().then(async () => {
   createTray();
   if (process.env.PLATYPUS_SNAPSHOT) { // solo per test automatici
     setTimeout(async () => {
-      if (process.env.PLATYPUS_SNAPSHOT_JS) { await win.webContents.executeJavaScript(process.env.PLATYPUS_SNAPSHOT_JS); await new Promise(r => setTimeout(r, 1500)); }
-      if (process.env.PLATYPUS_DEBUG) console.log('[snapshot] bounds', JSON.stringify(win.getBounds()), 'onTop', win.isAlwaysOnTop());
-      let img = await win.webContents.capturePage();
-      // larghezza fissa (per le immagini dei documenti), indipendente dalla densità dello schermo
-      const sw = Number(process.env.PLATYPUS_SNAPSHOT_WIDTH);
-      if (sw > 0 && img.getSize().width !== sw) img = img.resize({ width: sw, quality: 'best' });
-      fs.writeFileSync(process.env.PLATYPUS_SNAPSHOT, img.toPNG());
+      try {
+        if (process.env.PLATYPUS_SNAPSHOT_JS) { await win.webContents.executeJavaScript(process.env.PLATYPUS_SNAPSHOT_JS); await new Promise(r => setTimeout(r, 1500)); }
+        if (process.env.PLATYPUS_DEBUG) console.log('[snapshot] bounds', JSON.stringify(win.getBounds()), 'onTop', win.isAlwaysOnTop());
+        // con xvfb (CI di Linux) capturePage a volte fallisce con UnknownVizError: si riprova qualche volta
+        let img;
+        for (let attempt = 1; !img; attempt++) {
+          try { img = await win.webContents.capturePage(); }
+          catch (e) { if (attempt >= 4) throw e; console.error('[snapshot] tentativo ' + attempt + ': ' + e.message); await new Promise(r => setTimeout(r, 2000)); }
+        }
+        // larghezza fissa (per le immagini dei documenti), indipendente dalla densità dello schermo
+        const sw = Number(process.env.PLATYPUS_SNAPSHOT_WIDTH);
+        if (sw > 0 && img.getSize().width !== sw) img = img.resize({ width: sw, quality: 'best' });
+        fs.writeFileSync(process.env.PLATYPUS_SNAPSHOT, img.toPNG());
+      } catch (e) {
+        // mai restare aperti: senza questo un errore lasciava la finestra viva fino al timeout della CI
+        console.error('[snapshot] non riuscito: ' + (e && e.message || e));
+        app.exit(1);
+        return;
+      }
       app.quit();
     }, Number(process.env.PLATYPUS_SNAPSHOT_DELAY) || 8000);
     return;
