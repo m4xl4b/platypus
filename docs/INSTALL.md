@@ -163,6 +163,8 @@ From 2.13 the Workshop book, the statistics and the log of the messages to the a
 
 So going back works: check out 2.12 and start it, and it reads its own files as they were when 2.13 first ran. What 2.13 learned after that stays in the database, where 2.12 does not look. If you return to 2.13 later, it carries on from its database: the old files are imported only once.
 
+One exception: when you use *Forget this project* in 2.13, the project is also removed from those 2.12 files and the backups next to the database (`platypus.db.bak-*`, `platypus.db.broken-*`, `legacy-<date>/`) are deleted, so 2.12 will not show it either.
+
 ## Special cases
 
 - **WSL**: on Windows the office also follows Claude Code inside *running* WSL distributions. Hooks inside WSL can't reach Windows' `127.0.0.1` unless WSL mirrored networking is on; without it, the office works from the transcripts. You can also run Platypus inside WSL (`./start.sh`, with WSLg).

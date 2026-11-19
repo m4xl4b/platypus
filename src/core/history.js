@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 const { openStoreSafe, fallbackReason, scrub } = require('./store');
 const { cmdCore, errorPattern } = require('./bottega');
+const { forgetIn } = require('./stats');
 const { declareCollections } = require('./store/collections');
 const { ProjectKeys } = require('./store/project-key');
 const { importLegacy } = require('./store/legacy');
@@ -135,7 +136,8 @@ class History {
   // state: lo stato dell'ufficio (le sessioni aperte del progetto), bottega e stats: quelli del motore.
   // Anche le copie di sicurezza accanto al database si cancellano, perché contengono anche quel progetto (deciso da Max il
   // 2026-11-19): platypus.db.bak-* (prima delle migrazioni), platypus.db.broken-* (database messi da parte) e
-  // legacy-*/ (la copia dei file della 2.12). Chi chiede conferma lo dice. I file della 2.12 al loro posto restano.
+  // legacy-*/ (la copia dei file della 2.12). E il progetto esce anche dai file della 2.12 al loro posto (deciso da Max lo
+  // stesso giorno): bottega/<chiave>.json, feedback/<chiave>[.1].jsonl e le sue voci in stats.json. Chi chiede conferma lo dice.
   forgetProject(key, { state = null, bottega = null, stats = null } = {}) {
     if (typeof key !== 'string' || !/^[0-9a-f]{16}$/.test(key)) return null;
     const keys = this.keys.allKeys(key);
@@ -162,6 +164,7 @@ class History {
     this.keys.forget(keys);
     try { removed.size = this.store.compact(); } catch (e) { this.log('store: ' + e.message); }
     removed.backups = this.deleteBackups();
+    removed.legacy = this.forgetLegacy(keys, { sessions, names });
     this.log(`store: progetto dimenticato (${removed.documents} documenti, ${removed.stats} voci delle statistiche)`);
     return removed;
   }
@@ -177,6 +180,30 @@ class History {
       catch (e) { this.log('store: non riesco a cancellare la copia ' + n + ' (' + e.message + ')'); }
     }
     return gone;
+  }
+
+  // ---- il progetto esce anche dai file della 2.12 (quelli che la 2.12 rilegge se si torna indietro).
+  // Le chiavi della 2.12 sono quelle delle cartelle: sono tra gli alias del progetto (o sono la sua chiave, senza remote)
+  forgetLegacy(keys, { sessions = new Set(), names = new Set() } = {}) {
+    const out = { files: [], statsEntries: 0 };
+    for (const k of keys) {
+      if (!/^[0-9a-f]{16}$/.test(k)) continue;
+      for (const rel of [path.join('bottega', k + '.json'), path.join('feedback', k + '.jsonl'), path.join('feedback', k + '.1.jsonl')]) {
+        const f = path.join(this.dir, rel);
+        try { if (fs.existsSync(f)) { fs.rmSync(f, { force: true }); out.files.push(rel.split(path.sep).join('/')); } }
+        catch (e) { this.log('store: non riesco a cancellare ' + rel + ' (' + e.message + ')'); }
+      }
+    }
+    // stats.json: le voci del progetto via, il resto com'era (scritto accanto e poi rinominato: mai un file a metà)
+    const sf = path.join(this.dir, 'stats.json');
+    try {
+      if (fs.existsSync(sf)) {
+        const data = JSON.parse(fs.readFileSync(sf, 'utf8'));
+        out.statsEntries = forgetIn(data, { sessions, names });
+        if (out.statsEntries) { fs.writeFileSync(sf + '.tmp', JSON.stringify(data)); fs.renameSync(sf + '.tmp', sf); }
+      }
+    } catch (e) { this.log('store: non riesco a togliere il progetto da stats.json (' + e.message + ')'); }
+    return out;
   }
 
   // ---- "Compatta": lo spazio libero torna al disco

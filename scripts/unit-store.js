@@ -984,6 +984,15 @@ async function forgetTests(ok) {
     fs.writeFileSync(path.join(dd, 'settings.json'), '{}');
     fs.writeFileSync(path.join(dd, 'platypus.db.bak-note.txt'), 'non è una copia');
     const backupsBefore = h.backups();
+    // i file della 2.12 al loro posto: quelli del progetto dimenticato se ne vanno, quelli dell'altro restano
+    fs.mkdirSync(path.join(dd, 'bottega'), { recursive: true }); fs.mkdirSync(path.join(dd, 'feedback'), { recursive: true });
+    fs.writeFileSync(path.join(dd, 'bottega', pathKey(A) + '.json'), JSON.stringify({ name: 'progetto-segreto', cwd: A, lessons: {} }));
+    fs.writeFileSync(path.join(dd, 'bottega', pathKey(B) + '.json'), JSON.stringify({ name: 'altro-lavoro', cwd: B, lessons: {} }));
+    fs.writeFileSync(path.join(dd, 'feedback', pathKey(A) + '.jsonl'), JSON.stringify({ id: '1', text: 'progetto-segreto' }) + '\n');
+    fs.writeFileSync(path.join(dd, 'feedback', pathKey(A) + '.1.jsonl'), JSON.stringify({ id: '0', text: 'progetto-segreto' }) + '\n');
+    fs.writeFileSync(path.join(dd, 'feedback', pathKey(B) + '.jsonl'), JSON.stringify({ id: '2', text: 'altro' }) + '\n');
+    fs.writeFileSync(path.join(dd, 'stats.json'), JSON.stringify({ days: { '2026-11-17': { projects: { 'progetto-segreto': { cost: 1, sessions: [sA.id] }, 'altro-lavoro': { cost: 2, sessions: [sB.id] } }, releases: [{ project: 'progetto-segreto', text: 'x' }, { project: 'altro-lavoro', text: 'y' }], alerts: 0 } },
+      weeks: {}, last: { [sA.id]: { name: 'progetto-segreto' }, [sB.id]: { name: 'altro-lavoro' } } }));
     const r = h.forgetProject(KA, { state, bottega, stats });
     const day = stats.data.days['2026-11-18'], stored = h.store.collection('daily').get('day:2026-11-18');
     ok(beforeA === 8 && r.documents === 8 && count(KA) === 0 && count(pathKey(A)) === 0 && h.store.collection('steps').count({ session: sA.id }) === 0 && count(KB) === beforeB && bottega.view(B).lessons.length === 1,
@@ -994,11 +1003,18 @@ async function forgetTests(ok) {
     ok(backupsBefore.join() === 'legacy-20261119,platypus.db.bak-1,platypus.db.broken-20261119-101010,platypus.db.broken-20261119-101010-wal' && r.backups.join() === backupsBefore.join() && h.backups().length === 0 &&
       fs.existsSync(path.join(dd, 'settings.json')) && fs.existsSync(path.join(dd, 'platypus.db.bak-note.txt')) && fs.existsSync(path.join(dd, 'platypus.db')),
       'dimentica: cancella anche le copie di sicurezza (prima delle migrazioni, database messi da parte, copia della 2.12); gli altri file restano');
+    const old = JSON.parse(fs.readFileSync(path.join(dd, 'stats.json'), 'utf8'));
+    ok(r.legacy.files.sort().join() === [`bottega/${pathKey(A)}.json`, `feedback/${pathKey(A)}.1.jsonl`, `feedback/${pathKey(A)}.jsonl`].sort().join() && r.legacy.statsEntries === 2 &&
+      fs.existsSync(path.join(dd, 'bottega', pathKey(B) + '.json')) && fs.existsSync(path.join(dd, 'feedback', pathKey(B) + '.jsonl')) &&
+      Object.keys(old.days['2026-11-17'].projects).join() === 'altro-lavoro' && old.days['2026-11-17'].releases.length === 1 && Object.keys(old.last).join() === sB.id && !fs.existsSync(path.join(dd, 'stats.json.tmp')),
+      'dimentica: il progetto esce anche dai file della 2.12 (il suo Libro, il suo registro, le sue voci in stats.json); quelli dell\'altro restano');
     stats.stop(); bottega.stop();
     let raw = '';
-    for (const f of fs.readdirSync(path.join(tmp, 'dati'))) if (f.startsWith('platypus.db')) raw += fs.readFileSync(path.join(tmp, 'dati', f)).toString('latin1');
+    // tutti i file della cartella dei dati, anche nelle sottocartelle: il database, il WAL, i file della 2.12
+    const walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else raw += fs.readFileSync(f).toString('latin1'); } };
+    walk(path.join(tmp, 'dati'));
     const leaks = [KA, pathKey(A), 'progetto-segreto', 'repo-segretissimo', 'e2e-segreto', 'segreto.ts', 'sess-segreta-1', A.replace(/\\/g, '/'), A].filter(x => raw.includes(x));
-    ok(leaks.length === 0 && raw.includes('altro-lavoro') && raw.includes('cargo test'), 'dimentica: nel file del database (e nel WAL) non c\'è più la chiave, la cartella, il nome, il remote né le lezioni del progetto' + (leaks.length ? ': ' + leaks.join(', ') : ''));
+    ok(leaks.length === 0 && raw.includes('altro-lavoro') && raw.includes('cargo test'), 'dimentica: in nessun file della cartella dei dati (database, WAL, file della 2.12) c\'è più la chiave, la cartella, il nome, il remote né le lezioni del progetto' + (leaks.length ? ': ' + leaks.join(', ') : ''));
     // dopo, il progetto può ricominciare da capo
     const b2 = new Bottega({ store: h.store, keys: h.keys, log() {} });
     b2.learn(A, [c('loop-trap', 'make', 'sess-nuova')]);

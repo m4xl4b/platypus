@@ -189,17 +189,7 @@ class Stats {
   // contengono una sessione del progetto (o, senza sessioni, che hanno uno dei suoi nomi), con i rilasci di quel
   // nome in quel giorno, e l'ultimo stato delle sue sessioni. Restituisce quante voci ha tolto
   forget({ sessions = new Set(), names = new Set() } = {}) {
-    let n = 0;
-    for (const d of Object.values(this.data.days)) {
-      for (const [name, p] of Object.entries(d.projects || {})) {
-        const ss = p.sessions || [];
-        if (!(ss.some(x => sessions.has(x)) || (!ss.length && names.has(name)))) continue;
-        delete d.projects[name];
-        d.releases = (d.releases || []).filter(r => r.project !== name);
-        n++;
-      }
-    }
-    for (const [sid, v] of Object.entries(this.data.last)) if (sessions.has(sid) || (v && names.has(v.name))) { delete this.data.last[sid]; n++; }
+    const n = forgetIn(this.data, { sessions, names });
     if (n) { this.dirty = true; this.save(); }
     return n;
   }
@@ -244,6 +234,24 @@ class Stats {
   }
 }
 
+// toglie un progetto da dati con la forma di stats.json ({ days, weeks, last }): le voci dei giorni che contengono una
+// sua sessione (o, senza sessioni, che hanno uno dei suoi nomi), i rilasci di quel nome in quel giorno, l'ultimo stato
+// delle sue sessioni. Restituisce quante voci ha tolto. La usano Stats.forget e "Dimentica" sullo stats.json della 2.12
+function forgetIn(data, { sessions = new Set(), names = new Set() } = {}) {
+  let n = 0;
+  for (const d of Object.values((data && data.days) || {})) {
+    for (const [name, p] of Object.entries((d && d.projects) || {})) {
+      const ss = (p && p.sessions) || [];
+      if (!(ss.some(x => sessions.has(x)) || (!ss.length && names.has(name)))) continue;
+      delete d.projects[name];
+      d.releases = (d.releases || []).filter(r => r.project !== name);
+      n++;
+    }
+  }
+  for (const [sid, v] of Object.entries((data && data.last) || {})) if (sessions.has(sid) || (v && names.has(v.name))) { delete data.last[sid]; n++; }
+  return n;
+}
+
 // dati finti per la demo, così il grafico non è vuoto
 function demoHistory(days) {
   const out = [];
@@ -269,4 +277,4 @@ function demoWeek(state) {
   return w;
 }
 
-module.exports = { Stats, dayKey, weekKey };
+module.exports = { Stats, dayKey, weekKey, forgetIn };

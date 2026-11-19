@@ -211,6 +211,8 @@ Dalla 2.13 il Libro della bottega, le statistiche e il registro dei messaggi agl
 
 Quindi tornare indietro funziona: rimetti la 2.12 e avviala, e rilegge i suoi file com'erano quando la 2.13 è partita la prima volta. Quello che la 2.13 ha imparato dopo resta nel database, dove la 2.12 non guarda. Se poi torni alla 2.13, riprende dal suo database: i vecchi file si importano una volta sola.
 
+Un'eccezione: quando nella 2.13 usi *Dimentica questo progetto*, il progetto viene tolto anche da quei file della 2.12 e le copie di sicurezza accanto al database (`platypus.db.bak-*`, `platypus.db.broken-*`, `legacy-<data>/`) vengono cancellate, quindi nemmeno la 2.12 lo mostrerà più.
+
 ## Casi particolari
 
 ### WSL (Claude Code dentro Linux su Windows)
