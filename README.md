@@ -30,6 +30,7 @@ What's new in each version is in [CHANGELOG.md](CHANGELOG.md).
 | ![The lobby with the board](docs/img/atrio.png) | ![Permissions from the balloon](docs/img/permesso.png) |
 | ![Map of reality](docs/img/mappa.png) | ![Context bubble and north star](docs/img/bolla-stella.png) |
 | ![Map versus territory](docs/img/mappa-territorio.png) | ![Grandpa tells a lesson from the Workshop book](docs/img/nonno.png) |
+| ![A missed fear: Grandpa and the DANGER stamp on the desk](docs/img/paura.png) | |
 
 ## Quick start
 

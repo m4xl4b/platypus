@@ -30,6 +30,7 @@ Le novità di ogni versione sono in [CHANGELOG.it.md](CHANGELOG.it.md).
 | ![L'atrio con il tabellone](docs/img/atrio.png) | ![Permessi dal fumetto](docs/img/permesso.png) |
 | ![Mappa della realtà](docs/img/mappa.png) | ![Bolla del contesto e stella polare](docs/img/bolla-stella.png) |
 | ![Mappa contro territorio](docs/img/mappa-territorio.png) | ![Il Nonno racconta una lezione del Libro della bottega](docs/img/nonno.png) |
+| ![Una paura mancata: il Nonno e il timbro PERICOLO sulla scrivania](docs/img/paura.png) | |
 
 ## Avvio rapido
 
