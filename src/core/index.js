@@ -50,6 +50,7 @@ const { Demo } = require('./demo');
 const { listArchive, findSessionFile, Replay } = require('./archive');
 const osint = require('./osint');
 const { Stats } = require('./stats');
+const { History } = require('./history');
 const hooks = require('./hooks');
 const feedback = require('./feedback');
 const { FeedbackLog, MemoryFeedbackLog } = require('./feedbacklog');
@@ -73,6 +74,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const initialSettings = loadSettings(settingsPath);
   i18n.setLang(i18n.resolveLang(initialSettings.lang, osLocale));
   const state = new OfficeState({ settings: initialSettings });
+  // lo storico (store): accanto alle opzioni, in platypus.db. Se non si apre si va avanti in memoria e l'ufficio lo dice
+  const history = new History({ dir: path.dirname(settingsPath), settings: initialSettings });
   const stats = new Stats(state, statsPath || path.join(path.dirname(settingsPath), 'stats.json'));
   const bottega = new Bottega(bottegaDir || path.join(path.dirname(settingsPath), 'bottega'));
   // le notifiche (attese, avvisi, report): le decide il motore, le mostra la shell
@@ -343,6 +346,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     feedbackSaid = feedbackSaid.filter(x => nowMs - x.t < SAID_MS);
     snap.feedback = feedbackSaid;
     snap.replay = replay ? { key: replay.key } : null;
+    snap.history = history.info();
     return 'data: ' + JSON.stringify(snap) + '\n\n';
   }
   function broadcast(text) { for (const c of clients) c.write(text); }
@@ -615,7 +619,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       return;
     }
     if (url.pathname === '/api/shell/events') return notifier.attach(req, res);
-    if (url.pathname === '/api/state') return json(res, 200, state.snapshot());
+    if (url.pathname === '/api/state') return json(res, 200, { ...state.snapshot(), history: history.info() });
     if (url.pathname === '/i18n.js') { // traduzioni per la pagina (la lingua scelta nelle opzioni)
       const lang = i18n.getLang();
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
@@ -684,6 +688,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     });
   });
 
+  let historyReady = Promise.resolve(null);
   const ready = new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', () => {
@@ -694,6 +699,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       scanExtraClaude().catch(() => {});
       // hook di una versione precedente (senza approvazione dall'ufficio): aggiornali
       try { if (hooks.status({ base }) && hooks.outdated({ base })) hooks.install({ port, base }); } catch {}
+      // i dati della 2.12 entrano nello storico la prima volta, senza far aspettare l'ufficio
+      historyReady = history.start().catch(() => null);
       resolve({ port });
     });
   });
@@ -716,11 +723,12 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     bottega.stop();
     embedder.stop();
     state.stop();
+    history.stop(); // per ultimo: statistiche, Libro e registro hanno appena salvato
     for (const c of clients) try { c.end(); } catch {}
     server.close();
   }
 
-  return { state, stats, notify: notifier, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
+  return { state, history, historyReady: () => historyReady, stats, notify: notifier, bottega, embedder, learnLive, feedbackStats, feedbackLog, feedbackGate, feedbackSaid: () => feedbackSaid.slice(), judgeFeedback, feedbackPending, demo, server, ready, stop, port, base: base || claudeDir(), hooks: {
     install: () => hooks.install({ port, base }),
     uninstall: () => hooks.uninstall({ base }),
     status: () => hooks.status({ base }),

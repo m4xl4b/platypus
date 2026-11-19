@@ -98,10 +98,23 @@ function connect() {
     lastPayload = key;
     try { snap = JSON.parse(ev.data); } catch { return; }
     if (snap.lang && snap.lang !== LANG) { location.reload(); return; } // lingua cambiata nelle opzioni
+    storeNotice(snap.history && snap.history.notice);
     reconcile();
   };
   es.addEventListener('replay', ev => { let d = null; try { d = JSON.parse(ev.data); } catch {} onReplayFrame(d); });
   es.onerror = () => { $('#offline').hidden = false; };
+}
+
+// lo storico non è disponibile (il database non si apre): l'avviso resta finché non lo si chiude con un clic,
+// e torna se il motivo cambia. L'ufficio intanto funziona come sempre
+function storeNotice(text) {
+  const el = $('#storenotice');
+  if (!text) { el.hidden = true; storeNotice.closed = ''; return; }
+  if (storeNotice.closed === text) return;
+  el.textContent = text;
+  el.title = tr('Clic per chiudere');
+  el.hidden = false;
+  el.onclick = () => { storeNotice.closed = text; el.hidden = true; };
 }
 
 function sessions() { return snap ? snap.sessions : []; }

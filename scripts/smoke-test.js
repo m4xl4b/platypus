@@ -140,6 +140,31 @@ if (!process.env.PLATYPUS_STORE_GUARD) process.env.PLATYPUS_STORE_GUARD = 'rejec
   await sleep(2500);
   const st = JSON.parse((await get(port, '/api/state')).body);
   ok(st.sessions.length >= 4, `demo: ${st.sessions.length} piani, ${st.sessions.reduce((a, s) => a + s.subs.length, 0)} sottoagenti`);
+  // lo storico: il motore apre il database accanto alle opzioni e lo dice nello stato (S9 di docs/plans/2.13-storage.md)
+  const hist0 = await core.historyReady(), sse0 = await sseFirst(port);
+  ok(st.history && st.history.backend === 'sqlite' && st.history.notice === '' && sse0.history && sse0.history.notice === '' && fs.existsSync(path.join(tmp, 'platypus.db')) && hist0 && hist0.done === true && core.history.store.info().collections.length === 7,
+    'storico: il motore apre platypus.db accanto alle opzioni, con le sue sette collezioni, e non ha avvisi da dare');
+  {
+    // un database rovinato non ferma niente: l'ufficio parte lo stesso e lo dice
+    const tmpBad = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-rotto-'));
+    fs.mkdirSync(path.join(tmpBad, 'claude', 'projects'), { recursive: true });
+    fs.writeFileSync(path.join(tmpBad, 'settings.json'), JSON.stringify({ embedEngine: 'tfidf', lang: 'en' }));
+    fs.writeFileSync(path.join(tmpBad, 'platypus.db'), require('crypto').randomBytes(9000));
+    const portBad = port + 100;
+    const i18nBad = require(path.join(ROOT, 'src', 'i18n')), langWas = i18nBad.getLang();
+    const prevErr = console.error; console.error = () => {}; // il motore lo scrive anche nel registro: qui non serve
+    let stBad = {}, sseBad = {}, coreBad = null;
+    try {
+      coreBad = startCore({ port: portBad, base: path.join(tmpBad, 'claude'), includeCowork: false, settingsPath: path.join(tmpBad, 'settings.json'), fetch: async () => { throw new Error('offline'); } });
+      await coreBad.ready;
+      stBad = JSON.parse((await get(portBad, '/api/state')).body); sseBad = await sseFirst(portBad);
+    } finally { console.error = prevErr; if (coreBad) coreBad.stop(); }
+    const aside = fs.readdirSync(tmpBad).filter(n => n.startsWith('platypus.db.broken-'));
+    ok(stBad.history && stBad.history.backend === 'memory' && /^history not available: the database was damaged: I set it aside as platypus\.db\.broken-\d{8}-\d{6}$/.test(stBad.history.notice) && sseBad.history && sseBad.history.notice === stBad.history.notice &&
+      aside.length === 1 && !fs.existsSync(path.join(tmpBad, 'platypus.db')) && Array.isArray(stBad.sessions), 'storico: con un database rovinato l\'ufficio parte lo stesso, lo mette da parte e lo dice nello stato («history not available: …»)');
+    i18nBad.setLang(langWas); // il secondo motore ha cambiato lingua: si torna a quella delle prove
+    fs.rmSync(tmpBad, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
   const sid = st.sessions[0].id;
   const wfs = st.sessions.flatMap(s => s.workflows || []);
   const live = wfs.find(r => r.name === 'policy-review'), past = wfs.find(r => r.name === 'gap-analysis');

@@ -212,6 +212,11 @@ body.app .win { display: flex; }
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%); font-family: 'PS2P'; font-size: 10px;
   background: var(--red); padding: 6px 10px; box-shadow: 3px 3px 0 #000;
 }
+/* lo storico non è disponibile (il database non si apre): un avviso che resta finché non lo si chiude */
+#storenotice {
+  position: absolute; top: 38px; left: 50%; transform: translateX(-50%); max-width: 80%; font-family: 'PS2P'; font-size: 9px; line-height: 1.6;
+  background: var(--yellow); color: #000; padding: 6px 10px; box-shadow: 3px 3px 0 #000; cursor: pointer; z-index: 5;
+}
 
 /* scheda dettagli */
 #info {
