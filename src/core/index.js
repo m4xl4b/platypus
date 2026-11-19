@@ -84,7 +84,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const history = new History({ dir: path.dirname(settingsPath), settings: initialSettings });
   // ogni azione finita diventa un passo nello storico; i riassunti delle sessioni ogni minuto e alla chiusura
   state.on('step', (s, a, step) => { try { history.recordStep(s, a, step); } catch {} });
-  state.on('risk', (s, a, step) => { try { history.recordRisk(s, a, step); } catch {} }); // le azioni rischiose (2.14)
+  state.on('risk', (s, a, step) => { try { history.recordRisk(s, a, step, displayName(a)); } catch {} }); // le azioni rischiose (2.14)
   const summaryTimer = setInterval(() => { try { history.summarize(state, { counts: sessionCounts }); } catch {} }, 60000);
   summaryTimer.unref && summaryTimer.unref();
   const stats = new Stats(state, { store: history.store }); // nello storico, collezione daily
@@ -107,7 +107,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       if (!s.cwd) continue;
       // le cicatrici (2.14): il danno visto dopo un'azione rischiosa va sul passo (anche nella demo, per l'ufficio)
       // e nel suo evento nello storico (la demo non scrive: recordRisk la salta). Vale anche se il Libro non impara
-      try { const agents = agentsOf(s); for (const sc of fear.markScars(s, agents)) history.recordRisk(s, { id: sc.agent }, sc.step); } catch {}
+      try { const agents = agentsOf(s); for (const sc of fear.markScars(s, agents)) history.recordRisk(s, { id: sc.agent }, sc.step, sc.agentName); } catch {}
       if (s.demo || !learning) continue;
       try { const agents = agentsOf(s); if (agents.length) n += bottega.learn(s.cwd, digest(s, agents)); } catch {}
       const key = projectKey(s.cwd);
@@ -453,7 +453,10 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     const claims = grounding.checkClaims(s, agents, s.cwd).claims.filter(c => c.status === 'ungrounded').length;
     let lessons = 0;
     try { lessons = history.store.collection('feedback').count({ sid: s.id, mode: 'on', lessonId: { $exists: true } }); } catch {}
-    return { surprises: sp.length, loops: loops.size, stuck, flaky, claims, stale: g.stale.length + g.blindEdits.length, lessons };
+    // la paura (2.14, R9): azioni di livello 2 o più, paure mancate, danni (dai passi già segnati dal motore)
+    let risky = 0, missedF = 0, scarsN = 0;
+    for (const a of agents) for (const st of a.world.steps) { const r = st.risk; if (!r || r.level < 2) continue; risky++; if (r.missed) missedF++; if (r.outcome === 'damage') scarsN++; }
+    return { surprises: sp.length, loops: loops.size, stuck, flaky, claims, stale: g.stale.length + g.blindEdits.length, lessons, risky_actions: risky, missed_fears: missedF, scars: scarsN };
   }
 
   // gli agenti di una sessione con la loro mappa, per grounding.js, surprise.js e bottega.js
@@ -760,6 +763,18 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         return json(res, 200, { ok: true, demo: sc.demo, ...r });
       } catch (e) { return json(res, e.code === 'bad-query' ? 400 : 200, { ok: false, error: e.message }); }
     }
+    // la scheda PAURE E CICATRICI del Libro (2.14, R9): livelli e regole degli ultimi 90 giorni, gli eventi recenti
+    if (url.pathname === '/api/fear') {
+      try {
+        history.flush();
+        const q = Object.fromEntries(url.searchParams);
+        if (q.project && !q.key) q.key = q.project; // come /api/risks
+        const sc = historyScope(q);
+        if (!sc) return json(res, 404, { ok: false });
+        if (!sc.store) return json(res, 200, { ok: true, demo: true, ...fear.summary(null, {}) });
+        return json(res, 200, { ok: true, demo: sc.demo, ...fear.summary(sc.store, { projects: sc.projects, now: Date.now() }) });
+      } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+    }
     // le azioni rischiose salvate (2.14): per il progetto (sid, cwd, key o project) o per tutti; session, from, to, missed=1
     if (url.pathname === '/api/risks') {
       try {
@@ -836,6 +851,9 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         const ds = demoHistory();
         r.trend = historyQuery.reportTrend(ds || history.store, Math.min(Date.now(), end.getTime() - 1));
         if (ds) r.trend.demo = true;
+        // la paura (2.14, R9): le paure mancate per agente e le cicatrici del giorno
+        r.fear = fear.reportDay(ds || history.store, end.getTime() - 86400000, end.getTime());
+        if (ds) r.fear.demo = true;
       } catch { r.trend = null; }
       return json(res, 200, r);
     }

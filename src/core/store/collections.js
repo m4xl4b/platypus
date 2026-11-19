@@ -60,6 +60,7 @@ const COLLECTIONS = {
       end: 'number', kind: 'string', model: 'string', effort: 'string', agents: 'number',
       actions: 'number', errors: 'number', surprises: 'number', claims: 'number', loops: 'number', stale: 'number', lessons: 'number',
       stuck: 'number', flaky: 'number', // fasi bloccate e comandi instabili (S12)
+      risky_actions: 'number', missed_fears: 'number', scars: 'number', // la paura (2.14, R9): azioni di livello 2+, paure mancate, danni
       cost: 'number', tokens: 'number',
     },
     indexes: [['project', 't']],
@@ -87,7 +88,7 @@ const COLLECTIONS = {
     // _id: "<sessione>:<id dell'azione>", come i passi; t: quando l'azione è cominciata (2.14, fear.js)
     // Del comando resta la forma fissa della regola ("git reset --hard <ref>"), mai gli argomenti; target è relativo al progetto
     fields: {
-      session: 'id', agent: 'string', tool: 'string', ruleIds: ['string'], level: 'number',
+      session: 'id', agent: 'string', name: 'string', tool: 'string', ruleIds: ['string'], level: 'number', // name: come l'agente si chiama in ufficio (R9)
       prudence: 'number', present: ['string'], missing: ['string'], missed: 'boolean', // missed: paura mancata (livello 2+ senza abbastanza prudenza)
       shape: 'excerpt', target: 'path',
       outcome: 'string', evidence: ['id'], at: 'number', // com'è finita: lo scrive chi guarda dopo (le cicatrici, R4)

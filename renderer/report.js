@@ -24,6 +24,21 @@ function trendLine(tr0) {
   return tr('Tendenza della settimana, tutti i progetti (ultime 4 settimane contro le 4 prima, {a} e {b} sessioni): {list}.', { a: tr0.recent, b: tr0.before, list: parts.join(', ') }) + (tr0.demo ? ' ' + tr('(dati finti della demo)') : '');
 }
 
+// la paura (2.14): le paure mancate per agente e le cicatrici del giorno
+function fearLines(f) {
+  if (!f || (!f.total && !f.scars.length)) return [];
+  const out = [tr('Paure mancate: {n} su {t} azioni rischiose', { n: f.missed, t: f.total }) + (f.byAgent.length ? ' (' + f.byAgent.map(a => a.name + ' ' + a.n).join(', ') + ')' : '') + (f.demo ? ' ' + tr('(dati finti della demo)') : '')];
+  for (const s of f.scars) out.push('- ' + tr('Cicatrice {time}: {name} · {project} · {what}', { time: hhmm(s.t), name: s.name, project: s.project || '?', what: s.shape + (s.target ? ' → ' + s.target : '') }));
+  return out;
+}
+function fearHtml(f) {
+  if (!f || (!f.total && !f.scars.length)) return `<div class="empty">${esc(tr('Nessuna azione rischiosa in questo giorno.'))}</div>`;
+  return `<p>${esc(tr('Paure mancate: {n} su {t} azioni rischiose (livello 2 o più).', { n: f.missed, t: f.total }))}${f.demo ? ' <span class="dim">' + esc(tr('(dati finti della demo)')) + '</span>' : ''}</p>` +
+    (f.byAgent.length ? `<table><thead><tr><th>${esc(tr('AGENTE'))}</th><th>${esc(tr('PAURE MANCATE'))}</th></tr></thead><tbody>${f.byAgent.map(a => `<tr><td>${esc(a.name)}</td><td class="n">${a.n}</td></tr>`).join('')}</tbody></table>` : '') +
+    (f.scars.length ? `<ul class="rel">${f.scars.map(s => `<li><i class="k-scar">${esc(tr('CICATRICE'))}</i>${hhmm(s.t)} · <b>${esc(s.project || '?')}</b> · ${esc(s.name)} · <code>${esc(s.shape)}</code>${s.target ? ' → ' + esc(s.target) : ''} <span class="dim">${esc(s.reason)}</span></li>`).join('')}</ul>` : '') +
+    `<p class="dim">${esc(tr('Riconosciute da schemi noti: probabili, non certe. Platypus non è una protezione.'))}</p>`;
+}
+
 function text() {
   if (!data) return '';
   const t = data.totals;
@@ -31,6 +46,8 @@ function text() {
     tr('Costo: {cost} · Token: {tokens} · Sessioni: {sessions} · Sottoagenti conclusi: {completed}', { cost: money(t.cost), tokens: tok(t.tokens), sessions: t.sessions, completed: t.completed }),
     tr('Commit: {commits} · PR: {prs} · Avvisi: {alerts}', { commits: t.commits, prs: t.prs, alerts: t.alerts }), ...(data.trend ? [trendLine(data.trend)] : []), '', tr('Per progetto:')];
   for (const p of data.projects) lines.push('- ' + tr('{name}: {cost}, {completed} sottoagenti, {commits} commit, {prs} PR', { name: p.name, cost: money(p.cost), completed: p.completed, commits: p.commits, prs: p.prs }));
+  const fl = fearLines(data.fear);
+  if (fl.length) lines.push('', ...fl);
   if (data.releases.length) { lines.push('', tr('Rilasci:')); for (const r of data.releases) lines.push(`- ${hhmm(r.t)} [${r.project}] ${r.text}${r.url ? ' ' + r.url : ''}`); }
   const h = data.honors;
   if (h.employee) lines.push('', tr('Dipendente della settimana: {type} ({n} compiti)', { type: h.employee.type, n: h.employee.completed }));
@@ -57,6 +74,7 @@ async function load(day) {
     (data.projects.length ? `<table><thead><tr><th>${esc(tr('PROGETTO'))}</th><th></th><th>${esc(tr('COSTO'))}</th><th>${esc(tr('TOKEN'))}</th><th>${esc(tr('SESSIONI'))}</th><th>${esc(tr('SOTTOAG.'))}</th><th>${esc(tr('COMMIT'))}</th><th>PR</th></tr></thead><tbody>` +
       data.projects.map(p => `<tr><td>${esc(p.name)}</td><td><span class="tag" style="color:${p.wing === 'cowork' ? '#ffec27' : '#00e436'}">${p.wing === 'cowork' ? 'COWORK' : 'CODE'}</span></td><td class="n">${money(p.cost)}</td><td class="n">${tok(p.tokens)}</td><td class="n">${p.sessions}</td><td class="n">${p.completed}</td><td class="n">${p.commits}</td><td class="n">${p.prs}</td></tr>`).join('') + '</tbody></table>'
       : `<div class="empty">${esc(tr('Nessuna attività registrata in questo giorno (le statistiche partono da quando l\'ufficio è aperto).'))}</div>`) +
+    `<h2>${esc(tr('PAURE E CICATRICI'))}</h2>` + fearHtml(data.fear) +
     `<h2>${esc(tr('RILASCI E TEST'))}</h2>` +
     (data.releases.length ? `<ul class="rel">${data.releases.slice().reverse().map(r => `<li><i class="k-${esc(r.kind)}">${esc(KIND[r.kind] || r.kind)}</i>${hhmm(r.t)} · <b>${esc(r.project)}</b> · ${esc(r.text)} <span class="dim">(${esc(r.agent)})</span>${r.url ? ` <a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(tr('apri'))}</a>` : ''}</li>`).join('')}</ul>` : `<div class="empty">${esc(tr('Nessun commit, PR o test verde.'))}</div>`) +
     `<h2>${esc(tr('ONORI DELLA SETTIMANA {week}', { week: h.week }))}</h2><div class="honors">` +

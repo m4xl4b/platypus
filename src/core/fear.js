@@ -172,4 +172,52 @@ function permissionLine(p) {
   return parts.join(' ');
 }
 
-module.exports = { permissionView, permissionLine, fearOf, fearView, queryRisks, scars, markScars, lastGoal, MAX_LIMIT, SCAR_WINDOW, FRESH_MS };
+// ---- R9 · per il Libro: gli eventi degli ultimi `days` giorni, per livello e per regola, e i più recenti
+const SUMMARY_DAYS = 90;
+function summary(store, { projects = null, now = Date.now(), days = SUMMARY_DAYS } = {}) {
+  const out = { days, total: 0, missed: 0, damage: 0, levels: { 1: 0, 2: 0, 3: 0 }, rules: [], recent: [] };
+  if (!store) return out;
+  const from = now - days * 86400000;
+  const where = { t: { $gte: from } };
+  if (projects) where.project = { $in: projects };
+  const by = new Map();
+  for (const r of store.collection('risks').find(where, { fields: ['ruleIds', 'level', 'missed', 'outcome'] })) {
+    out.total++;
+    if (r.level >= 1 && r.level <= 3) out.levels[r.level]++;
+    if (r.missed) out.missed++;
+    if (r.outcome === 'damage') out.damage++;
+    const id = (r.ruleIds || [])[0];
+    if (!id || !RULES[id]) continue;
+    const x = by.get(id) || { id, level: RULES[id].level, count: 0, missed: 0, damage: 0 };
+    x.count++; if (r.missed) x.missed++; if (r.outcome === 'damage') x.damage++;
+    by.set(id, x);
+  }
+  out.rules = [...by.values()].sort((a, b) => (b.level - a.level) || (b.count - a.count)).map(x => ({ ...x, text: RULES[x.id].text(), shape: RULES[x.id].shape }));
+  out.recent = queryRisks(store, { projects, from, limit: 20 });
+  return out;
+}
+// ---- R9 · per il report del giorno: le paure mancate per agente, e le cicatrici (con il progetto per nome)
+function reportDay(store, from, to) {
+  const out = { total: 0, missed: 0, byAgent: [], scars: [] };
+  if (!store) return out;
+  const names = new Map();
+  const projectName = key => { if (!names.has(key)) { let n = ''; try { const p = store.collection('projects').get(key); n = (p && p.name) || ''; } catch {} names.set(key, n); } return names.get(key); };
+  const by = new Map();
+  for (const r of store.collection('risks').find({ t: { $gte: from, $lt: to } }, { fields: ['agent', 'name', 'missed', 'level'] })) {
+    if (!(r.level >= 2)) continue;
+    out.total++;
+    if (!r.missed) continue;
+    out.missed++;
+    const who = r.name || (r.agent === 'main' ? 'Claude' : r.agent || '?');
+    by.set(who, (by.get(who) || 0) + 1);
+  }
+  out.byAgent = [...by.entries()].map(([name, n]) => ({ name, n })).sort((a, b) => b.n - a.n).slice(0, 10);
+  // le cicatrici del giorno: il danno visto quel giorno (at), anche se l'azione era del giorno prima
+  for (const r of store.collection('risks').find({ outcome: 'damage', at: { $gte: from, $lt: to } }, { sort: { at: 1 }, limit: 20 })) {
+    const top = RULES[(r.ruleIds || [])[0]];
+    out.scars.push({ t: r.at, name: r.name || (r.agent === 'main' ? 'Claude' : r.agent || '?'), project: projectName(r.project), shape: r.shape || (top ? top.shape : ''), target: r.target || '', reason: top ? top.text() : '' });
+  }
+  return out;
+}
+
+module.exports = { summary, reportDay, SUMMARY_DAYS, permissionView, permissionLine, fearOf, fearView, queryRisks, scars, markScars, lastGoal, MAX_LIMIT, SCAR_WINDOW, FRESH_MS };

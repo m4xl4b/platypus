@@ -11,9 +11,9 @@
 
 const DAY = 86400000;
 // le metriche: per sessione (dai riassunti), e il feedback (dai messaggi). "più è basso, meglio è" per tutte tranne lessons
-const SESSION_METRICS = ['loops', 'stuck', 'surprises', 'flaky', 'claims', 'stale', 'lessons', 'errors', 'actions', 'cost'];
+const SESSION_METRICS = ['loops', 'stuck', 'surprises', 'flaky', 'claims', 'stale', 'lessons', 'errors', 'actions', 'cost', 'risky_actions', 'missed_fears', 'scars'];
 const METRICS = [...SESSION_METRICS, 'feedback'];
-const LOWER_IS_BETTER = new Set(['loops', 'stuck', 'surprises', 'flaky', 'claims', 'stale', 'errors']);
+const LOWER_IS_BETTER = new Set(['loops', 'stuck', 'surprises', 'flaky', 'claims', 'stale', 'errors', 'risky_actions', 'missed_fears', 'scars']);
 const MIN_SESSIONS = 5;   // per ognuna delle due parti del confronto
 const WINDOW_WEEKS = 4;
 const MAX_RANGE = 2 * 366 * DAY;

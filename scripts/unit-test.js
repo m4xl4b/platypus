@@ -931,7 +931,7 @@ async function scarTests(ok) {
     x.bash('b2', 'rm -rf data/export', 'ok');
     x.read('b3', 'data/export/report.csv', 'File does not exist.', true);
     let sc = fear.scars(x.s, x.agents);
-    ok(sc.length === 1 && sc[0].step.id === 'b2' && sc[0].signs.includes('ghost') && sc[0].signs.includes('error') && sc[0].evidence.join() === 'b3' && sc[0].key === 'rm -r <percorso> → data/export' && !sc[0].probable,
+    ok(sc.length === 1 && sc[0].step.id === 'b2' && sc[0].signs.includes('ghost') && sc[0].signs.includes('error') && sc[0].evidence.join() === 'b3' && sc[0].key === 'rm -r <path> → data/export' && !sc[0].probable,
       'cicatrici: dopo rm -rf un file già letto non c\'è più e la lettura fallisce → danno, con il passo come prova');
     // un file mai visto prima che "non esiste" non è un danno di questa azione
     x = session(); stops.push(x.st);
@@ -1021,12 +1021,12 @@ async function scarTests(ok) {
       const book = new bt.Bottega({});
       const cases = bt.digest(x.s, x.agents);
       const scase = cases.find(c => c.kind === 'scar');
-      ok(scase && scase.key === 'rm -r <percorso> → data/export' && scase.excerpt === 'backup,asked', 'cicatrici: il caso per il Libro ha la forma, il bersaglio e le prudenze mancate (aveva guardato: manca la copia e la richiesta)');
+      ok(scase && scase.key === 'rm -r <path> → data/export' && scase.excerpt === 'backup,asked', 'cicatrici: il caso per il Libro ha la forma, il bersaglio e le prudenze mancate (aveva guardato: manca la copia e la richiesta)');
       book.learn(cwd, cases);
       book.learn(cwd, bt.digest(x.s, x.agents)); // riletto ogni minuto: non conta due volte
       const now = x.step('k1').t + 60000;
       const lesson = book.view(cwd, now).lessons.find(l => l.kind === 'scar');
-      ok(lesson && lesson.count === 1 && lesson.level === 'lesson' && /Cicatrice: rm -r <percorso> su data\/export/.test(lesson.title) && /probabile/.test(lesson.detail) && /prima: fai un commit o una copia e chiedi all'utente\./.test(lesson.detail), 'cicatrici: nel Libro è una lezione dal primo caso, con il consiglio: ' + (lesson && lesson.title));
+      ok(lesson && lesson.count === 1 && lesson.level === 'lesson' && /Cicatrice: rm -r <path> su data\/export/.test(lesson.title) && /probabile/.test(lesson.detail) && /prima: fai un commit o una copia e chiedi all'utente\./.test(lesson.detail), 'cicatrici: nel Libro è una lezione dal primo caso, con il consiglio: ' + (lesson && lesson.title));
       // decade più piano: dopo 60 giorni una cicatrice è ancora una lezione, una lezione normale con lo stesso peso no
       const DAY = 86400000, L = (kind, count) => ({ kind, key: 'k', count, sessions: ['s'], last: 0, pinned: false });
       ok(Math.abs(bt.weightOf(L('scar', 1), 90 * DAY) - 0.5) < 1e-9 && Math.abs(bt.weightOf(L('ghost-path', 1), 30 * DAY) - 0.5) < 1e-9 && bt.SCAR_HALF_LIFE === 90 * DAY, 'cicatrici: il peso si dimezza in 90 giorni invece di 30');
@@ -1038,14 +1038,14 @@ async function scarTests(ok) {
       y.use('n1', 'Bash', { command: 'rm -rf data/export' });
       const lessons = book.view(cwd, y.step('n1').t).lessons.concat([{ id: 'zz', kind: 'slow-step', key: 'rm -rf data/export', level: 'lesson', weight: 99, evidence: [{ t: 0, agent: 'A' }], count: 3 }]);
       const hint = bt.hints(y.s, y.agents, lessons, y.step('n1').t + 1000);
-      ok(hint.length === 1 && hint[0].kind === 'scar' && /Qui rm -r <percorso> ha già distrutto del lavoro su data\/export/.test(hint[0].text) && /Stavolta, prima: fai un commit o una copia/.test(hint[0].text), 'Nonno: racconta la cicatrice, e prima di una lezione più pesante: ' + (hint[0] && hint[0].text));
+      ok(hint.length === 1 && hint[0].kind === 'scar' && /Qui rm -r <path> ha già distrutto del lavoro su data\/export/.test(hint[0].text) && /Stavolta, prima: fai un commit o una copia/.test(hint[0].text), 'Nonno: racconta la cicatrice, e prima di una lezione più pesante: ' + (hint[0] && hint[0].text));
       const z = session(); stops.push(z.st);
       z.say('pulisci');
       z.use('o1', 'Bash', { command: 'rm -rf data/other' });
       ok(bt.hints(z.s, z.agents, book.view(cwd, z.step('o1').t).lessons, z.step('o1').t + 1000).length === 0, 'Nonno: la cicatrice su un\'altra cartella non c\'entra');
       // le righe per il CLAUDE.md e per l'inizio sessione: la cicatrice prima, e in inglese
       const lines = bt.lessonLines(lessons.map(l => ({ ...l, pinned: !!l.pinned })));
-      ok(/^Qui `rm -r <percorso>` ha già distrutto del lavoro su `data\/export`\. Prima di rifarlo: fai un commit o una copia e chiedi all'utente\.$/.test(lines[0]), 'cicatrici: è la prima riga tra le lezioni per l\'agente: ' + lines[0]);
+      ok(/^Qui `rm -r <path>` ha già distrutto del lavoro su `data\/export`\. Prima di rifarlo: fai un commit o una copia e chiedi all'utente\.$/.test(lines[0]), 'cicatrici: è la prima riga tra le lezioni per l\'agente: ' + lines[0]);
       const en = i18n.withLang('en', () => ({ v: book.view(cwd, now).lessons.find(l => l.kind === 'scar'), line: bt.lessonLines(book.view(cwd, now).lessons)[0] }));
       ok(/^Scar: /.test(en.v.title) && /already destroyed work on `data\/export`/.test(en.line) && /Before doing it again: make a commit or a copy and ask the user\.$/.test(en.line), 'cicatrici: testi in inglese: ' + en.line);
       // dimenticarla funziona come per le altre lezioni
@@ -1241,6 +1241,48 @@ function fearFeedbackTests(ok) {
   } finally { for (const st of stops) { try { st.stop && st.stop(); } catch {} } }
 }
 
+// 2.14, R9: report del giorno, scheda PAURE del Libro, metriche nello storico
+function fearReportTests(ok) {
+  const { openStore } = require(path.join(ROOT, 'src', 'core', 'store'));
+  const { declareCollections } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
+  const fear = require(path.join(ROOT, 'src', 'core', 'fear'));
+  const HQ = require(path.join(ROOT, 'src', 'core', 'history-query'));
+  const { COUNT_FIELDS } = require(path.join(ROOT, 'src', 'core', 'history'));
+  const store = declareCollections(openStore({ requireFields: true, guard: 'reject' }));
+  const DAY = 86400000, NOW = Date.parse('2026-11-19T18:00:00'), D0 = Date.parse('2026-11-19T00:00:00');
+  let k = 0;
+  const risk = (o) => store.collection('risks').put({ _id: 's:' + (++k), project: 'p1', session: 's1', agent: 'main', tool: 'Bash', ruleIds: ['git-reset-hard'], level: 2, prudence: 0, present: [], missing: ['backup'], missed: true, shape: 'git reset --hard <ref>', t: D0 + 3600000, ...o });
+  try {
+    store.collection('projects').put({ _id: 'p1', name: 'negozio' });
+    risk({ name: 'Claude' });
+    risk({ name: 'Claude', ruleIds: ['git-push-main', 'git-push-force-shared'], level: 3, shape: 'git push <remote> main' });
+    risk({ agent: 'a1', name: 'EXPLORE', missed: false, prudence: 1 });
+    risk({ agent: 'a2', name: 'REVIEWER', ruleIds: ['rm-recursive'], shape: 'rm -r <path>', target: 'data/export', outcome: 'damage', at: D0 + 7200000, evidence: ['s:x'] });
+    risk({ name: 'Claude', ruleIds: ['lockfile'], level: 1, missed: false, shape: '' });
+    risk({ name: 'Claude', t: D0 - 2 * DAY, project: 'p2' }); // un altro giorno, un altro progetto
+    risk({ name: 'Claude', t: NOW - 120 * DAY }); // oltre i 90 giorni
+    // il report del giorno
+    const rd = fear.reportDay(store, D0, D0 + DAY);
+    ok(rd.total === 4 && rd.missed === 3 && JSON.stringify(rd.byAgent) === JSON.stringify([{ name: 'Claude', n: 2 }, { name: 'REVIEWER', n: 1 }]), 'report: paure mancate per agente, solo livello 2 o più, solo quel giorno → ' + JSON.stringify(rd.byAgent));
+    ok(rd.scars.length === 1 && rd.scars[0].project === 'negozio' && rd.scars[0].name === 'REVIEWER' && rd.scars[0].target === 'data/export' && rd.scars[0].shape === 'rm -r <path>' && rd.scars[0].reason, 'report: le cicatrici del giorno, con il progetto per nome');
+    ok(fear.reportDay(store, D0 + DAY, D0 + 2 * DAY).total === 0 && fear.reportDay(null, 0, 1).total === 0, 'report: un giorno senza azioni rischiose, e senza storico');
+    // il riassunto per il Libro: ultimi 90 giorni, per livello e per regola, per progetto
+    const sm = fear.summary(store, { projects: ['p1'], now: NOW });
+    ok(sm.days === 90 && sm.total === 5 && sm.levels[1] === 1 && sm.levels[2] === 3 && sm.levels[3] === 1 && sm.missed === 3 && sm.damage === 1, 'Libro: livelli, paure mancate e danni degli ultimi 90 giorni del progetto');
+    ok(sm.rules[0].id === 'git-push-main' && sm.rules[0].text && sm.rules[0].shape && sm.rules.find(r => r.id === 'git-reset-hard').count === 2 && sm.rules.find(r => r.id === 'git-reset-hard').missed === 1, 'Libro: per regola, le più gravi prima, con il testo e la forma');
+    ok(sm.recent.length === 5 && sm.recent[0].t >= sm.recent[4].t && sm.recent.every(r => r.reasons), 'Libro: le azioni più recenti, con il perché');
+    ok(fear.summary(store, { now: NOW }).total === 6 && fear.summary(null).total === 0, 'Libro: senza progetto, tutti i progetti; senza storico, niente');
+    // il nome dell'agente è un campo dichiarato
+    ok(store.collection('risks').get('s:1').name === 'Claude', 'storico: l\'evento tiene il nome dell\'agente in ufficio');
+    // le tre metriche nuove: nei riassunti delle sessioni, nello storico nel tempo
+    ok(['risky_actions', 'missed_fears', 'scars'].every(m => COUNT_FIELDS.includes(m) && HQ.SESSION_METRICS.includes(m) && HQ.LOWER_IS_BETTER.has(m)), 'storico: risky_actions, missed_fears e scars nei riassunti, e meno è meglio');
+    for (let i = 0; i < 12; i++) store.collection('sessions').put({ _id: 'S' + i, project: 'p1', t: NOW - (i < 6 ? 3 : 40) * DAY - i * 3600000, actions: 50, risky_actions: 2, missed_fears: i < 6 ? 0 : 2, scars: 0 });
+    const all = HQ.queryAll(store, { projects: ['p1'], from: NOW - 70 * DAY, to: NOW, metrics: ['missed_fears', 'risky_actions'] });
+    const t = HQ.trend(all.missed_fears, NOW);
+    ok(t.verdict === 'fewer' && t.better === true && HQ.trend(all.risky_actions, NOW).verdict === 'same', 'storico: le paure mancate in calo sono un miglioramento; le azioni rischiose stabili');
+  } finally { store.close(); }
+}
+
 function run(ok) {
   console.log('libro della bottega');
   bottegaTests(ok);
@@ -1248,6 +1290,7 @@ function run(ok) {
   prudenceTests(ok);
   fearViewTests(ok);
   fearFeedbackTests(ok);
+  fearReportTests(ok);
   bottegaNameTests(ok);
   elderTests(ok);
   console.log('sorprese');
@@ -1264,7 +1307,7 @@ function run(ok) {
   alertTests(ok);
 }
 
-module.exports = { run, riskTests, prudenceTests, fearStoreTests, scarTests, fearViewTests, fearFeedbackTests };
+module.exports = { run, riskTests, prudenceTests, fearStoreTests, scarTests, fearViewTests, fearFeedbackTests, fearReportTests };
 
 if (require.main === module) {
   require('./test-guard').requireTempDataDir('unit-test'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea

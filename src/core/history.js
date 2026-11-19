@@ -24,7 +24,7 @@ const FLUSH_MS = 2000, FLUSH_DOCS = 500;
 // il database è tenuto da un altro processo più a lungo dell'attesa di SQLite (busy_timeout, 3 s)
 const isBusy = e => !!e && (e.errcode === 5 || e.errcode === 6 || /database is locked|SQLITE_BUSY|database table is locked/i.test(String(e.message)));
 const COUNT_MS = 5 * 60000; // i conteggi pesanti di una sessione, al massimo ogni 5 minuti
-const COUNT_FIELDS = ['surprises', 'loops', 'stuck', 'flaky', 'claims', 'stale', 'lessons']; // come la coda di sqlite.js: al massimo ogni 2 s, o a 500 documenti
+const COUNT_FIELDS = ['surprises', 'loops', 'stuck', 'flaky', 'claims', 'stale', 'lessons', 'risky_actions', 'missed_fears', 'scars']; // come la coda di sqlite.js: al massimo ogni 2 s, o a 500 documenti
 
 class History {
   // dir: la cartella dei dati (dove sta platypus.db); settings: le opzioni vive del motore
@@ -89,7 +89,7 @@ class History {
   // ---- le azioni rischiose (2.14, fear.js): un documento per azione, con lo stesso _id del suo passo.
   // step.risk lo mette il motore quando l'azione comincia. Si scrive con patch: rileggere una sessione all'avvio
   // non cancella com'è finita (outcome, che arriva dopo). La demo non lascia niente.
-  recordRisk(s, a, step) {
+  recordRisk(s, a, step, name = '') {
     const r = step && step.risk;
     if (!s || s.demo || !s.cwd || !step || !step.id || !r || !(r.level >= 1)) return;
     const doc = {
@@ -97,6 +97,7 @@ class History {
       ruleIds: (r.ruleIds || []).map(String), level: r.level, prudence: Number(r.prudence) || 0, present: r.present || [], missing: r.missing || [], missed: !!r.missed,
     };
     if (r.shape) doc.shape = String(r.shape);
+    if (name) doc.name = String(name).slice(0, 60);
     if (r.target) doc.target = String(r.target);
     if (r.feedbackGroup) doc.feedbackGroup = String(r.feedbackGroup);
     // com'è finita (le cicatrici, R4): i segni sono rimandi ad altri passi, mai testo

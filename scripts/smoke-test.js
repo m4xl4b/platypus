@@ -308,9 +308,9 @@ process.on('exit', code => {
     const hy1 = JSON.parse((await get(port, '/api/history?metric=loops&bucket=day')).body);
     const hyBad = await get(port, '/api/history?metric=boh');
     const lastWeek = hy.metrics && hy.metrics.loops.buckets[hy.metrics.loops.buckets.length - 1];
-    ok(hy.ok && Object.keys(hy.metrics).length === 11 && hy.metrics.loops.buckets.length === 26 && lastWeek.sessions >= 1 && lastWeek.sum >= 1 && hy.metrics.loops.trend.verdict === 'not-enough' && Array.isArray(hy.metrics.feedback.buckets) &&
+    ok(hy.ok && Object.keys(hy.metrics).length === 14 && hy.metrics.missed_fears && hy.metrics.loops.buckets.length === 26 && lastWeek.sessions >= 1 && lastWeek.sum >= 1 && hy.metrics.loops.trend.verdict === 'not-enough' && Array.isArray(hy.metrics.feedback.buckets) &&
       hy1.ok && hy1.bucket === 'day' && hy1.buckets.length >= 176 && hy1.buckets.length <= 182 && hyBad.status === 400,
-      `storico, /api/history: 11 metriche, 26 settimane, la sessione aperta nell'ultima (giri in tondo ${lastWeek && lastWeek.sum}); per giorno; una metrica sconosciuta rifiutata (${hy.ok && Object.keys(hy.metrics).length} metriche, ${hy.metrics && hy.metrics.loops.buckets.length} settimane, ${hy1.buckets && hy1.buckets.length} giorni, ${hy.metrics && hy.metrics.loops.trend.verdict}, ${hyBad.status})`);
+      `storico, /api/history: 14 metriche (con le tre della paura), 26 settimane, la sessione aperta nell'ultima (giri in tondo ${lastWeek && lastWeek.sum}); per giorno; una metrica sconosciuta rifiutata (${hy.ok && Object.keys(hy.metrics).length} metriche, ${hy.metrics && hy.metrics.loops.buckets.length} settimane, ${hy1.buckets && hy1.buckets.length} giorni, ${hy.metrics && hy.metrics.loops.trend.verdict}, ${hyBad.status})`);
     const rr = await core.retention();
     ok(rr && rr.limitBytes === 200 * 1048576 && rr.trimmedForSize === 0 && Object.values(rr.removed).every(n => n === 0) && hs.collection('steps').count({ session: 'bottega-smoke-0001' }) === 4 && JSON.parse(hs.getMeta('retentionLast')).at === rr.at,
       'storico: la conservazione gira nel motore e lascia stare i passi recenti');
@@ -711,6 +711,10 @@ process.on('exit', code => {
     // le API dello storico (S10): stato, compatta, esporta, dimentica (con conferma), conservazione
     const si = JSON.parse((await get(port, '/api/store')).body);
     // 2.14: le azioni rischiose salvate; un progetto sconosciuto risponde 404, come le altre API dello storico
+    const fz = JSON.parse((await get(port, '/api/fear')).body), fz404 = await get(port, '/api/fear?project=nonesiste');
+    const rp = JSON.parse((await get(port, '/api/report')).body);
+    ok(fz.ok && fz.days === 90 && typeof fz.levels === 'object' && Array.isArray(fz.rules) && Array.isArray(fz.recent) && fz404.status === 404 && rp.fear && Array.isArray(rp.fear.byAgent) && Array.isArray(rp.fear.scars),
+      `paura, /api/fear e il report: la scheda del Libro (${fz.total} eventi in ${fz.days} giorni) e le paure del giorno nel report`);
     const rk = JSON.parse((await get(port, '/api/risks')).body), rkm = JSON.parse((await get(port, '/api/risks?missed=1&limit=5')).body), rk404 = await get(port, '/api/risks?project=nonesiste');
     ok(rk.ok && Array.isArray(rk.risks) && rk.demo === false && rkm.ok && rkm.risks.every(x => x.missed) && rk404.status === 404, `paura, /api/risks: risponde (${rk.risks.length} eventi), filtra le paure mancate, 404 per un progetto sconosciuto`);
     const fkKey = core.history.keys.keyNow(fakeCwd);
