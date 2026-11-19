@@ -527,7 +527,7 @@ async function legacyTests(ok) {
   const { importLegacy, weekStart, dayStart } = require(path.join(ROOT, 'src', 'core', 'store', 'legacy'));
   const { ProjectKeys, normDir, keyFor } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
   const { Bottega, projectKey } = require(path.join(ROOT, 'src', 'core', 'bottega'));
-  const { FeedbackLog } = require(path.join(ROOT, 'src', 'core', 'feedbacklog'));
+  const { FileFeedbackLog: FeedbackLog } = require(path.join(ROOT, 'scripts', 'legacy-212')); // il registro come lo scriveva la 2.12
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-prima-'));
   const T = 1763500000000, NOW = T + 86400000;
   const A = '/home/max-segreto/lavoro/platypus', B = '/home/max-segreto/copie/platypus-due', C = '/home/max-segreto/senza-remote';

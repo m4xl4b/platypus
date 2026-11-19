@@ -79,6 +79,18 @@ require('./test-guard').requireTempDataDir('npm test');
 // nelle prove lo store rifiuta i campi non dichiarati invece di scartarli: un campo dimenticato si vede subito
 if (!process.env.PLATYPUS_STORE_GUARD) process.env.PLATYPUS_STORE_GUARD = 'reject';
 
+// Le prove aspettano anche timer che il motore non tiene accesi (unref: per esempio il tempo massimo degli embedding).
+// Se in quel momento nient'altro tiene vivo il processo, Node uscirebbe da solo con codice 0 a metà delle prove, e
+// "npm test" sembrerebbe passato. Quindi: un timer acceso finché le prove non finiscono, e se il processo esce prima
+// della fine è un errore.
+let finished = false;
+const keepAlive = setInterval(() => {}, 60000);
+process.on('exit', code => {
+  if (finished || code) return;
+  console.error('\n[npm test] le prove si sono fermate prima della fine: qualcosa aspettava una promessa che non arriva mai.');
+  process.exitCode = 1;
+});
+
 (async () => {
   console.log(`Platypus smoke test · ${process.platform} ${process.arch} · Node ${process.versions.node}`);
 
@@ -766,6 +778,8 @@ if (!process.env.PLATYPUS_STORE_GUARD) process.env.PLATYPUS_STORE_GUARD = 'rejec
   ok(!/spawnSync\([^;]*\[[^\]]*\][^;]*shell:\s*(IS_WIN|true)/.test(launchSrc), 'avvio: nessun argomento separato con shell (avviso DEP0190 di Node 24)');
 
   fs.rmSync(tmp, { recursive: true, force: true });
+  finished = true;
+  clearInterval(keepAlive);
   console.log(failed ? `\n${failed} controlli falliti` : '\nTutto a posto.');
   process.exit(failed ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

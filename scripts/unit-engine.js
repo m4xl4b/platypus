@@ -603,6 +603,20 @@ function workflowTests(ok) {
   } finally { w.stop(); st.stop && st.stop(); fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 
+// il registro dei messaggi su uno store di prova: in memoria, con le collezioni vere e la guardia che rifiuta;
+// le chiavi dei progetti non chiamano git (ogni cartella è il suo progetto)
+function testFeedbackLog(backend = 'memory', dir) {
+  const { openStore } = require(path.join(ROOT, 'src', 'core', 'store'));
+  const { declareCollections } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
+  const { ProjectKeys } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
+  const { FeedbackLog } = require(path.join(ROOT, 'src', 'core', 'feedbacklog'));
+  const store = declareCollections(openStore({ backend, dir, guard: 'reject', requireFields: true }));
+  const keys = new ProjectKeys({ store, exec: async () => null });
+  const log = new FeedbackLog({ store, keys });
+  log.close = () => store.close();
+  return log;
+}
+
 function run(ok) {
   console.log('motore: casi del giro di debug');
   workflowTests(ok);
@@ -1088,9 +1102,8 @@ function feedbackShownTests(ok, fb, inp, rules) {
     ok(m.text && !('local' in m) && !('local' in r2.entry) && !('name' in r2.entry), 'messaggi in due lingue: con l\'ufficio in inglese basta un testo');
   } finally { i18n.setLang(lang); }
   // i conteggi accanto agli interruttori: per funzione, mandati e in ombra, da un certo giorno in poi, in tutti i progetti
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-fbcount-'));
+  const fl = testFeedbackLog();
   try {
-    const fl = new FeedbackLog(tmp);
     ok(JSON.stringify(fl.counts(0)) === '{}', 'conteggi: registro vuoto');
     const row = (cwd, t, feature, mode) => fl.append(cwd, { t, sid: 's', agent: 'main', feature, mode, event: 'PostToolUse', text: 'Platypus: x' });
     row('/p/app', now - 10 * 86400000, 'elder', 'on');   // troppo vecchio
@@ -1105,7 +1118,7 @@ function feedbackShownTests(ok, fb, inp, rules) {
     ok(c.elder.on === 2 && c.elder.shadow === 1 && c.claims.shadow === 1 && c.claims.on === 0 && !c.loop, `conteggi degli ultimi 7 giorni: ${JSON.stringify(c)} (non contano i vecchi né le risposte in ritardo)`);
     fl.setOutcome('/p/app', late.id, 'helped', 'ha lanciato i test');
     ok(fl.recent('/p/app').find(r => r.id === late.id).why === 'ha lanciato i test', 'registro: l\'esito porta con sé il perché');
-  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  } finally { fl.close(); }
   // il registro della demo: la stessa interfaccia, in memoria, svuotabile, e fuori dai conteggi
   const { MemoryFeedbackLog } = require(path.join(ROOT, 'src', 'core', 'feedbacklog'));
   const ml = new MemoryFeedbackLog(3);
@@ -1243,23 +1256,32 @@ function feedbackModeTests(ok, fb, inp) {
   go(on, {}, gate, {}, fresh);
   r = fb.respond(inp('Stop'), ctx({ fbClaims: 'on' }), gate, stopRules);
   ok(r.out === null && r.entry && r.entry.mode === 'shadow' && r.entry.feature === 'claims', 'feedback: il controllo a fine turno nella 2.11 registra soltanto, anche subito dopo un altro messaggio');
-  // registro: righe aggiunte in coda, esiti, un file per progetto, rotazione
-  const { FeedbackLog } = require(path.join(ROOT, 'src', 'core', 'feedbacklog'));
+  // registro: nello storico (collezione feedback), un progetto per cartella, esiti aggiunti dopo; lo stesso su disco
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-fblog-'));
   try {
-    const fl = new FeedbackLog(tmp, { maxBytes: 600 });
-    const e1 = fl.append('/p/app', { t: 1000, sid: 's', agent: 'main', feature: 'elder', mode: 'shadow', event: 'PostToolUseFailure', lessonId: 'L1', text: 'Platypus: uno' });
-    const e2 = fl.append('/p/app', { t: 2000, sid: 's', agent: 'sub-1', feature: 'loop', mode: 'on', event: 'PostToolUseFailure', lessonId: null, text: 'Platypus: due' });
-    fl.append('/p/altro', { t: 3000, sid: 'x', agent: 'main', feature: 'elder', mode: 'on', event: 'PostToolUse', text: 'Platypus: altrove' });
-    ok(fl.setOutcome('/p/app', e1.id, 'helped') && !fl.setOutcome('/p/app', '', 'x'), 'registro: l\'esito si aggiunge dopo');
-    let rec = fl.recent('/p/app');
-    ok(rec.length === 2 && rec[0].id === e2.id && rec[1].id === e1.id && rec[1].outcome === 'helped' && !rec[0].outcome && e1.id !== e2.id, 'registro: gli ultimi messaggi del progetto, dal più recente, con il loro esito');
-    ok(fl.recent('/p/altro').length === 1 && fl.recent('/p/nessuno').length === 0 && fs.readdirSync(tmp).length === 2, 'registro: un file per progetto');
-    for (let i = 0; i < 12; i++) fl.append('/p/app', { t: 4000 + i, sid: 's', agent: 'main', feature: 'elder', mode: 'on', event: 'PostToolUse', text: 'Platypus: riga ' + i + ' ' + 'x'.repeat(60) });
-    const files = fs.readdirSync(tmp).filter(f => f.startsWith(path.basename(fl.file('/p/app'), '.jsonl')));
-    rec = fl.recent('/p/app', 5);
-    ok(files.length === 2 && fs.statSync(fl.file('/p/app')).size < 1500 && rec.length === 5 && /riga 11/.test(rec[0].text), `registro: oltre il limite il file ruota e non cresce senza fine (${files.length} file)`);
-  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+    for (const backend of ['memory', 'sqlite']) {
+      let fl = testFeedbackLog(backend, path.join(tmp, backend));
+      const e1 = fl.append('/p/app', { t: 1000, sid: 's', agent: 'main', feature: 'elder', mode: 'shadow', event: 'PostToolUseFailure', lessonId: 'L1', text: 'Platypus: uno', about: { kind: 'flaky-command', cmd: 'npm test' }, name: 'Claude', toolUseId: 'toolu_1' });
+      const e2 = fl.append('/p/app', { t: 2000, sid: 's', agent: 'sub-1', feature: 'loop', mode: 'on', event: 'PostToolUseFailure', lessonId: null, text: 'Platypus: due', local: 'Platypus: due (it)', tag: 'x/y' });
+      fl.append('/p/altro', { t: 3000, sid: 'x', agent: 'main', feature: 'elder', mode: 'on', event: 'PostToolUse', text: 'Platypus: altrove' });
+      ok(e1.id && e1.text === 'Platypus: uno' && e1.lessonId === 'L1' && fl.setOutcome('/p/app', e1.id, 'helped') && !fl.setOutcome('/p/app', '', 'x') && !fl.setOutcome('/p/app', 'non-esiste', 'helped'), `registro (${backend}): append restituisce il messaggio con il suo id; l'esito si aggiunge dopo, solo a un messaggio che c'è`);
+      let rec = fl.recent('/p/app');
+      ok(rec.length === 2 && rec[0].id === e2.id && rec[1].id === e1.id && rec[1].outcome === 'helped' && rec[1].at > 0 && !rec[0].outcome && e1.id !== e2.id && rec[1].about.cmd === 'npm test' && rec[1].name === 'Claude' && rec[1].toolUseId === 'toolu_1' &&
+        rec[0].local === 'Platypus: due (it)' && rec[0].tag === 'x/y' && !('lessonId' in rec[0]) && !('project' in rec[0]) && !('_id' in rec[0]), `registro (${backend}): gli ultimi messaggi del progetto, dal più recente, con il loro esito e i loro campi`);
+      ok(fl.recent('/p/altro').length === 1 && fl.recent('/p/nessuno').length === 0 && fl.recent('/P/APP/').length === (process.platform === 'win32' ? 2 : 0), `registro (${backend}): ogni cartella vede solo i suoi messaggi`);
+      for (let i = 0; i < 12; i++) fl.append('/p/app', { t: 4000 + i, sid: 's', agent: 'main', feature: 'elder', mode: 'on', event: 'PostToolUse', text: 'Platypus: riga ' + i + ' ' + 'x'.repeat(60) });
+      rec = fl.recent('/p/app', 5);
+      ok(rec.length === 5 && /riga 11/.test(rec[0].text) && /riga 7/.test(rec[4].text) && fl.recent('/p/app').length === 14, `registro (${backend}): recent si ferma al numero chiesto`);
+      const secret = fl.append('/p/app', { t: 9000, sid: 's', agent: 'main', feature: 'loop', mode: 'on', event: 'PostToolUse', text: 'Platypus: the last error said password=hunter2' });
+      ok(secret.text.includes('hunter2') && fl.recent('/p/app', 1)[0].text === 'Platypus: the last error said password=[secret]', `registro (${backend}): all'agente va il testo intero, nello storico resta senza segreti`);
+      if (backend === 'sqlite') {
+        fl.close();
+        fl = testFeedbackLog(backend, path.join(tmp, backend));
+        ok(fl.recent('/p/app').length === 15 && fl.recent('/p/app').find(r => r.id === e1.id).outcome === 'helped' && fl.counts(0).elder.on === 13 && !fs.existsSync(path.join(tmp, backend, 'feedback')), 'registro (sqlite): dopo un riavvio c\'è tutto, nel database e non in file a parte');
+      }
+      fl.close();
+    }
+  } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
   // il Libro ricorda il progetto zittito
   const bt = require(path.join(ROOT, 'src', 'core', 'bottega'));
   const bdir = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-mute-'));

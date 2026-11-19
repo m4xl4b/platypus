@@ -226,7 +226,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   // e Claude Code prosegue come se Platypus non ci fosse.
   const FEEDBACK_MS = 300;
   const feedbackStats = { calls: 0, said: 0, shadow: 0, late: 0, errors: 0 };
-  const feedbackLog = new FeedbackLog(path.join(path.dirname(settingsPath), 'feedback')); // accanto alle opzioni: ~/.platypus/feedback
+  const feedbackLog = new FeedbackLog({ store: history.store, keys: history.keys }); // nello storico, collezione feedback
   const embedder = new Embedder({ settings: state.settings, dir: path.join(path.dirname(settingsPath), 'embed-cache'), deps: { modelsDir: path.join(path.dirname(settingsPath), 'models') } }); // significato neurale (embed/)
   const feedbackGate = new feedback.Gate(); // i limiti di frequenza, in memoria: ripartono con Platypus
   // la demo (C3): agenti finti, quindi ogni funzione nel modo più alto che ha nella 2.11, qualunque cosa dicano le
