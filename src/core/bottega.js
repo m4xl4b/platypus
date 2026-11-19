@@ -23,8 +23,11 @@ const LESSON_WEIGHT = 1.5;         // sotto questa soglia (o con un caso solo) �
 const MAX_LESSONS = 300, MAX_EVIDENCE = 8;
 const SLOW_MS = 5 * 60000;         // un comando che ci mette più di così è "lento"
 const KINDS = ['flaky-command', 'fragile-file', 'known-fix', 'loop-trap', 'stale-trap', 'ghost-path', 'slow-step', 'scar'];
-// una lezione (forte) o un'osservazione: le cicatrici contano dal primo caso
-const isStrong = (l, weight) => !!l.pinned || (l.kind === 'scar' ? weight >= SCAR_WEIGHT : l.count > 1 && weight >= LESSON_WEIGHT);
+// una cicatrice è certa se almeno un caso ha un segno nei fatti (errore, file sparito, recupero). Un caso con il solo segno
+// delle parole dell'utente ("dov'è finito il file?") ha la prova che comincia con "?": da solo resta un'osservazione (Max, 2.14)
+const scarCertain = l => (l.evidence || []).some(e => e && !String(e.excerpt || '').startsWith('?'));
+// una lezione (forte) o un'osservazione: le cicatrici certe contano dal primo caso, le altre come ogni lezione
+const isStrong = (l, weight) => !!l.pinned || (l.kind === 'scar' && scarCertain(l) ? weight >= SCAR_WEIGHT : l.count > 1 && weight >= LESSON_WEIGHT);
 
 // chiave del progetto: la cartella normalizzata (minuscole dove i percorsi non distinguono le maiuscole)
 function normDir(cwd) {
@@ -100,7 +103,7 @@ function digest(session, agents, now = Date.now()) {
   for (const x of g.stale) add('stale-trap', x.key, x.changedAt || x.readAt, x.agentName, x.changedBy ? tr('cambiato da {who}', { who: x.changedBy }) : '');
   for (const x of g.blindEdits) add('stale-trap', x.key, x.t, x.agentName, x.caught ? tr('modifica fermata da Claude Code') : tr('modifica alla cieca'));
   // cicatrici (2.14): un'azione rischiosa dopo la quale si vedono i segni di un danno. La prova è l'elenco delle prudenze mancate
-  try { for (const sc of require('./fear').scars(session, agents)) add('scar', sc.key, sc.t, sc.agentName, sc.missing.join(',')); } catch {}
+  try { for (const sc of require('./fear').scars(session, agents)) add('scar', sc.key, sc.t, sc.agentName, (sc.probable ? '?' : '') + sc.missing.join(',')); } catch {}
   return out;
 }
 
@@ -509,7 +512,7 @@ function weightOf(l, now = Date.now()) {
 // Le prudenze mancate stanno nella prova più recente, come sigle ("backup,looked"): prudence.js le dice in parole
 function scarParts(l) {
   const [shape, target] = String(l.key).split(' → ');
-  const kinds = ((l.evidence || []).find(e => e && e.excerpt) || {}).excerpt || '';
+  const kinds = (((l.evidence || []).find(e => e && e.excerpt && e.excerpt !== '?') || {}).excerpt || '').replace(/^\?/, '');
   let advice = [];
   try { advice = require('./prudence').adviceFor(kinds); } catch {}
   return { shape, where: target && target !== '*' ? target : '', advice: advice.length ? advice.slice(0, 2).join(tr(' e ')) : tr('guarda che cosa c\'è') };

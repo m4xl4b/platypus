@@ -963,6 +963,21 @@ async function scarTests(ok) {
     x.say('hai cancellato i miei appunti! ripristina notes.md');
     sc = fear.scars(x.s, x.agents);
     ok(sc.length === 1 && sc[0].signs.join() === 'user' && sc[0].probable === true && sc[0].evidence.length === 0, 'cicatrici: «hai cancellato… ripristina» nel messaggio dopo è un segno, da solo "probabile"');
+    // la sola frase dell'utente resta un'osservazione nel Libro; con un secondo caso, o con un segno nei fatti, diventa lezione
+    {
+      const book = new bt.Bottega({}), t0 = x.step('f1').t;
+      const c1 = bt.digest(x.s, x.agents).filter(c => c.kind === 'scar');
+      book.learn(cwd, c1);
+      const v1 = book.view(cwd, t0 + 60000).lessons.find(l => l.kind === 'scar');
+      ok(c1.length === 1 && c1[0].excerpt.startsWith('?') && v1 && v1.level === 'observation' && !/\?/.test(v1.detail.split('.')[1] || ''), 'cicatrici: con il solo segno delle parole dell\'utente è un\'osservazione, non una lezione');
+      book.learn(cwd, [{ ...c1[0], sid: 'altra-sessione', t: t0 + 1000 }]);
+      ok(book.view(cwd, t0 + 60000).lessons.find(l => l.kind === 'scar').level === 'lesson', 'cicatrici: alla seconda volta, in un\'altra sessione, diventa una lezione come le altre');
+      const book2 = new bt.Bottega({});
+      book2.learn(cwd, [...c1, { ...c1[0], sid: 'altra', t: t0 + 2000, excerpt: 'backup' }]);
+      const v2 = book2.view(cwd, t0 + 60000).lessons.find(l => l.kind === 'scar');
+      ok(v2.level === 'lesson' && /fai un commit o una copia/.test(v2.detail), 'cicatrici: basta un caso con un segno nei fatti perché sia una lezione');
+      book.stop(); book2.stop();
+    }
     x = session(); stops.push(x.st);
     x.say('pulisci il repository');
     x.bash('g1', 'git clean -fdx', 'ok');
