@@ -1111,7 +1111,70 @@ async function experimentTests(ok) {
   store.close();
 }
 
-module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); await retentionTests(ok); await forgetTests(ok); await experimentTests(ok); } };
+// S12: lo storico nel tempo (src/core/history-query.js): secchi, lettura, e quanto ci mette su sei mesi
+async function historyQueryTests(ok) {
+  console.log('store: storico nel tempo');
+  const HQ = require(path.join(ROOT, 'src', 'core', 'history-query'));
+  const { openStore } = require(path.join(ROOT, 'src', 'core', 'store'));
+  const { declareCollections } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
+  const DAY = HQ.DAY, WEEK = 7 * DAY;
+  const now = new Date(2026, 10, 19, 15, 0).getTime(); // un giovedì
+  const monday = HQ.bucketStart(now, 'week');
+  ok(new Date(monday).getDay() === 1 && new Date(monday).getDate() === 16 && HQ.bucketStart(now, 'day') === new Date(2026, 10, 19).getTime(), 'secchi: la settimana parte dal lunedì, il giorno da mezzanotte (ora locale)');
+  const store = declareCollections(openStore({ requireFields: true, guard: 'reject' }));
+  const sessions = store.collection('sessions');
+  // otto settimane: nelle prime quattro 4 giri in tondo a sessione, nelle ultime 4 solo 1; 3 sessioni a settimana; una settimana vuota
+  let n = 0;
+  for (let w = 7; w >= 0; w--) {
+    if (w === 5) continue;
+    for (let k = 0; k < 3; k++) sessions.put({ _id: 's' + (n++), project: 'p1', t: monday - w * WEEK + DAY + k * 3600000, loops: w >= 4 ? 4 : 1, claims: 2, actions: 50, errors: 5, cost: 0.5 });
+  }
+  sessions.put({ _id: 'other', project: 'p2', t: monday + DAY, loops: 50 });
+  sessions.put({ _id: 'old', project: 'p1', t: monday - 2 * WEEK + DAY }); // scritta prima dei conteggi: senza loops
+  const from = monday - 7 * WEEK, to = now + 1;
+  const r = HQ.query(store, { projects: ['p1'], metric: 'loops', from, to, bucket: 'week' });
+  const empty = r.buckets.find(b => b.start === HQ.addDays(monday, -35)); // sul calendario: in mezzo c'è il ritorno all'ora solare
+  ok(r.buckets.length === 8 && empty && empty.sessions === 0 && empty.perSession === null && r.buckets[7].sessions === 3 && r.buckets[7].perSession === 1 && r.buckets[0].perSession === 4,
+    'per settimana: ogni settimana dell\'intervallo, anche vuota; per sessione, solo il progetto chiesto');
+  const wk2 = r.buckets.find(b => b.start === HQ.addDays(monday, -14));
+  ok(wk2.sessions === 4 && wk2.counted === 3 && wk2.perSession === 1, 'una sessione scritta prima dei conteggi conta tra le sessioni ma non nella media');
+  const all = HQ.query(store, { metric: 'loops', from, to, bucket: 'week' });
+  const days = HQ.query(store, { projects: ['p1'], metric: 'cost', from: monday, to, bucket: 'day' });
+  ok(all.buckets[7].sessions === 4 && all.buckets[7].sum === 53 && days.buckets.length === 4 && days.buckets[1].sessions === 3 && Math.abs(days.buckets[1].sum - 1.5) < 1e-9, 'per tutti i progetti, e per giorno');
+  // la lettura in una frase
+  const t1 = HQ.trend(r, now), t2 = HQ.trend(HQ.query(store, { projects: ['p1'], metric: 'claims', from, to, bucket: 'week' }), now);
+  const t3 = HQ.trend(HQ.query(store, { projects: ['p2'], metric: 'loops', from, to, bucket: 'week' }), now);
+  ok(t1.verdict === 'fewer' && t1.better === true && t1.recent.sessions === 12 && t1.recent.perSession === 1 && t1.before.sessions === 9 && t1.before.perSession === 4 && t2.verdict === 'same' && t2.better === null && t3.verdict === 'not-enough' && t3.min === HQ.MIN_SESSIONS,
+    `lettura: giri in tondo ${t1.verdict} (${t1.recent.perSession} a sessione su ${t1.recent.sessions} sessioni, prima ${t1.before.perSession} su ${t1.before.sessions}); affermazioni ${t2.verdict}; un progetto con una sessione: ${t3.verdict}`);
+  // il feedback per gruppo, per settimana
+  const fb = store.collection('feedback');
+  fb.put({ project: 'p1', t: monday + DAY, feature: 'loop', mode: 'on', text: 'x', outcome: 'helped' });
+  fb.put({ project: 'p1', t: monday + DAY, feature: 'loop', mode: 'shadow', text: 'x', outcome: 'ignored' });
+  fb.put({ project: 'p1', t: monday + DAY, feature: 'loop', mode: 'on', text: 'x', outcome: 'late' });
+  const f = HQ.query(store, { projects: ['p1'], metric: 'feedback', from, to, bucket: 'week' }).buckets[7];
+  ok(f.on === 1 && f.shadow === 1 && f.helpedOn === 1 && f.judgedShadow === 1 && f.helpedShadow === 0, 'feedback: mandati e in ombra, e quelli probabilmente utili, per settimana (le risposte arrivate tardi non contano)');
+  const bad = o => { try { HQ.query(store, { metric: 'loops', from, to, bucket: 'week', ...o }); return null; } catch (e) { return e.code; } };
+  ok(bad({ metric: 'testo' }) === 'bad-metric' && bad({ bucket: 'month' }) === 'bad-bucket' && bad({ from: to, to: from }) === 'bad-range' && bad({ from: to - 800 * DAY }) === 'bad-range', 'richieste sbagliate: un errore che dice che cosa');
+  store.close();
+  // sei mesi: 20 progetti, 15 sessioni a settimana ciascuno (7800 sessioni), su sqlite; tutte le metriche, un progetto e tutti
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-storico-'));
+  try {
+    const big = declareCollections(openStore({ backend: 'sqlite', dir: tmp, requireFields: true }));
+    const S = big.collection('sessions');
+    big.transaction(() => { let i = 0; for (let w = 0; w < 26; w++) for (let p = 0; p < 20; p++) for (let k = 0; k < 15; k++) S.put({ _id: 'b' + (i++), project: 'proj' + p, t: now - w * WEEK - k * 3600000, loops: k % 3, stuck: k % 2, surprises: k, flaky: 0, claims: 1, stale: 0, lessons: 0, errors: k, actions: 40, cost: 0.2 }); });
+    const t0 = process.hrtime.bigint();
+    for (const m of HQ.SESSION_METRICS) HQ.trend(HQ.query(big, { projects: ['proj3'], metric: m, from: now - 26 * WEEK, to: now + 1, bucket: 'week' }), now);
+    const one = Number(process.hrtime.bigint() - t0) / 1e6;
+    const t1b = process.hrtime.bigint();
+    const allR = HQ.queryAll(big, { from: now - 26 * WEEK, to: now + 1, bucket: 'week' });
+    const allMs = Number(process.hrtime.bigint() - t1b) / 1e6;
+    const sep = HQ.query(big, { metric: 'surprises', from: now - 26 * WEEK, to: now + 1, bucket: 'week' });
+    big.close();
+    ok(one < 1000 && allMs < 2000 && JSON.stringify(allR.surprises.buckets) === JSON.stringify(sep.buckets) && Object.keys(allR).length === HQ.SESSION_METRICS.length, `sei mesi di storico (7800 sessioni): tutte le ${HQ.SESSION_METRICS.length} metriche di un progetto in ${one.toFixed(0)} ms, di tutti i progetti in ${allMs.toFixed(0)} ms (obiettivo del piano: 200 ms; qui il limite è largo per le macchine lente)`);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+}
+
+module.exports = { run: async ok => { await run(ok); await failureTests(ok); await projectKeyTests(ok); await privacyTests(ok); await collectionsTests(ok); await legacyTests(ok); await bookTests(ok); await historyTests(ok); await retentionTests(ok); await forgetTests(ok); await experimentTests(ok); await historyQueryTests(ok); } };
 if (require.main === module) {
   let failed = 0;
   module.exports.run((c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) failed++; })

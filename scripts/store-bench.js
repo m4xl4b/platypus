@@ -24,7 +24,7 @@ const opt = (name, def) => { const i = args.indexOf('--' + name); return i >= 0 
 const N = Math.max(1000, parseInt(opt('n', '1000000'), 10) || 1000000);
 const BACKEND = opt('backend', 'sqlite');
 const DAY = 86400000, DAYS = 90, PROJECTS = 20;
-const TARGET_INGEST = 1000, TARGET_FIND_MS = 50;
+const TARGET_INGEST = 1000, TARGET_FIND_MS = 50, TARGET_HISTORY_MS = 200;
 
 // numeri a caso ma sempre gli stessi: due giri danno gli stessi dati
 let seed = 20261119;
@@ -83,6 +83,20 @@ try {
     findErrors100Ms: errors.median, findAllMs: all.median, findAllFieldsMs: fields.median, findSessionMs: session.median, sessionSteps: session.last,
   });
 
+  // ---------------------------------------------------------- lo storico nel tempo (S12): sei mesi di riassunti delle sessioni
+  // 20 progetti, 15 sessioni a settimana ciascuno: tutte le metriche, per un progetto e per tutti, per settimana
+  {
+    const HQ = require(path.join(ROOT, 'src', 'core', 'history-query'));
+    store.declare('sessions', { indexes: [['project', 't']] });
+    const S = store.collection('sessions'), WEEK = 7 * DAY;
+    let i = 0;
+    for (let w = 0; w < 26; w++) store.transaction(() => { for (let p = 0; p < PROJECTS; p++) for (let k = 0; k < 15; k++) S.put({ _id: 'b' + (i++), project: projects[p], t: END - w * WEEK - k * 3600000, loops: k % 3, stuck: k % 2, surprises: k, flaky: 0, claims: 1, stale: 0, lessons: 0, errors: k, actions: 40, cost: 0.2 }); });
+    out.historySessions = i;
+    const run = proj => { const s = process.hrtime.bigint(); const all = HQ.queryAll(store, { projects: proj, from: END - 26 * WEEK, to: END + 1, bucket: 'week' }); for (const m of Object.keys(all)) HQ.trend(all[m], END); return ms(s); };
+    out.historyProjectMs = median([run([projects[3]]), run([projects[7]]), run([projects[11]])]);
+    out.historyAllMs = median([run(null), run(null), run(null)]);
+  }
+
   // ---------------------------------------------------------- peso, e quanto ci mette a riaprirsi
   const info = store.info();
   store.close();
@@ -105,6 +119,7 @@ try {
 
 out.ingestOk = out.ingestPerSecond >= TARGET_INGEST;
 out.findOk = out.findRecent100Ms < TARGET_FIND_MS;
+out.historyOk = out.historyProjectMs < TARGET_HISTORY_MS && out.historyAllMs < TARGET_HISTORY_MS;
 if (args.includes('--json')) console.log(JSON.stringify(out, null, 2));
 else {
   const f = x => (x < 10 ? x.toFixed(2) : x.toFixed(0));
@@ -117,7 +132,8 @@ else {
   console.log(`    leggerli tutti, solo t e outcome         ${f(out.findAllFieldsMs)} ms`);
   console.log(`    leggerli tutti, interi                   ${f(out.findAllMs)} ms`);
   console.log(`  i passi di una sessione (${out.sessionSteps})               ${f(out.findSessionMs)} ms`);
+  console.log(`  storico, sei mesi (${out.historySessions} sessioni), tutte le metriche: un progetto ${f(out.historyProjectMs)} ms, tutti ${f(out.historyAllMs)} ms   (obiettivo: meno di ${TARGET_HISTORY_MS} ms)  ${out.historyOk ? 'ok' : 'NON RAGGIUNTO'}`);
   if (out.reopenMs !== undefined) console.log(`  riaprirlo (controllo del file all'avvio)    ${f(out.reopenMs)} ms`);
   if (out.sizeBytes) console.log(`  peso del database                          ${(out.sizeBytes / 1048576).toFixed(0)} MB, ${out.bytesPerStep} byte a passo, ${out.mbPerMillion} MB per milione di passi`);
 }
-if (args.includes('--check') && !(out.ingestOk && out.findOk)) process.exit(1);
+if (args.includes('--check') && !(out.ingestOk && out.findOk && out.historyOk)) process.exit(1);

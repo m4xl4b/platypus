@@ -279,6 +279,14 @@ process.on('exit', code => {
     const sumS = hs.collection('sessions').get('bottega-smoke-0001');
     ok(sumS && sumS.surprises >= 1 && sumS.loops >= 1 && Number.isFinite(sumS.claims) && Number.isFinite(sumS.stale) && Number.isFinite(sumS.stuck) && Number.isFinite(sumS.flaky) && sumS.lessons === 0,
       `storico: il riassunto della sessione ha i conteggi (sorprese ${sumS && sumS.surprises}, giri in tondo ${sumS && sumS.loops}, bloccato ${sumS && sumS.stuck}, instabili ${sumS && sumS.flaky}, affermazioni senza prove ${sumS && sumS.claims}, memorie vecchie ${sumS && sumS.stale})`);
+    // lo storico nel tempo (S12)
+    const hy = JSON.parse((await get(port, '/api/history?metric=all&cwd=' + encodeURIComponent(fakeCwd))).body);
+    const hy1 = JSON.parse((await get(port, '/api/history?metric=loops&bucket=day')).body);
+    const hyBad = await get(port, '/api/history?metric=boh');
+    const lastWeek = hy.metrics && hy.metrics.loops.buckets[hy.metrics.loops.buckets.length - 1];
+    ok(hy.ok && Object.keys(hy.metrics).length === 11 && hy.metrics.loops.buckets.length === 26 && lastWeek.sessions >= 1 && lastWeek.sum >= 1 && hy.metrics.loops.trend.verdict === 'not-enough' && Array.isArray(hy.metrics.feedback.buckets) &&
+      hy1.ok && hy1.bucket === 'day' && hy1.buckets.length >= 176 && hy1.buckets.length <= 182 && hyBad.status === 400,
+      `storico, /api/history: 11 metriche, 26 settimane, la sessione aperta nell'ultima (giri in tondo ${lastWeek && lastWeek.sum}); per giorno; una metrica sconosciuta rifiutata (${hy.ok && Object.keys(hy.metrics).length} metriche, ${hy.metrics && hy.metrics.loops.buckets.length} settimane, ${hy1.buckets && hy1.buckets.length} giorni, ${hy.metrics && hy.metrics.loops.trend.verdict}, ${hyBad.status})`);
     const rr = await core.retention();
     ok(rr && rr.limitBytes === 200 * 1048576 && rr.trimmedForSize === 0 && Object.values(rr.removed).every(n => n === 0) && hs.collection('steps').count({ session: 'bottega-smoke-0001' }) === 4 && JSON.parse(hs.getMeta('retentionLast')).at === rr.at,
       'storico: la conservazione gira nel motore e lascia stare i passi recenti');

@@ -56,6 +56,19 @@ From S9, a database larger than 64 MB is not checked when it opens: the check ru
 
 Same run: ingest 8,113 steps per second and 0.26 ms for the 100 most recent steps of a project (both targets met). The ingest figure is lower than in S3 because this run shared the machine with the API comparison and two full test runs; it is not a regression measured on its own.
 
+## S12 · History over six months, 2026-11-19
+
+Six months of session summaries, as the history of S12 reads them: 20 projects, 15 sessions a week each (7,800 sessions), all ten metrics per week with their trend reading, read in one pass (`queryAll`).
+
+| Measure | Target | Result |
+|---|---|---|
+| One project, all metrics, 26 weeks | under 200 ms | **5 ms** (benchmark), 16–20 ms (test suite) |
+| All projects, all metrics, 26 weeks | under 200 ms | **65 ms** (benchmark), 62–63 ms (test suite) |
+
+A first version queried the sessions once per metric: 359 ms for all projects. Reading them once for all metrics brought it to 65 ms. No materialised weekly aggregates were needed.
+
+**Ingest, compared like with like.** On one million steps, ingest measured 12,442 steps per second in S3 and 8,113–8,133 later. Run side by side on 200,000 steps, the code of S3 (`f14cc19`) and the code of S12 give the same speed: 14,608 and 14,416 against 13,926 and 14,492 steps per second, two runs each. The drop on the long runs comes from the state of the machine at that moment, not from the code; the note in S9 that blamed the parallel load was a guess, now checked.
+
 ## What the numbers say
 
 - **Both targets are met with a wide margin.** Ingest is 12 times the target; the query the office needs is 100 times faster than the target.

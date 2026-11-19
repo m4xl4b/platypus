@@ -53,6 +53,7 @@ const { Stats } = require('./stats');
 const { History } = require('./history');
 const { runRetention } = require('./retention');
 const experiments = require('./experiments');
+const historyQuery = require('./history-query');
 const hooks = require('./hooks');
 const feedback = require('./feedback');
 const { FeedbackLog, MemoryFeedbackLog } = require('./feedbacklog');
@@ -714,6 +715,31 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       const cwd = projectCwd(Object.fromEntries(url.searchParams));
       if (!cwd) return json(res, 404, { ok: false });
       try { return json(res, 200, { ok: true, demo: isDemoCwd(cwd), entries: (isDemoCwd(cwd) ? demoFeedbackLog : feedbackLog).recent(cwd, 200).map(feedbackRow) }); } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+    }
+    // lo storico nel tempo (S12): per il progetto (sid, cwd o key) o per tutti; metric=all dà tutte le metriche con la loro lettura
+    if (url.pathname === '/api/history') {
+      try {
+        history.flush();
+        const q = Object.fromEntries(url.searchParams);
+        const cwd = q.sid || q.cwd || q.key ? projectCwd(q) : '';
+        if (cwd && isDemoCwd(cwd)) return json(res, 200, { ok: true, demo: true });
+        let projects = null;
+        if (cwd) projects = history.keys.allKeys(history.keys.keyIfKnown(cwd));
+        else if (q.key && /^[0-9a-f]{16}$/.test(q.key)) projects = history.keys.allKeys(q.key);
+        else if (q.sid || q.cwd || q.key) return json(res, 404, { ok: false });
+        // di base le ultime 26 settimane, compresa quella in corso, dall'inizio di una settimana
+        const now = Date.now(), to = Number(q.to) || now + 1, from = Number(q.from) || historyQuery.addDays(historyQuery.bucketStart(now, 'week'), -7 * 25);
+        const bucket = q.bucket || 'week', metric = q.metric || 'all';
+        const one = m => { const r = historyQuery.query(history.store, { projects, metric: m, from, to, bucket }); return m === 'feedback' ? r : { ...r, trend: historyQuery.trend(r, now) }; };
+        if (metric === 'all') {
+          // le metriche delle sessioni in una lettura sola, più il feedback
+          const all = historyQuery.queryAll(history.store, { projects, from, to, bucket });
+          for (const m of Object.keys(all)) all[m].trend = historyQuery.trend(all[m], now);
+          all.feedback = one('feedback');
+          return json(res, 200, { ok: true, from, to, bucket, metrics: all });
+        }
+        return json(res, 200, { ok: true, ...one(metric) });
+      } catch (e) { return json(res, e.code && /^bad-/.test(e.code) ? 400 : 200, { ok: false, error: e.message }); }
     }
     // l'esperimento sul feedback (S11): i due gruppi a confronto, per il progetto e per tutti i progetti
     if (url.pathname === '/api/feedback/experiment') {
