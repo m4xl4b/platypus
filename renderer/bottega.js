@@ -133,7 +133,8 @@
         : `<p class="honest">${esc(tr('Lezioni dedotte dai fatti (esiti, ripetizioni, correzioni) delle sessioni di questo progetto: indizi, non regole certe.'))}</p>`) +
       (fbTab ? '' : `<div class="bar">${isDemo ? `<span class="dim">${esc(tr('Libro della demo: lezioni finte.'))}</span>` : learn}<span class="dim">${esc(trn('{n} sessione letta dall\'archivio', '{n} sessioni lette dall\'archivio', d.learnedSessions || 0))}</span>` +
       `<button data-do="md" title="${esc(tr('Prepara una sezione per il CLAUDE.md del progetto con le lezioni fissate e le più forti'))}">${esc(tr('PROPONI PER CLAUDE.MD'))}</button></div>`) +
-      (isDemo ? '' : `<label class="mute" title="${esc(tr('Vale per le funzioni di feedback delle opzioni: con questa spunta Platypus non manda né registra messaggi per gli agenti di questo progetto.'))}"><input type="checkbox" data-do="mute" ${d.mute ? 'checked' : ''}> ${esc(tr('Non parlare agli agenti di questo progetto'))}</label>`) +
+      (isDemo ? '' : `<label class="mute" title="${esc(tr('Vale per le funzioni di feedback delle opzioni: con questa spunta Platypus non manda né registra messaggi per gli agenti di questo progetto.'))}"><input type="checkbox" data-do="mute" ${d.mute ? 'checked' : ''}> ${esc(tr('Non parlare agli agenti di questo progetto'))}</label>` +
+        `<button data-do="forgetproject" class="danger forgetproject" title="${esc(tr('Toglie dallo storico tutto quello che riguarda questo progetto. Chiede conferma.'))}">${esc(tr('DIMENTICA QUESTO PROGETTO…'))}</button>`) +
       (fbTab ? `<div class="list">${feedbackSummary()}${feedbackHtml()}</div>` : '') +
       (fbTab ? '' : (B.md ? `<div class="md"><div class="mh">${esc(tr('ANTEPRIMA'))} <span class="dim">${esc(B.md.path)}</span></div>` +
         (B.md.markdown ? `<pre>${esc(B.md.markdown)}</pre>` : `<p class="dim">${esc(WHY_NOT.empty)}</p>`) +
@@ -165,6 +166,17 @@
       const r = await post('/api/replay', { action: 'start', key: b.dataset.replay, at: Number(b.dataset.at) });
       if (r && r.ok) { closeBottega(); if (window.goTo) goTo('replay'); }
       else if (window.toast) toast((r && r.error) || tr('Sessione non trovata'), false);
+    };
+    // tutto il progetto, dallo storico: con la stessa conferma della sezione ARCHIVIO delle opzioni
+    const fp = e.querySelector('[data-do=forgetproject]');
+    if (fp) fp.onclick = async () => {
+      let info = null;
+      try { info = await (await fetch('/api/store')).json(); } catch {}
+      const ask = window.storeForgetConfirm ? storeForgetConfirm(d.name, info) : tr('Dimenticare il progetto «{name}»?', { name: d.name });
+      if (!confirm(ask)) return;
+      const r = await post('/api/store', { action: 'forget', confirm: true });
+      if (window.toast) toast(r && r.ok ? tr('Progetto dimenticato: {n} documenti tolti', { n: r.documents }) : tr('Non sono riuscito a dimenticare il progetto'), !!(r && r.ok));
+      if (r && r.ok) closeBottega(); else load(); // il Libro non c'è più
     };
     const mute = e.querySelector('[data-do=mute]');
     if (mute) mute.onchange = async () => { await post('/api/bottega', { action: mute.checked ? 'mute' : 'unmute' }); load(); };

@@ -379,7 +379,8 @@ body.tiny .podlabel small { display: none; }
 }
 #settings h3 { font-family: 'PS2P'; font-size: 10px; color: var(--green); margin: 0 0 8px; }
 /* gruppi di opzioni per argomento */
-#settings fieldset { border: 0; border-top: 2px solid #2a2440; margin: 10px 0 0; padding: 4px 0 0; }
+#settings fieldset { border: 0; border-top: 2px solid #2a2440; margin: 10px 0 0; padding: 4px 0 0; min-width: 0; } /* min-width: 0, se no un menu lungo allarga il pannello */
+#settings label select { min-width: 0; max-width: 100%; }
 #settings legend { font-family: 'PS2P'; font-size: 8px; color: var(--yellow); padding: 0 6px 0 0; }
 /* SALVA sempre a portata di mano, anche in fondo a una lista lunga */
 #settings .save-bar { position: sticky; bottom: -10px; margin: 10px -12px -10px; padding: 8px 12px; background: #14111f; border-top: 2px solid #2a2440; display: flex; align-items: center; gap: 10px; }
@@ -497,6 +498,9 @@ body.widget #widget { display: block; flex: 1; padding: 6px 8px; overflow: hidde
 #settings .stat p { margin: 0 0 6px; word-break: break-word; }
 #settings .stat button { font-size: 7px; }
 #settings .embedopts > p { margin: 4px 0; font-size: 15px; color: var(--ink); }
+#settings .storeopts > p { margin: 4px 0; font-size: 15px; color: var(--ink); }
+#settings .storestate .btns { display: flex; flex-wrap: wrap; gap: 6px; }
+#settings .storestate select, #settings .storestate input[type=text] { flex: 1 1 auto; min-width: 0; max-width: 70%; }
 #settings .embedstate code { font-family: 'VT', monospace; color: var(--yellow); }
 #settings .embedstate .on { color: var(--green, #00E436); }
 #settings .embedstate .bad { color: #FF004D; }
@@ -639,6 +643,7 @@ body.tiny .balloon .ung { display: none; }
 #bottega .mute { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 16px; color: var(--ink); cursor: pointer; }
 #bottega button { font-family: 'PS2P'; font-size: 7px; background: #2a2440; color: var(--ink); border: 0; padding: 5px 7px; cursor: pointer; }
 #bottega button.danger { background: #3a1420; color: #ff77a8; }
+#bottega button.forgetproject { display: block; width: auto; margin: -4px 0 8px auto; font-size: 7px; } /* raro e distruttivo: piccolo, a destra */
 #bottega .prog { color: var(--yellow); }
 #bottega .list { flex: 1; min-height: 0; overflow: auto; }
 #bottega .lesson { border: 2px solid #2a2440; padding: 6px 8px; margin-bottom: 6px; }

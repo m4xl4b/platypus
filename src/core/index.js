@@ -429,10 +429,11 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   let folders = { at: 0, map: new Map() };
   function projectFolder(key) {
     const keys = history.keys;
-    for (const s of state.sessions.values()) if (!s.demo && s.cwd && (keys.keyNow(s.cwd) === key || projectKey(s.cwd) === key)) return s.cwd;
+    // keyIfKnown: cercare una cartella non deve chiedere niente a git né registrare progetti (un progetto dimenticato non rinasce)
+    for (const s of state.sessions.values()) if (!s.demo && s.cwd && (keys.keyIfKnown(s.cwd) === key || projectKey(s.cwd) === key)) return s.cwd;
     if (Date.now() - folders.at > 30000) {
       const map = new Map();
-      try { for (const x of listArchive({ base, limit: 400 })) if (x.cwd) for (const k of [keys.keyNow(x.cwd), projectKey(x.cwd)]) if (!map.has(k)) map.set(k, x.cwd); } catch {}
+      try { for (const x of listArchive({ base, limit: 400 })) if (x.cwd) for (const k of [keys.keyIfKnown(x.cwd), projectKey(x.cwd)]) if (!map.has(k)) map.set(k, x.cwd); } catch {}
       folders = { at: Date.now(), map };
     }
     return folders.map.get(key) || '';

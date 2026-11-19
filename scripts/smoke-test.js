@@ -182,7 +182,7 @@ process.on('exit', code => {
   const live = wfs.find(r => r.name === 'policy-review'), past = wfs.find(r => r.name === 'gap-analysis');
   ok(live && live.status === 'running' && live.phases.length === 4 && past && past.status === 'completed' && past.phases.some(p => p.failed), `demo: workflow in corso (${live && live.phases.map(p => p.done + '/' + p.total).join(' ')}) e uno finito con un fallimento`);
   ok(st.sessions.some(s => (s.messages || []).length), 'demo: un messaggio tra agenti (SendMessage)');
-  for (const p of ['/', '/i18n.js', '/i18n-runtime.js', '/game.js', '/worldmap.js', '/bottega.js', '/report', '/api/settings', '/api/stats/costs', '/api/report']) {
+  for (const p of ['/', '/i18n.js', '/i18n-runtime.js', '/game.js', '/worldmap.js', '/bottega.js', '/store-ui.js', '/report', '/api/settings', '/api/stats/costs', '/api/report']) {
     const r = await get(port, p);
     ok(r.status === 200, `GET ${p} → ${r.status}`);
   }
