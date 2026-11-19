@@ -1057,11 +1057,67 @@ async function scarTests(ok) {
   }
 }
 
+// 2.14, R5: quello che l'ufficio riceve per disegnare la paura (a.fear nello stato) e l'opzione fearEnabled
+function fearViewTests(ok) {
+  const { OfficeState, DEFAULT_SETTINGS } = require(path.join(ROOT, 'src', 'core', 'state'));
+  const fear = require(path.join(ROOT, 'src', 'core', 'fear'));
+  const iso = t => new Date(t).toISOString();
+  let now = Date.parse('2026-11-19T15:00:00Z'), n = 0;
+  const st = new OfficeState({ clock: () => now, settings: {} });
+  const S = 'sess-view-0001', cwd = '/home/u/proj';
+  const line = (type, content) => ({ type, timestamp: iso(now += 1000), cwd, gitBranch: 'feature/x', message: { role: type, content, ...(type === 'assistant' ? { id: 'm' + (++n), usage: { input_tokens: 1, output_tokens: 1 } } : {}) } });
+  const bash = (id, command, out, isErr = false) => {
+    st.applyTranscriptLine(S, null, line('assistant', [{ type: 'tool_use', id, name: 'Bash', input: { command } }]));
+    if (out !== undefined) st.applyTranscriptLine(S, null, line('user', [{ type: 'tool_result', tool_use_id: id, content: out, is_error: isErr }]));
+  };
+  const mainView = () => st.snapshot().sessions.find(s => s.id === S).main.fear;
+  try {
+    ok(DEFAULT_SETTINGS.fearEnabled === true, 'ufficio: la paura è accesa di base (osserva soltanto)');
+    st.applyTranscriptLine(S, null, line('user', 'sistema il login'));
+    bash('v1', 'npm test', 'ok');
+    ok(mainView() === null, 'ufficio: senza azioni rischiose l\'agente non ha niente da mostrare');
+    bash('v2', 'git push --force origin main');
+    const v = mainView();
+    ok(v && v.last && v.last.id === 'v2' && v.last.level === 3 && v.last.missed === true && v.last.shape && /main branch|branch principale/.test(v.last.reasons.join(' ')) && v.last.advice.length >= 2,
+      'ufficio: l\'ultima azione rischiosa arriva con livello, paura mancata, il perché e i consigli');
+    ok(!JSON.stringify(v).includes('--force origin'), 'ufficio: del comando arriva solo la forma della regola');
+    bash('v3', 'git add -A && git commit -m wip', 'ok');
+    bash('v4', 'git reset --hard HEAD~1', 'ok');
+    const v4 = mainView().last;
+    ok(v4.id === 'v4' && v4.missed === false && v4.level === 2, 'ufficio: dopo un commit, il reset --hard è una paura giusta (il personaggio suda)');
+    now += fear.FRESH_MS + 1000;
+    ok(mainView() === null, 'ufficio: dopo due minuti l\'azione rischiosa non si mostra più');
+    // la cicatrice resta per il resto della sessione
+    const s = st.sessions.get(S);
+    s.main.world.scarAt = now - 5000;
+    now += 3600000;
+    ok(mainView() && mainView().scarAt === s.main.world.scarAt && !mainView().last, 'ufficio: la cicatrice resta anche un\'ora dopo, senza azione recente');
+    // markScars la mette sul mondo dell'agente
+    const st2 = new OfficeState({ clock: () => now, settings: {} });
+    const S2 = 'sess-view-0002';
+    const l2 = (type, content) => ({ ...line(type, content) });
+    st2.applyTranscriptLine(S2, null, l2('user', 'pulisci'));
+    st2.applyTranscriptLine(S2, null, l2('assistant', [{ type: 'tool_use', id: 'w1', name: 'Bash', input: { command: 'git clean -fd' } }]));
+    st2.applyTranscriptLine(S2, null, l2('user', [{ type: 'tool_result', tool_use_id: 'w1', content: 'ok' }]));
+    st2.applyTranscriptLine(S2, null, l2('user', 'hai cancellato i miei appunti'));
+    const s2 = st2.sessions.get(S2);
+    fear.markScars(s2, [{ id: 'main', name: 'Claude', world: s2.main.world, mind: s2.main.mind }]);
+    ok(s2.main.world.scarAt > 0 && st2.snapshot().sessions.find(x => x.id === S2).main.fear.scarAt === s2.main.world.scarAt, 'ufficio: markScars mette la cicatrice sul personaggio');
+    st2.stop && st2.stop();
+    // l'opzione si spegne e si riaccende come le altre
+    st.setSettings({ fearEnabled: false });
+    ok(st.settings.fearEnabled === false && st.snapshot().settings.fearEnabled === false, 'ufficio: fearEnabled si spegne dalle opzioni');
+    st.setSettings({ fearEnabled: 'sì' });
+    ok(st.settings.fearEnabled === true, 'ufficio: e si riaccende');
+  } finally { st.stop && st.stop(); }
+}
+
 function run(ok) {
   console.log('libro della bottega');
   bottegaTests(ok);
   riskTests(ok);
   prudenceTests(ok);
+  fearViewTests(ok);
   bottegaNameTests(ok);
   elderTests(ok);
   console.log('sorprese');
@@ -1078,7 +1134,7 @@ function run(ok) {
   alertTests(ok);
 }
 
-module.exports = { run, riskTests, prudenceTests, fearStoreTests, scarTests };
+module.exports = { run, riskTests, prudenceTests, fearStoreTests, scarTests, fearViewTests };
 
 if (require.main === module) {
   require('./test-guard').requireTempDataDir('unit-test'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea

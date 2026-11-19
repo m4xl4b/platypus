@@ -389,6 +389,7 @@ body.tiny .podlabel small { display: none; }
 #settings label { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 5px 0; }
 #settings input[type=number] { width: 80px; font-family: 'PS2P'; font-size: 9px; background: #000; color: var(--yellow); border: 2px solid #2a2440; padding: 4px; }
 #settings label.chk { justify-content: flex-start; }
+#settings .note { color: var(--dim); font-size: 14px; line-height: 1.3; margin: 2px 0 6px; } /* la frase d'onestà della paura (2.14) */
 #toast {
   position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 95; font-size: 18px; padding: 6px 12px;
   background: #14111f; border: 3px solid var(--green); box-shadow: 4px 4px 0 #000; max-width: calc(100% - 30px);

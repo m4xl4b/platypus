@@ -80,6 +80,7 @@ const DEFAULT_SETTINGS = {
   approveWaitSec: 120,  // quanto a lungo l'ufficio tiene in sospeso una richiesta
   groundingAlerts: false, // avvisi di ancoraggio: modifiche alla cieca e affermazioni smentite
   elderEnabled: true,   // il Nonno racconta le lezioni del Libro della bottega
+  fearEnabled: true,    // la paura (2.14): l'ufficio mostra le azioni rischiose. Solo osserva: non ferma niente
   // feedback agli agenti (2.11): ogni funzione è off | shadow | on, e parte spenta (vedi feedback.js)
   fbSessionLessons: 'off', // le lezioni del progetto a inizio sessione
   fbElder: 'off',          // il Nonno parla all'agente dopo una trappola nota
@@ -1220,8 +1221,8 @@ class OfficeState extends EventEmitter {
       workflows: [...s.workflows.values()].map(r => this.workflowSnapshot(s, r)),
       messages: s.messages.slice(-30),
       party: s.party,
-      main: supervise(pub(s.main, rate), s, t),
-      subs: [...s.subs.values()].sort((x, y) => x.startedAt - y.startedAt).map(a => pub(numbered(s, a), rate)),
+      main: supervise(pub(s.main, rate, t), s, t),
+      subs: [...s.subs.values()].sort((x, y) => x.startedAt - y.startedAt).map(a => pub(numbered(s, a), rate, t)),
     };
   }
 
@@ -1345,7 +1346,7 @@ function noteModel(a, line) {
   if (e && EFFORTS.has(e)) a.effort = e;
 }
 
-function pub(a, rate) {
+function pub(a, rate, now = Date.now()) {
   const tok = a.tok.in + a.tok.out + a.tok.cr + a.tok.cw;
   return {
     id: a.id, kind: a.kind, type: a.type, seq: a.seq || 0, name: a.name || '', description: a.description,
@@ -1355,6 +1356,7 @@ function pub(a, rate) {
     tokens: tok, cost: weight(a.tok) * rate,
     errStreak: a.errStreak || 0, interruptedAt: a.interruptedAt || 0,
     model: a.model || '', effort: a.effort || '',
+    fear: fear.fearView(a, now), // 2.14: l'ultima azione rischiosa, se recente, e la cicatrice
   };
 }
 

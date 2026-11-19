@@ -71,5 +71,12 @@
   "Qui `{cmd}` ha già distrutto del lavoro. Prima di rifarlo: {advice}.": "Here `{cmd}` already destroyed work. Before doing it again: {advice}.",
   "Cicatrice: {cmd} su {file}": "Scar: {cmd} on {file}",
   "Cicatrice: {cmd}": "Scar: {cmd}",
-  "Dopo questa azione si sono visti i segni di un danno (probabile). La prossima volta, prima: {advice}.": "After this action there were signs of damage (probable). Next time, first: {advice}."
+  "Dopo questa azione si sono visti i segni di un danno (probabile). La prossima volta, prima: {advice}.": "After this action there were signs of damage (probable). Next time, first: {advice}.",
+  "IRREVERSIBILE": "IRREVERSIBLE",
+  "PERICOLO": "DANGER",
+  "{stamp}, probabile: {why}. Prima di farlo: {advice}.": "{stamp}, probably: {why}. Before doing it: {advice}.",
+  "{stamp}, probabile: {why}.": "{stamp}, probably: {why}.",
+  "Paura: l'ufficio mostra le azioni rischiose, e il Nonno arriva quando manca la prudenza": "Fear: the office shows risky actions, and Grandpa comes when prudence is missing",
+  "PAURA E CICATRICI": "FEAR AND SCARS",
+  "Platypus non è una protezione: riconosce schemi noti e può non vedere quello che non conosce. Ogni giudizio è probabile. Qui osserva soltanto, non ferma niente.": "Platypus is not a protection: it recognises known patterns and can miss what it does not know. Every judgement is probable. Here it only observes, it stops nothing."
 }

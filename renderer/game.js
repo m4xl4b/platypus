@@ -555,6 +555,32 @@ async function loadHints() {
   } catch {} finally { elder.busy = false; }
 }
 setInterval(loadHints, 3000);
+// ---- la paura (2.14): l'ultima azione rischiosa di ogni agente arriva dal motore (a.fear). Con la prudenza il
+// personaggio suda e trema (la paura è giusta); senza, resta calmo, ed è questo il punto: non sente niente.
+// Allora arriva il Nonno, gli mette una mano sulla spalla e compare il timbro. Ogni giudizio è "probabile".
+const fearState = { seen: new Map(), queue: [] };
+const fearOn = () => settingOn('fearEnabled');
+function fearStamp(f) { return f.level >= 3 ? tr('IRREVERSIBILE') : tr('PERICOLO'); }
+function fearLine(f) {
+  const why = (f.reasons && f.reasons[0]) || f.shape || '';
+  const advice = (f.advice || []).slice(0, 2).join(tr(' e '));
+  return advice ? tr('{stamp}, probabile: {why}. Prima di farlo: {advice}.', { stamp: fearStamp(f), why, advice }) : tr('{stamp}, probabile: {why}.', { stamp: fearStamp(f), why });
+}
+function updateFear(t) {
+  if (!fearOn() || !snap) { fearState.queue = []; return; }
+  for (const c of chars.values()) {
+    const f = !c.npc && c.data && c.data.fear && c.data.fear.last;
+    if (!f) continue;
+    const key = c.sid + '|' + c.id + '|' + f.id;
+    if (fearState.seen.has(key)) continue;
+    fearState.seen.set(key, t);
+    if (fearState.seen.size > 500) fearState.seen.delete(fearState.seen.keys().next().value);
+    if (snap.now - f.t > 30000) continue; // aprendo l'ufficio, le azioni di qualche minuto fa non fanno più sudare
+    if (!f.missed) c.sweatUntil = t + 4500;
+    else if (f.level >= 2) fearState.queue.push({ sid: c.sid, agent: c.id, f, at: t });
+  }
+  fearState.queue = fearState.queue.filter(q => t - q.at < 20000); // il Nonno ha 20 s per arrivare, poi non ha più senso
+}
 const groundFor = c => (c.npc || c.sid !== ground.sid ? null : { stale: ground.stale.has(c.id), claim: ground.claim.get(c.id) || null, bang: ground.bang.get(c.id) || 0, puzzled: ground.puzzled.has(c.id) });
 
 async function loadCosts() { if (Date.now() - costsT < 60000 && costsData) return; costsT = Date.now(); try { costsData = await (await fetch('/api/stats/costs?days=14')).json(); } catch {} }
@@ -1871,8 +1897,18 @@ function updateNpcs(dt, t) {
   if (hr && hr.fading) { hr.alpha -= dt * 2.5; if (hr.alpha <= 0) { dropNpc(hr); updateNpcs.hrBack = t + 4000; } }
   // il Nonno: quando l'azione in corso di un agente corrisponde a una lezione forte del Libro della bottega
   let gp = npcs.find(n => n.npc === 'elder');
-  if (!settingOn('elderEnabled')) { if (gp) { dropNpc(gp); gp = null; } }
-  else if (!gp && floor && elder.sid === floor.s.id && t > (elder.back.get(floor.s.id) || 0)) {
+  updateFear(t);
+  const seatedAt = id => { const c = chars.get(id); return c && c.phase === 'seated' && !c.errand && deskFor(c.id) ? c : null; };
+  // una paura mancata (2.14): il Nonno va da chi non ha avuto paura. Il livello 3 non aspetta i 3 minuti tra una visita e l'altra
+  const fq = !gp && floor && fearOn() ? fearState.queue.find(q => q.sid === floor.s.id && seatedAt(q.agent) && (q.f.level >= 3 || t > (elder.back.get(floor.s.id) || 0))) : null;
+  if (!settingOn('elderEnabled') && !fearOn()) { if (gp) { dropNpc(gp); gp = null; } }
+  else if (fq) {
+    fearState.queue.splice(fearState.queue.indexOf(fq), 1);
+    gp = makeNpc('elder'); gp.hint = { agent: fq.agent, lessonId: 'fear:' + fq.f.id, kind: 'fear', fear: fq.f, text: fearLine(fq.f) }; gp.victim = fq.agent; gp.place = { kind: 'elevator' }; gp.state = 'go'; npcs.push(gp);
+    openElevator(); npcGo(gp, besidePlace(deskFor(fq.agent)));
+    elder.back.set(floor.s.id, t + 180000);
+  }
+  else if (!gp && floor && settingOn('elderEnabled') && elder.sid === floor.s.id && t > (elder.back.get(floor.s.id) || 0)) {
     const sid = floor.s.id;
     // mai sullo stesso agente due volte di fila per la stessa lezione
     const h = elder.hints.find(x => { const c = chars.get(x.agent); return c && c.phase === 'seated' && !c.errand && deskFor(c.id) && elder.last.get(sid) !== x.agent + '|' + x.lessonId; });
@@ -1891,7 +1927,10 @@ function updateNpcs(dt, t) {
     const elderText = told => gp.hint.text + (told ? ' ' + tr('✓ Detto anche a {name}.', { name: v && v.data ? agentName(v.data) : tr('lui') }) : '');
     if (gp.state === 'go') {
       if (!there) { gp.state = 'exit'; npcGo(gp, { kind: 'elevator' }); }
-      else { gp.state = 'tell'; gp.until = t + 9000; gp.dir = 'right'; gp.told = toldToo(); gp.speech = elderText(gp.told); gp.last = ''; }
+      else {
+        gp.state = 'tell'; gp.until = t + 9000; gp.dir = 'right'; gp.told = toldToo(); gp.speech = elderText(gp.told); gp.last = '';
+        if (gp.hint.kind === 'fear') v.stamp = { text: fearStamp(gp.hint.fear), level: gp.hint.fear.level, from: t, until: t + 9000 }; // il timbro
+      }
     } else if (gp.state === 'tell' && (!there || t > gp.until)) {
       gp.speech = ''; gp.last = ''; gp.state = 'exit'; npcGo(gp, { kind: 'elevator' });
     } else if (gp.state === 'tell' && !gp.told && toldToo()) {
@@ -2037,6 +2076,7 @@ function drawFloorScene(t) {
   list.push(...npcDrawables(t));
   list.sort((a, b) => a.y - b.y);
   for (const d of list) d.draw();
+  for (const c of chars.values()) drawFearStamp(c, t); // dopo i mobili: il timbro sta sulla scrivania, davanti a tutto
   if (isNight()) drawNight(t);
   drawConfetti();
 }
@@ -2523,10 +2563,23 @@ function drawDecor(x, y) {
   if (dress.on && dress.holiday === 'donna') { R(x + 4, y - 2, 2, 2, C.yellow); R(x + 9, y, 2, 2, C.yellow); R(x + 6, y - 4, 2, 2, C.yellow); }
 }
 
+// il timbro rosso della paura mancata (2.14): PERICOLO o IRREVERSIBILE, sbattuto sulla scrivania davanti all'agente
+// (sopra la testa lo coprirebbero fumetti ed etichette delle stanze)
+function drawFearStamp(c, t) {
+  if (!c.stamp || !(c.stamp.until > t) || !fearOn()) return;
+  const txt = c.stamp.text, w = txt.length * 4 + 3, x = Math.round(c.x), sx = Math.round(x - w / 2), sy = Math.round(c.y) + (c.phase === 'seated' ? 4 : 2);
+  const red = c.stamp.level >= 3 ? C.red : '#b13e53';
+  ctx.globalAlpha = Math.max(0, Math.min(1, (t - c.stamp.from) / 150, (c.stamp.until - t) / 400));
+  R(sx - 1, sy - 1, w + 2, 11, red); R(sx, sy, w, 9, '#fff1e8');
+  pixText(txt, sx + 2, sy + 2, red);
+  ctx.globalAlpha = 1;
+}
+
 function drawChar(c, t) {
   const a = c.data || {};
   const L = c.look;
-  const x = Math.round(c.x), y = Math.round(c.y);
+  const sweat = c.sweatUntil > t && fearOn(); // la paura giusta: trema
+  const x = Math.round(c.x) + (sweat ? (((t / 70) | 0) % 2 ? 1 : -1) : 0), y = Math.round(c.y);
   const f = ((t / 140) | 0) % 2;
   const seated = c.phase === 'seated';
   const alpha = Math.max(0, Math.min(1, c.alpha));
@@ -2568,7 +2621,8 @@ function drawChar(c, t) {
     R(x - 7, by - 1 + sw, 2, 2, L.skin); R(x + 5, by - 1 - sw, 2, 2, L.skin);
     if (c.phase === 'break') { R(x + 5, by - 4, 3, 3, C.white); if (((t / 500) | 0) % 2) R(x + 6, by - 7, 1, 2, '#ffffff88'); }
     if (c.npc === 'pest') { R(x + 5, by - 4, 3, 3, C.white); R(x + 6, by - 3, 1, 1, C.red); } // la sua tazza
-    if (c.npc === 'elder') { R(x + 5, by - 6, 4, 6, '#7E2553'); R(x + 5, by - 6, 4, 1, C.yellow); R(x + 8, by - 5, 1, 4, C.white); } // il Libro della bottega
+    if (c.npc === 'elder' && c.hint && c.hint.kind === 'fear' && c.state === 'tell') { R(x + 5, by - 9, 6, 2, L.shirt); R(x + 11, by - 9, 2, 2, L.skin); } // la mano sulla spalla
+    else if (c.npc === 'elder') { R(x + 5, by - 6, 4, 6, '#7E2553'); R(x + 5, by - 6, 4, 1, C.yellow); R(x + 8, by - 5, 1, 4, C.white); } // il Libro della bottega
     if (c.npc === 'hr') { R(x + 5, by - 6, 4, 6, C.brown); R(x + 6, by - 5, 2, 4, C.white); R(x + 6, by - 7, 2, 1, C.lgrey); } // la cartellina dei richiami
   } else {
     R(x - 7, by - 7, 2, 4, L.shirt); R(x + 5, by - 7, 2, 4, L.shirt);
@@ -2613,6 +2667,12 @@ function drawChar(c, t) {
   if (c.annoyedUntil > t) { // nuvoletta grigia: il collega è passato a disturbare
     R(ix - 1, iy - 3, 7, 3, C.dgrey); R(ix, iy - 4, 5, 1, C.dgrey); if (((t / 200) | 0) % 2) R(ix + 2, iy, 1, 2, C.yellow);
   }
+  if (sweat) { // gocce di sudore da tutte e due le parti: ha avuto paura, e ha fatto bene
+    const d = ((t / 180) | 0) % 3, drop = (dx, dy) => { R(dx, dy, 2, 2, '#bdf0ff'); R(dx, dy - 1, 1, 1, '#bdf0ff'); R(dx + 1, dy + 1, 1, 1, '#5fcde4'); };
+    drop(x - 9, hy + d); drop(x + 7, hy + 1 + ((d + 1) % 3)); drop(x - 7, hy - 3 + ((d + 2) % 3));
+  }
+  const fearData = fearOn() && !c.npc && a.fear;
+  if (fearData && fearData.scarAt && !back) { R(x + 1, hy + 2, 1, 1, '#7e2553'); R(x + 2, hy + 3, 1, 1, '#7e2553'); R(x + 3, hy + 4, 1, 1, '#7e2553'); R(x + 1, hy + 4, 1, 1, '#b13e53'); R(x + 3, hy + 2, 1, 1, '#b13e53'); } // la cicatrice, una X sulla guancia: resta per tutta la sessione
   if (c.scoldedUntil > t) { // goccia di sudore: le risorse umane lo stanno richiamando
     const d = ((t / 250) | 0) % 3;
     R(ix + 1, iy - 2 + d, 2, 3, C.blue); R(ix + 2, iy - 3 + d, 1, 1, C.blue);
@@ -3146,6 +3206,7 @@ const SETTINGS_CHECKS = [
   ['outfits', tr('Vestiti per feste, stagioni e meteo')],
   ['groundingAlerts', tr('Avvisi di ancoraggio: modifiche alla cieca e affermazioni smentite')],
   ['elderEnabled', tr('Il Nonno racconta le lezioni del Libro della bottega')],
+  ['fearEnabled', tr('Paura: l\'ufficio mostra le azioni rischiose, e il Nonno arriva quando manca la prudenza')],
   ['bottegaLearn', tr('Il Libro della bottega impara dalle sessioni (dal vivo e dall\'archivio)')],
 ];
 const SETTINGS_TEXTS = [
@@ -3161,6 +3222,7 @@ const SETTINGS_GROUPS = [
   [tr('PERMESSI DAI FUMETTI'), ['approveFromOffice', 'approveWaitSec']],
   [tr('COSTI E REPORT'), ['pricePerMTok', 'reportHour']],
   [tr('LIBRO DELLA BOTTEGA'), ['bottegaLearn', 'elderEnabled']],
+  [tr('PAURA E CICATRICI'), ['fearEnabled']],
   [tr('VITA D\'UFFICIO'), ['partyEnabled', 'pestEnabled', 'pestName', 'catEnabled', 'hrEnabled', 'hrName', 'nightAuto', 'outfits', 'weatherCity']],
   [tr('LINGUA E CARTELLE'), ['lang', 'claudeDirs', 'coworkDirs']],
 ];
@@ -3178,7 +3240,7 @@ function settingsGroupsHtml(st) {
   const placed = new Set(SETTINGS_GROUPS.flatMap(g => g[1]));
   const rest = [...SETTINGS_FIELDS, ...SETTINGS_CHECKS, ...SETTINGS_TEXTS].map(x => x[0]).filter(k => !placed.has(k));
   return [...SETTINGS_GROUPS, ...(rest.length ? [[tr('ALTRO'), rest]] : [])]
-    .map(([title, keys]) => `<fieldset><legend>${esc(title)}</legend>${keys.map(k => settingRow(k, st)).join('')}</fieldset>`).join('');
+    .map(([title, keys]) => `<fieldset><legend>${esc(title)}</legend>${keys.map(k => settingRow(k, st)).join('')}${keys.includes('fearEnabled') ? `<p class="note">${esc(tr('Platypus non è una protezione: riconosce schemi noti e può non vedere quello che non conosce. Ogni giudizio è probabile. Qui osserva soltanto, non ferma niente.'))}</p>` : ''}</fieldset>`).join('');
 }
 const WEATHER_NAMES = { clear: tr('sereno'), partly: tr('poco nuvoloso'), cloudy: tr('nuvoloso'), rain: tr('pioggia'), snow: tr('neve'), storm: tr('temporale'), fog: tr('nebbia') };
 function settingsStatus() {

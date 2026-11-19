@@ -9,7 +9,7 @@
 // mai il comando, mai un percorso fuori dal progetto, mai il messaggio dell'utente.
 
 const { classify, RULES } = require('./risk');
-const { assess, missedFear } = require('./prudence');
+const { assess, missedFear, adviceFor } = require('./prudence');
 
 const MAX_LIMIT = 500;
 
@@ -72,6 +72,9 @@ function markScars(session, agents) {
   const fresh = [];
   for (const sc of scars(session, agents)) {
     const r = sc.step.risk;
+    // la cicatrice sul personaggio (R5): resta per il resto della sessione
+    const ag = (agents || []).find(x => x && x.id === sc.agent);
+    if (ag && ag.world && !(ag.world.scarAt <= sc.at)) ag.world.scarAt = sc.at;
     if (r.outcome === 'damage' && (r.evidence || []).length === sc.evidence.length) continue;
     r.outcome = 'damage'; r.at = sc.at; r.signs = sc.signs;
     r.evidence = sc.evidence.map(id => `${session.id}:${id}`);
@@ -124,4 +127,26 @@ function queryRisks(store, q = {}) {
   });
 }
 
-module.exports = { fearOf, queryRisks, scars, markScars, lastGoal, MAX_LIMIT, SCAR_WINDOW };
+// ---- per l'ufficio (R5): l'ultima azione rischiosa di un agente, se è recente, e la sua cicatrice.
+// I testi nella lingua dell'ufficio; del comando solo la forma della regola.
+const FRESH_MS = 120000;
+function fearView(a, now = Date.now()) {
+  const w = a && a.world;
+  if (!w || !Array.isArray(w.steps)) return null;
+  let last = null;
+  for (let i = w.steps.length - 1; i >= 0 && i >= w.steps.length - 40; i--) { const s = w.steps[i]; if (s && s.risk) { last = s; break; } }
+  const out = {};
+  if (last && now - last.t < FRESH_MS) {
+    const r = last.risk;
+    const top = RULES[(r.ruleIds || [])[0]];
+    out.last = {
+      id: String(last.id || last.t), t: last.t, level: r.level, missed: !!r.missed, prudence: r.prudence, shape: r.shape || '', target: r.target || '',
+      reasons: (r.ruleIds || []).filter(id => RULES[id]).slice(0, 3).map(id => RULES[id].text()), advice: adviceFor(r.missing),
+      undo: top && top.undo ? top.undo() : '', outcome: r.outcome || '',
+    };
+  }
+  if (w.scarAt) out.scarAt = w.scarAt;
+  return out.last || out.scarAt ? out : null;
+}
+
+module.exports = { fearOf, fearView, queryRisks, scars, markScars, lastGoal, MAX_LIMIT, SCAR_WINDOW, FRESH_MS };
