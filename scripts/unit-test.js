@@ -603,9 +603,67 @@ function bottegaNameTests(ok) {
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
+// 2.14, R1: il classificatore del rischio contro la tabella di scripts/risk-cases.js
+function riskCase([level, cmd, rule, o = {}]) {
+  const risk = require(path.join(ROOT, 'src', 'core', 'risk'));
+  const root = o.win ? 'D:/dev/app' : '/home/u/proj', home = o.win ? 'C:/Users/u' : '/home/u';
+  return risk.classify({
+    tool: o.tool || (o.ps ? 'PowerShell' : 'Bash'), input: o.input || { command: cmd },
+    cwd: o.cwd || root, root, home, branch: o.branch,
+    fileState: o.state ? () => o.state : undefined, ...(o.turn || {}),
+  });
+}
+function riskTests(ok) {
+  const risk = require(path.join(ROOT, 'src', 'core', 'risk'));
+  const { CASES } = require('./risk-cases');
+  let wrong = 0;
+  for (const c of CASES) {
+    const r = riskCase(c), [level, cmd, rule, o = {}] = c;
+    const good = r.level === level && (!rule || r.ruleIds.includes(rule)) && (level > 0 || r.ruleIds.length === 0);
+    if (!good) { wrong++; ok(false, `rischio: «${cmd || o.tool}» atteso ${level}${rule ? ' ' + rule : ''}, trovato ${r.level} ${r.ruleIds.join(',')}`); }
+  }
+  ok(CASES.length >= 150 && wrong === 0, `rischio: ${CASES.length} comandi della tabella, ognuno al suo livello e con la sua regola (${wrong} sbagliati)`);
+  const levels = [0, 1, 2, 3].map(l => CASES.filter(c => c[0] === l).length);
+  ok(levels.every(n => n >= 15), 'rischio: la tabella copre tutti i livelli (0–3: ' + levels.join(', ') + ')');
+
+  // il risultato: forma senza argomenti, bersaglio relativo al progetto, prudenze, come si torna indietro
+  const r = riskCase([2, 'git reset --hard origin/feature-secret-name']);
+  ok(r.shape === 'git reset --hard <ref>' && !JSON.stringify(r).includes('secret-name'), 'rischio: del comando resta la forma, mai gli argomenti');
+  ok(r.category === 'git' && r.reach === 'project' && r.prudence.includes('backup') && r.prudence.includes('looked') && /reflog/.test(r.undo) && r.reasons.length === 1, 'rischio: categoria, portata, prudenze che contano e come tornare indietro');
+  const rm = riskCase([2, 'rm -rf /home/u/proj/data/export']);
+  ok(rm.targets.join() === 'data/export' && rm.undo === '', 'rischio: il bersaglio è relativo al progetto; senza rimedio, undo è vuoto');
+  const out = riskCase([3, 'rm -rf /home/u/Documents/private-folder']);
+  ok(out.level === 3 && out.targets.length === 0 && !JSON.stringify(out).includes('private-folder'), 'rischio: un percorso fuori dal progetto non viene riportato');
+  const two = riskCase([3, 'git reset --hard && git push --force origin main']);
+  ok(two.level === 3 && two.ruleIds.slice(0, 2).sort().join() === 'git-push-force-shared,git-push-main' && two.ruleIds[2] === 'git-reset-hard' && two.reach === 'remote', 'rischio: più regole insieme, le più gravi per prime');
+  const en = require(path.join(ROOT, 'src', 'i18n')).withLang('en', () => riskCase([2, 'git clean -fd']));
+  ok(/deletes the files git does not know/.test(en.reasons[0]), 'rischio: i testi sono tradotti in inglese');
+  ok(Object.values(risk.RULES).every(x => x.level >= 1 && x.level <= 3 && typeof x.text() === 'string' && Array.isArray(x.prudence) && x.prudence.length), 'rischio: ogni regola ha livello, testo e prudenze');
+  // segni per chi chiama: ha letto segreti, ha chiamato la rete
+  ok(riskCase([0, 'cat ~/.aws/credentials']).marks.readsSecret && riskCase([0, 'curl https://example.com']).marks.network && !riskCase([0, 'ls']).marks.network, 'rischio: segna la lettura di segreti e le chiamate di rete');
+  ok(riskCase([0, '', '', { tool: 'Read', input: { file_path: '/home/u/.ssh/id_ed25519' } }]).marks.readsSecret, 'rischio: anche lo strumento Read segna la lettura di segreti');
+  // non lancia mai eccezioni, nemmeno con input rotti
+  let threw = 0;
+  for (const bad of [undefined, null, {}, { tool: 'Bash' }, { tool: 'Bash', input: { command: 42 } }, { tool: 'Bash', input: { command: 'rm -rf "unclosed' } }, { tool: 'Bash', input: { command: 'cat <<EOF\nnever closed' } }, { tool: 'Bash', input: { command: '$((((' } }, { tool: 'Write', input: {} }, { tool: 'mcp__x', input: 'text' }]) {
+    try { const x = risk.classify(bad); if (typeof x.level !== 'number') threw++; } catch { threw++; }
+  }
+  ok(threw === 0, 'rischio: input rotti o vuoti non fanno eccezioni');
+  // tempo: p99 sotto 20 ms (in pratica molto meno), anche con un comando lunghissimo
+  const times = [];
+  for (let k = 0; k < 20; k++) for (const c of CASES) { const t0 = process.hrtime.bigint(); riskCase(c); times.push(Number(process.hrtime.bigint() - t0) / 1e6); }
+  times.sort((a, b) => a - b);
+  const p99 = times[Math.floor(times.length * 0.99)];
+  ok(p99 < 20, `rischio: ${times.length} classificazioni, p99 ${p99.toFixed(3)} ms (limite 20)`);
+  const t0 = process.hrtime.bigint();
+  risk.classify({ tool: 'Bash', input: { command: ('echo "$(date)" && ls -la | grep x; ').repeat(5000) + 'rm -rf ~/x' }, cwd: '/home/u/proj', root: '/home/u/proj', home: '/home/u' });
+  const big = Number(process.hrtime.bigint() - t0) / 1e6;
+  ok(big < 20, `rischio: un comando di 200 mila caratteri si ferma al limite e risponde in ${big.toFixed(1)} ms`);
+}
+
 function run(ok) {
   console.log('libro della bottega');
   bottegaTests(ok);
+  riskTests(ok);
   bottegaNameTests(ok);
   elderTests(ok);
   console.log('sorprese');
@@ -622,7 +680,7 @@ function run(ok) {
   alertTests(ok);
 }
 
-module.exports = { run };
+module.exports = { run, riskTests };
 
 if (require.main === module) {
   require('./test-guard').requireTempDataDir('unit-test'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea
