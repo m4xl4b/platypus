@@ -4,6 +4,17 @@ Le versioni di Platypus (fino alla 2.7 si chiamava Agent Office), dalla più rec
 
 *English version: [CHANGELOG.md](CHANGELOG.md).*
 
+## 2.15.0: l'interruzione
+
+La 2.14 ha insegnato a Platypus a vedere le azioni difficili da disfare e ad avvisare. La 2.15 gli lascia fermare la mano, se vuoi, progetto per progetto.
+
+- **L'interruzione, per progetto.** Nella scheda PAURE del Libro un progetto sceglie: **spenta** (di base: Platypus avvisa soltanto), **sempre**, oppure **automatica**. Quando agisce, prima di un'azione irreversibile fatta senza prudenza (un push su `main` senza un'occhiata prima, `rm -rf` fuori dal progetto, `DROP TABLE`, `terraform apply` senza plan…) Claude Code toglie l'approvazione automatica e ti chiede, mostrando il perché: "Platypus (guardia): IRREVERSIBILE (probabile): spinge sul branch principale… Confermi?". Platypus non risponde mai «no» al posto tuo e non cambia mai il comando.
+- **Modalità automatica.** Platypus stima se c'è qualcuno che può rispondere: chiede solo in una sessione interattiva (riga di comando, app desktop, IDE, Cowork) in cui hai scritto negli ultimi 30 minuti, e non per un sottoagente in background. Altrimenti lascia partire l'azione, avvisa soltanto, e nel Libro resta che avrebbe chiesto. Nel dubbio non chiede: è una stima, e lo dice.
+- **Perché non sempre «sempre»:** in una sessione dove nessuno può rispondere (uno script con `claude -p`, un agente in background) Claude Code trasforma la domanda in un rifiuto automatico, e dall'hook Platypus non può riconoscere una sessione così. *Sempre* lo dice, e prima di sceglierlo chiede una conferma.
+- **Regole normali qui.** *NORMALE QUI* accanto a una regola («qui `terraform apply` è normale») zittisce sia l'interruzione sia il messaggio della paura per quel progetto; *ANNULLA* torna indietro.
+- **Che cosa serve:** gli hook di feedback con `PreToolUse`, come nella 2.14; la scheda PAURE dice quando mancano o sono della 2.13. Se Platypus è chiuso o lento, Claude Code prosegue come se l'interruzione non ci fosse.
+- **La paura che avvisa resta com'era.** Platypus non è una protezione: riconosce schemi noti e può non vedere quello che non conosce.
+
 ## 2.14.0: la paura e il Nonno
 
 Un agente non ha istinto di sopravvivenza: per lui `git reset --hard` pesa come `ls`. La 2.14 gli presta una paura da fuori, e fa del Nonno il custode di quello che non si può disfare. Platypus non è una protezione: riconosce schemi noti, dice "probabile", e può non vedere quello che non conosce.

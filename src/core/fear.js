@@ -220,4 +220,10 @@ function reportDay(store, from, to) {
   return out;
 }
 
-module.exports = { summary, reportDay, SUMMARY_DAYS, permissionView, permissionLine, fearOf, fearView, queryRisks, scars, markScars, lastGoal, MAX_LIMIT, SCAR_WINDOW, FRESH_MS };
+// le regole accettate di un progetto, con il testo (R8): [{ id, level, text, shape, t }]
+const RULE_IDS = Object.keys(RULES);
+function acceptedView(accepted) {
+  return Object.entries(accepted || {}).filter(([id]) => RULES[id]).map(([id, t]) => ({ id, level: RULES[id].level, text: RULES[id].text(), shape: RULES[id].shape, t })).sort((a, b) => b.level - a.level || b.t - a.t);
+}
+
+module.exports = { acceptedView, RULE_IDS, summary, reportDay, SUMMARY_DAYS, permissionView, permissionLine, fearOf, fearView, queryRisks, scars, markScars, lastGoal, MAX_LIMIT, SCAR_WINDOW, FRESH_MS };

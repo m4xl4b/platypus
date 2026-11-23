@@ -4,6 +4,17 @@ Platypus releases (up to 2.7 it was called Agent Office), newest first.
 
 *Versione italiana: [CHANGELOG.it.md](CHANGELOG.it.md).*
 
+## 2.15.0: the interruption
+
+2.14 taught Platypus to see the actions that are hard to undo and to warn about them. 2.15 lets it stop the hand, if you want, project by project.
+
+- **The interruption, per project.** In the Book's FEARS tab, a project can choose: **off** (the default: Platypus only warns), **always**, or **automatic**. When it acts, before an irreversible action taken without prudence (a push to `main` with no look first, `rm -rf` outside the project, `DROP TABLE`, `terraform apply` with no plan…) Claude Code takes the automatic approval away and asks you, showing why: "Platypus (guard): IRREVERSIBLE (probably): pushes to the main branch… Do you confirm?". Platypus never answers "no" for you and never changes the command.
+- **Automatic mode.** Platypus estimates whether someone can answer: it asks only in an interactive session (command line, desktop app, IDE, Cowork) where you wrote in the last 30 minutes, and not for a background subagent. Otherwise it lets the action run, warns only, and notes in the Book that it would have asked. In doubt it does not ask: it is an estimate, and it says so.
+- **Why not always "always":** in a session where nobody can answer (a script with `claude -p`, a background agent), Claude Code turns the question into an automatic refusal, and Platypus cannot tell such a session from the hook. *Always* says so, and asks for a confirmation before you choose it.
+- **Rules that are normal here.** *NORMAL HERE* next to a rule ("here `terraform apply` is normal") silences both the interruption and the fear message for that project; *CANCEL* undoes it.
+- **What it needs:** the feedback hooks with `PreToolUse`, as in 2.14; the FEARS tab says when they are missing or from 2.13. If Platypus is closed or slow, Claude Code goes on as if the interruption did not exist.
+- **The fear that warns stays as it was.** Platypus is not a protection: it recognises known patterns and can miss what it does not know.
+
 ## 2.14.0: fear and the elder
 
 An agent has no survival instinct: to it, `git reset --hard` weighs the same as `ls`. 2.14 lends it a fear from outside, and makes Grandpa the keeper of what cannot be undone. Platypus is not a protection: it recognises known patterns, says "probable", and can miss what it does not know.

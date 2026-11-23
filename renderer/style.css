@@ -695,6 +695,9 @@ body.tiny .balloon .ung { display: none; }
 #bottega .frules { width: 100%; border-collapse: collapse; font-size: 15px; } #bottega .frules th { text-align: left; color: var(--dim); font-weight: normal; }
 #bottega .frules td, #bottega .frules th { padding: 2px 4px; border-bottom: 1px solid #2a2440; } #bottega .frules .n { text-align: right; }
 #bottega .fear code { color: #9fd8ff; } #bottega .fear .dmg { color: #ff004d; }
+/* l'interruzione (R8): tre pulsanti, uno acceso */
+#bottega .fear .seg { display: flex; gap: 4px; margin: 4px 0; } #bottega .fear .seg button.on, #bottega .fear button[data-accept].on { background: var(--yellow); color: #000; }
+#bottega .fear .warn { color: var(--orange); } #bottega .fear .frules button { padding: 1px 4px; font-size: 7px; }
 #bottega .fbsum b { color: var(--yellow); font-weight: normal; margin-right: 6px; }
 #bottega .fbsum p { margin: 4px 0 0; font-size: 14px; }
 /* scheda STORIA: una linea per metrica (2px, colore validato sul fondo del Libro), base e guida al passaggio del mouse a 1px */

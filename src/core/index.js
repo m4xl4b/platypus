@@ -54,6 +54,7 @@ const { History } = require('./history');
 const { runRetention } = require('./retention');
 const experiments = require('./experiments');
 const fear = require('./fear');
+const guard = require('./guard');
 const historyQuery = require('./history-query');
 const search = require('./search');
 const { demoHistoryStore } = require('./demo-history');
@@ -287,6 +288,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         now: Date.now, deadline: t0 + FEEDBACK_MS, session: s, cwd, settings: s && s.demo ? DEMO_FEEDBACK : state.settings,
         lessons: cwd => { try { return bottega.view(cwd).lessons; } catch { return []; } },
         muted: cwd => bottega.muted(cwd),
+        accepted: cwd => bottega.acceptedOf(cwd), // le regole accettate come normali (2.14, R8)
         // i progetti della demo sono finti: anche se una cartella con quel nome esiste sul computer, non la guardiamo
         hasSection: cwd => (s && s.demo ? false : claudemd.hasSection(cwd)),
         // i passi già visti dell'agente che ha mandato l'hook (il principale, o il sottoagente con quell'identificativo)
@@ -299,6 +301,24 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       }, feedbackGate);
       out = r.out; entry = r.entry;
       if (entry && entry.mode === 'shadow') feedbackStats.shadow++;
+      // la guardia (2.14, R8): al PreToolUse, per un'azione irreversibile senza prudenza, chiede a te invece di lasciar
+      // partire l'azione. Per progetto (Libro, scheda PAURE): spenta, sempre, o automatica (stima se c'è qualcuno)
+      // (non dipende da "Non parlare agli agenti": la guardia chiede a te, non all'agente)
+      if (ev === 'PreToolUse' && s && !s.demo && cwd) {
+        const a = j.agent_id ? s.subs.get(j.agent_id) : s.main;
+        const g = guard.decide({ s, a, input: j, mode: bottega.guardOf(cwd), accepted: bottega.acceptedOf(cwd) });
+        if (g) {
+          const ctxText = out && out.hookSpecificOutput ? out.hookSpecificOutput.additionalContext : '';
+          if (g.ask) out = guard.answer(g, ctxText);
+          // nel registro dei messaggi: "on" se ha chiesto, "shadow" se in automatico ha stimato che nessuno può rispondere
+          try {
+            log.append(cwd, { t: Date.now(), sid: j.session_id, agent: j.agent_id || 'main', name: a ? displayName(a) : '', feature: 'guard', mode: g.ask ? 'on' : 'shadow', event: 'PreToolUse',
+              tag: g.risk.ruleIds[0] + '/' + g.mode, text: g.reason, local: g.estimate ? g.estimate.why : '', about: { kind: 'guard', cmd: g.risk.shape, pat: g.risk.ruleIds[0] },
+              toolUseId: typeof j.tool_use_id === 'string' ? j.tool_use_id.slice(0, 80) : undefined });
+          } catch {}
+          if (g.ask) feedbackStats.guard = (feedbackStats.guard || 0) + 1;
+        }
+      }
       // in esperimento: il gruppo della sessione resta nello storico (mai per la demo)
       if (entry && entry.group && !(s && s.demo)) history.recordExperiment({ cwd, sid: entry.sid, feature: entry.feature, group: entry.group, t: entry.t });
     } catch { feedbackStats.errors++; out = null; }
@@ -616,6 +636,15 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         if (!cwd) return json(res, 404, { ok: false });
         // il progetto non vuole che Platypus parli ai suoi agenti (o lo vuole di nuovo)
         if (j.action === 'mute' || j.action === 'unmute') return json(res, 200, { ok: true, mute: bottega.setMute(cwd, j.action === 'mute') });
+        // la guardia del progetto e le regole accettate (2.14, R8): solo dall'ufficio locale (il server rifiuta già Host e Origin non locali)
+        if (j.action === 'guard') {
+          if (!guard.MODES.includes(j.mode)) return json(res, 400, { ok: false });
+          return json(res, 200, { ok: true, guard: bottega.setGuard(cwd, j.mode) });
+        }
+        if (j.action === 'accept' || j.action === 'unaccept') {
+          if (!fear.RULE_IDS.includes(String(j.rule || ''))) return json(res, 400, { ok: false });
+          return json(res, 200, { ok: true, accepted: bottega.accept(cwd, String(j.rule), j.action === 'accept') });
+        }
         const ok = bottega.act(cwd, String(j.action || ''), String(j.id || ''));
         return json(res, ok ? 200 : 404, { ok });
       }
@@ -772,7 +801,10 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         const sc = historyScope(q);
         if (!sc) return json(res, 404, { ok: false });
         if (!sc.store) return json(res, 200, { ok: true, demo: true, ...fear.summary(null, {}) });
-        return json(res, 200, { ok: true, demo: sc.demo, ...fear.summary(sc.store, { projects: sc.projects, now: Date.now() }) });
+        const fcwd = projectCwd(q);
+        hooksInstalled(); // aggiorna hooksCache
+        const extra = fcwd ? { guard: bottega.guardOf(fcwd), accepted: fear.acceptedView(bottega.acceptedOf(fcwd)), hooks: { feedback: !!hooksCache.f, outdated: !!hooksCache.fo } } : {};
+        return json(res, 200, { ok: true, demo: sc.demo, ...fear.summary(sc.store, { projects: sc.projects, now: Date.now() }), ...extra });
       } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
     }
     // le azioni rischiose salvate (2.14): per il progetto (sid, cwd, key o project) o per tutti; session, from, to, missed=1
