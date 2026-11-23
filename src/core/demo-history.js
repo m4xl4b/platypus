@@ -81,7 +81,7 @@ function seedDemoHistory(store, now = Date.now()) {
                 const group = groupOf(sid, 'fear'), u = rf();
                 const outcome = u < 0.2 ? 'unclear' : (u - 0.2) / 0.8 < (group === 'on' ? 0.62 : 0.3) ? 'helped' : 'ignored';
                 feedback.put({ project: key, t: rt - 1000, sid, agent: 'main', name: 'CLAUDE', feature: 'fear', mode: group, group, event: 'PreToolUse', tag: rule,
-                  text: 'Platypus: this command is dangerous. Missing in the last actions: a commit or a copy. If the user did not ask for exactly this, first make a commit or a copy, or ask them.', about: { kind: 'fear', cmd: shape, pat: rule }, outcome, at: rt + 600000 });
+                  text: 'Platypus: the command you just ran is dangerous. Missing in the actions before it: a commit or a copy. If the user did not ask for exactly this, check what it changed and tell them now. Before the next risky action: make a commit or a copy.', about: { kind: 'fear', cmd: shape, pat: rule }, outcome, at: rt + 600000 });
                 nFeedback++;
               }
             }

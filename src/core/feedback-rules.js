@@ -242,8 +242,8 @@ function driftBack(input, ctx) {
     { once: 'drift|' + (input.agent_id || 'main') + '|' + d.goal.t, tag: 'run=' + d.run });
 }
 
-// ---- 2.14, R7 · la paura prestata: prima di un'azione di livello 2 o più senza abbastanza prudenza, Platypus dice all'agente
-// che cosa rischia e che cosa manca. Una volta per regola per sessione. Se il Libro ha una cicatrice proprio su quell'azione,
+// ---- 2.14, R7 · la paura prestata: a un'azione di livello 2 o più senza abbastanza prudenza, Platypus dice all'agente
+// che cosa ha rischiato, che cosa mancava e che cosa fare adesso (il messaggio gli arriva con il risultato, vedi R0). Una volta per regola per sessione. Se il Libro ha una cicatrice proprio su quell'azione,
 // il messaggio la cita: così il Nonno e la paura non dicono due volte la stessa cosa.
 const MISSING = { looked: () => tr('uno sguardo prima'), backup: () => tr('un commit o una copia'), dryrun: () => tr('una prova a vuoto'), clean: () => tr('un albero di lavoro pulito') };
 function fearBefore(input, ctx) {
@@ -266,12 +266,15 @@ function fearBefore(input, ctx) {
   } catch {}
   const missing = f.prudence.missing.filter(k => MISSING[k]);
   return two(() => {
-    // il perché si traduce qui dentro: two() chiama questa funzione una volta per lingua
-    const parts = [tr('questo comando è {level} ({why}).', { level: f.risk.level >= 3 ? tr('irreversibile') : tr('pericoloso'), why: RISK_RULES[rule].text() })];
-    if (missing.length) parts.push(tr('Nelle ultime azioni manca: {what}.', { what: missing.map(k => MISSING[k]()).join(tr(', ')) }));
+    // il perché si traduce qui dentro: two() chiama questa funzione una volta per lingua.
+    // R0 (2026-11-23): il contesto di PreToolUse arriva all'agente insieme al risultato, mai prima. Quindi il messaggio
+    // parla dell'azione appena fatta e di che cosa fare adesso; finché non si decide la guardia (R8), resta così.
+    const parts = [tr('il comando che hai appena lanciato è {level} ({why}).', { level: f.risk.level >= 3 ? tr('irreversibile') : tr('pericoloso'), why: RISK_RULES[rule].text() })];
+    if (missing.length) parts.push(tr('Nelle azioni prima mancava: {what}.', { what: missing.map(k => MISSING[k]()).join(tr(', ')) }));
     if (scar) parts.push(tr('In questo progetto ha già distrutto del lavoro una volta.'));
+    parts.push(tr('Se l\'utente non ha chiesto proprio questo, controlla che cosa ha cambiato e diglielo subito.'));
     const advice = adviceFor(missing);
-    parts.push(advice.length ? tr('Se l\'utente non ha chiesto proprio questo, prima {advice}, oppure chiediglielo.', { advice: advice.slice(0, 2).join(tr(' e ')) }) : tr('Se l\'utente non ha chiesto proprio questo, chiediglielo prima.'));
+    if (advice.length) parts.push(tr('Prima della prossima azione rischiosa: {advice}.', { advice: advice.slice(0, 2).join(tr(' e ')) }));
     return parts.join(' ');
   }, { onceSession: 'fear:' + rule, tag: rule + (scar ? '/scar' : ''), about: { kind: 'fear', cmd: f.risk.shape, pat: rule, file: target } });
 }

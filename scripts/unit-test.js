@@ -1159,15 +1159,15 @@ function fearFeedbackTests(ok) {
   const ctxOf = (x, settings = { fbFear: 'on' }, lessons = []) => ({ now: () => now, session: x.s, cwd, settings, lessons: () => lessons });
   const stops = [];
   try {
-    // acceso: il messaggio arriva prima dell'azione, in inglese, con il perché, che cosa manca e che cosa fare
+    // acceso: il messaggio parla dell'azione appena fatta (arriva con il risultato, R0), in inglese, con il perché, che cosa mancava e che cosa fare adesso
     let x = mk(); stops.push(x.st);
     x.say('sistema il test del login');
     x.bash('a1', 'npm test');
     let g = gate();
     let r = fb.respond(x.hook('git push --force origin main'), ctxOf(x), g);
     const txt = r.out && r.out.hookSpecificOutput.additionalContext;
-    ok(r.out && r.out.hookSpecificOutput.hookEventName === 'PreToolUse' && /^Platypus: this command is irreversible \(pushes to the main branch\)\./.test(txt) && /Missing in the last actions: .*a commit or a copy/.test(txt) && /If the user did not ask for exactly this, first .* or ask them\./.test(txt) && txt.length <= fb.MAX_TEXT,
-      'paura all\'agente: prima dell\'azione, irreversibile, che cosa manca e che cosa fare → ' + txt);
+    ok(r.out && r.out.hookSpecificOutput.hookEventName === 'PreToolUse' && /^Platypus: the command you just ran is irreversible \(pushes to the main branch\)\./.test(txt) && /Missing in the actions before it: .*a commit or a copy/.test(txt) && /If the user did not ask for exactly this, check what it changed and tell them now\./.test(txt) && /Before the next risky action: .*make a commit or a copy\.$/.test(txt) && txt.length <= fb.MAX_TEXT,
+      'paura all\'agente: dopo l\'azione, irreversibile, che cosa mancava e che cosa fare adesso → ' + txt);
     ok(r.entry.feature === 'fear' && r.entry.mode === 'on' && r.entry.event === 'PreToolUse' && r.entry.about.kind === 'fear' && r.entry.about.cmd === 'git push <remote> main' && /^git-push/.test(r.entry.tag) && r.entry.toolUseId, 'paura all\'agente: nel registro la funzione, la regola e la forma del comando');
     ok(!JSON.stringify(r.entry).includes('--force origin'), 'paura all\'agente: nel registro non c\'è il comando');
     // una volta per regola per sessione: né allo stesso agente né a un altro
@@ -1210,7 +1210,7 @@ function fearFeedbackTests(ok) {
       x = mk(); stops.push(x.st);
       x.say('sistema il login');
       r = fb.respond(x.hook('git clean -fd'), ctxOf(x), gate());
-      ok(/^Platypus: this command is dangerous/.test(r.out.hookSpecificOutput.additionalContext) && /^Platypus: questo comando è pericoloso/.test(r.entry.local), 'paura all\'agente: inglese per l\'agente, la lingua dell\'ufficio nel registro');
+      ok(/^Platypus: the command you just ran is dangerous/.test(r.out.hookSpecificOutput.additionalContext) && /^Platypus: il comando che hai appena lanciato è pericoloso/.test(r.entry.local), 'paura all\'agente: inglese per l\'agente, la lingua dell\'ufficio nel registro');
     } finally { i18n.setLang(prev); }
 
     // ---- l'esito: nelle 3 azioni dopo quella avvisata
