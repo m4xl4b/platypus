@@ -18,7 +18,7 @@ Un agente non ha istinto di sopravvivenza: per lui `git reset --hard` pesa come 
 - **La demo** lo recita sul piano di isms-docs ogni quattro minuti, con tre mesi di storico finto della paura. Non lancia mai un comando.
 - **Privacy:** lo storico tiene la regola, il livello, la prudenza, la forma del comando (`git reset --hard <ref>`) e il bersaglio relativo al progetto, mai il comando.
 - **Corretto:** il Nonno non fa più il suo discorso dall'ascensore quando le stanze di un piano si spostano.
-- **Non in questa versione:** la guardia che ti ridà la decisione sulle azioni irreversibili; aspetta le prove sugli hook di Claude Code.
+- **Non in questa versione:** la guardia che ti ridà la decisione sulle azioni irreversibili. Gli hook di Claude Code possono chiedere prima di un'azione, ma in una sessione dove nessuno può rispondere (`claude -p`, agenti in background) la domanda diventa un rifiuto, e l'hook non sa distinguere quelle sessioni; come gestirlo è ancora da decidere.
 
 ## 2.13.0: uno storico delle tue sessioni
 

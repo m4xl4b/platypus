@@ -18,7 +18,7 @@ An agent has no survival instinct: to it, `git reset --hard` weighs the same as 
 - **The demo** acts it out on the isms-docs floor every four minutes, with three months of fake fear history. It never runs a command.
 - **Privacy:** the history keeps the rule, the level, the prudence, the shape of the command (`git reset --hard <ref>`) and the target relative to the project, never the command.
 - **Fixed:** Grandpa no longer gives his talk from the lift when the rooms of a floor move.
-- **Not in this version:** the guard that gives you back the decision on irreversible actions; it waits for tests on Claude Code's hooks.
+- **Not in this version:** the guard that gives you back the decision on irreversible actions. Claude Code's hooks can ask before an action, but in a session where nobody can answer (`claude -p`, background agents) the question becomes a refusal, and the hook cannot tell those sessions apart; how to handle that is still open.
 
 ## 2.13.0: a history of your sessions
 
