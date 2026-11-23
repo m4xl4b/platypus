@@ -617,4 +617,4 @@ function classify(action) {
   return scan.result();
 }
 
-module.exports = { classify, lex, sqlRules, makePaths, undoOf, RULES };
+module.exports = { classify, lex, sqlRules, makePaths, undoOf, RULES, MAX_INPUT };
