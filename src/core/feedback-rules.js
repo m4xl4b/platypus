@@ -16,6 +16,9 @@ const { relKey, isProjectFile } = require('./worldmap');
 const { extractClaims, judgeClaim } = require('./grounding');
 const { isTestCommand } = require('./releases');
 const { drift: semanticDrift } = require('./semantic');
+const fearMod = require('./fear');
+const { RULES: RISK_RULES } = require('./risk');
+const { adviceFor } = require('./prudence');
 
 const { tr } = i18n;
 const en = fn => i18n.withLang('en', fn);
@@ -239,12 +242,50 @@ function driftBack(input, ctx) {
     { once: 'drift|' + (input.agent_id || 'main') + '|' + d.goal.t, tag: 'run=' + d.run });
 }
 
+// ---- 2.14, R7 · la paura prestata: a un'azione di livello 2 o più senza abbastanza prudenza, Platypus dice all'agente
+// che cosa ha rischiato, che cosa mancava e che cosa fare adesso (il messaggio gli arriva con il risultato, vedi R0). Una volta per regola per sessione. Se il Libro ha una cicatrice proprio su quell'azione,
+// il messaggio la cita: così il Nonno e la paura non dicono due volte la stessa cosa.
+const MISSING = { looked: () => tr('uno sguardo prima'), backup: () => tr('un commit o una copia'), dryrun: () => tr('una prova a vuoto'), clean: () => tr('un albero di lavoro pulito') };
+function fearBefore(input, ctx) {
+  const s = ctx.session;
+  if (!s || !s.cwd) return null;
+  const a = input.agent_id ? s.subs && s.subs.get(input.agent_id) : s.main;
+  if (!a) return null;
+  const w = a.world;
+  // i passi di questa stessa azione (se il transcript è già arrivato) non sono prudenza
+  const open = new Set(w && w.open ? w.open.values() : []);
+  const steps = w ? w.steps.filter(x => !open.has(x) && x.id !== input.tool_use_id) : [];
+  const f = fearMod.fearOf({ s, a, tool: input.tool_name, input: input.tool_input || {}, steps });
+  if (!f.event || f.risk.level < 2 || !f.missed) return null;
+  const rule = f.risk.ruleIds[0];
+  const target = f.risk.targets[0] || '';
+  let scar = null;
+  try {
+    const strong = (ctx.lessons ? ctx.lessons(s.cwd) : []).filter(l => l && l.kind === 'scar' && l.level === 'lesson' && !l.ignored);
+    scar = strong.find(l => { const [shape, t] = String(l.key).split(' → '); return shape === f.risk.shape && (t === '*' || !target || t === target); }) || null;
+  } catch {}
+  const missing = f.prudence.missing.filter(k => MISSING[k]);
+  return two(() => {
+    // il perché si traduce qui dentro: two() chiama questa funzione una volta per lingua.
+    // R0 (2026-11-23): il contesto di PreToolUse arriva all'agente insieme al risultato, mai prima. Quindi il messaggio
+    // parla dell'azione appena fatta e di che cosa fare adesso; finché non si decide la guardia (R8), resta così.
+    const parts = [tr('il comando che hai appena lanciato è {level} ({why}).', { level: f.risk.level >= 3 ? tr('irreversibile') : tr('pericoloso'), why: RISK_RULES[rule].text() })];
+    if (missing.length) parts.push(tr('Nelle azioni prima mancava: {what}.', { what: missing.map(k => MISSING[k]()).join(tr(', ')) }));
+    if (scar) parts.push(tr('In questo progetto ha già distrutto del lavoro una volta.'));
+    parts.push(tr('Se l\'utente non ha chiesto proprio questo, controlla che cosa ha cambiato e diglielo subito.'));
+    const advice = adviceFor(missing);
+    if (advice.length) parts.push(tr('Prima della prossima azione rischiosa: {advice}.', { advice: advice.slice(0, 2).join(tr(' e ')) }));
+    return parts.join(' ');
+  }, { onceSession: 'fear:' + rule, tag: rule + (scar ? '/scar' : ''), about: { kind: 'fear', cmd: f.risk.shape, pat: rule, file: target } });
+}
+
 // le regole entrano in RULES una volta sola, nell'ordine in cui devono parlare. Dopo un fallimento il Nonno viene prima:
 // quello che il progetto ha già imparato (dove l'errore è stato sistemato, che il comando è instabile) è più preciso
 // dell'avviso generico; se poi l'agente insiste, al fallimento dopo tocca al giro in tondo. Dopo una modifica riuscita
 // viene prima la memoria non aggiornata: riguarda quella modifica, la lezione sul file fragile può aspettare la prossima.
 const ALL = [
   ['SessionStart', 'sessionLessons', sessionLessons],
+  ['PreToolUse', 'fear', fearBefore],
   ['PostToolUseFailure', 'elder', elder], ['PostToolUseFailure', 'loop', loop],
   ['PostToolUse', 'stale', stale], ['PostToolUse', 'elder', elder], ['PostToolUse', 'drift', driftBack],
   ['Stop', 'claims', claims], ['SubagentStop', 'claims', claims],
@@ -255,4 +296,4 @@ function register(rules = feedback.RULES) {
 }
 register();
 
-module.exports = { register, sessionLessons, elder, loop, stale, claims, driftBack, MAX_START };
+module.exports = { register, sessionLessons, elder, loop, stale, claims, driftBack, fearBefore, MAX_START };

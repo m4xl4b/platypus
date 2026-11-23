@@ -114,6 +114,8 @@ process.on('exit', code => {
   // lo store: le stesse prove per ogni backend
   for (const backend of ['memory', 'sqlite']) await require('./store-conformance').run(ok, backend);
   await require('./unit-store').run(ok);
+  await require('./unit-test').fearStoreTests(ok); // 2.14: le azioni rischiose nello storico
+  await require('./unit-test').scarTests(ok); // 2.14: le cicatrici
   await require('./unit-concurrency').run(ok); // processi veri: due che scrivono, uno ucciso, due motori
 
   console.log('motore');
@@ -153,10 +155,24 @@ process.on('exit', code => {
   await sleep(2500);
   const st = JSON.parse((await get(port, '/api/state')).body);
   ok(st.sessions.length >= 4, `demo: ${st.sessions.length} piani, ${st.sessions.reduce((a, s) => a + s.subs.length, 0)} sottoagenti`);
+  // 2.14 (R10): le quattro scene della paura sul piano di isms-docs, recitate in velocità; nessun comando vero
+  {
+    const fs2 = [...core.state.sessions.values()].find(s => s.demo && /isms-docs/.test(s.cwd));
+    const subs = fs2 ? [...fs2.subs.values()] : [];
+    const { tr: trD } = require(path.join(__dirname, '..', 'src', 'i18n'));
+    const by = d => subs.find(a => a.description === trD(d));
+    const lastRisk = a => { const st2 = (a && a.world && a.world.steps) || []; for (let i = st2.length - 1; i >= 0; i--) if (st2[i].risk) return st2[i].risk; return null; };
+    const rReset = lastRisk(by('Rimetti il branch come su origin')), rInfra = lastRisk(by('Aggiorna l\'infrastruttura di prova')), clean = by('Pulisci gli export vecchi');
+    // segna le cicatrici come fa il motore ogni minuto (senza far imparare il Libro: lo prova una parte più avanti)
+    if (fs2) require(path.join(__dirname, '..', 'src', 'core', 'fear')).markScars(fs2, [fs2.main, ...fs2.subs.values()].filter(a => a.world).map(a => ({ id: a.id, name: a.name, world: a.world, mind: a.mind })));
+    ok(rReset && rReset.level === 2 && rReset.missed && rInfra && rInfra.level === 3 && !rInfra.missed && rInfra.present.includes('dryrun') && clean && clean.world.scarAt > 0 && fs2.main.permRisk && fs2.main.permRisk.level === 3 && /mcp|esterno|external/i.test(fs2.main.permRisk.reasons.join(' ')),
+      'demo, la paura: reset senza rete (paura mancata), plan e apply (prudente), la cartella cancellata (cicatrice), la mail MCP (irreversibile)');
+    ok(!core.history.store.collection('risks').count({ session: fs2 ? fs2.id : '-' }), 'demo, la paura: niente nello storico vero');
+  }
   // lo storico: il motore apre il database accanto alle opzioni e lo dice nello stato (S9 di docs/plans/2.13-storage.md)
   const hist0 = await core.historyReady(), sse0 = await sseFirst(port);
-  ok(st.history && st.history.backend === 'sqlite' && st.history.notice === '' && sse0.history && sse0.history.notice === '' && fs.existsSync(path.join(tmp, 'platypus.db')) && hist0 && hist0.done === true && core.history.store.info().collections.length === 7,
-    'storico: il motore apre platypus.db accanto alle opzioni, con le sue sette collezioni, e non ha avvisi da dare');
+  ok(st.history && st.history.backend === 'sqlite' && st.history.notice === '' && sse0.history && sse0.history.notice === '' && fs.existsSync(path.join(tmp, 'platypus.db')) && hist0 && hist0.done === true && core.history.store.info().collections.length === 8,
+    'storico: il motore apre platypus.db accanto alle opzioni, con le sue otto collezioni, e non ha avvisi da dare');
   {
     // un database rovinato non ferma niente: l'ufficio parte lo stesso e lo dice
     const tmpBad = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-rotto-'));
@@ -306,9 +322,9 @@ process.on('exit', code => {
     const hy1 = JSON.parse((await get(port, '/api/history?metric=loops&bucket=day')).body);
     const hyBad = await get(port, '/api/history?metric=boh');
     const lastWeek = hy.metrics && hy.metrics.loops.buckets[hy.metrics.loops.buckets.length - 1];
-    ok(hy.ok && Object.keys(hy.metrics).length === 11 && hy.metrics.loops.buckets.length === 26 && lastWeek.sessions >= 1 && lastWeek.sum >= 1 && hy.metrics.loops.trend.verdict === 'not-enough' && Array.isArray(hy.metrics.feedback.buckets) &&
+    ok(hy.ok && Object.keys(hy.metrics).length === 14 && hy.metrics.missed_fears && hy.metrics.loops.buckets.length === 26 && lastWeek.sessions >= 1 && lastWeek.sum >= 1 && hy.metrics.loops.trend.verdict === 'not-enough' && Array.isArray(hy.metrics.feedback.buckets) &&
       hy1.ok && hy1.bucket === 'day' && hy1.buckets.length >= 176 && hy1.buckets.length <= 182 && hyBad.status === 400,
-      `storico, /api/history: 11 metriche, 26 settimane, la sessione aperta nell'ultima (giri in tondo ${lastWeek && lastWeek.sum}); per giorno; una metrica sconosciuta rifiutata (${hy.ok && Object.keys(hy.metrics).length} metriche, ${hy.metrics && hy.metrics.loops.buckets.length} settimane, ${hy1.buckets && hy1.buckets.length} giorni, ${hy.metrics && hy.metrics.loops.trend.verdict}, ${hyBad.status})`);
+      `storico, /api/history: 14 metriche (con le tre della paura), 26 settimane, la sessione aperta nell'ultima (giri in tondo ${lastWeek && lastWeek.sum}); per giorno; una metrica sconosciuta rifiutata (${hy.ok && Object.keys(hy.metrics).length} metriche, ${hy.metrics && hy.metrics.loops.buckets.length} settimane, ${hy1.buckets && hy1.buckets.length} giorni, ${hy.metrics && hy.metrics.loops.trend.verdict}, ${hyBad.status})`);
     const rr = await core.retention();
     ok(rr && rr.limitBytes === 200 * 1048576 && rr.trimmedForSize === 0 && Object.values(rr.removed).every(n => n === 0) && hs.collection('steps').count({ session: 'bottega-smoke-0001' }) === 4 && JSON.parse(hs.getMeta('retentionLast')).at === rr.at,
       'storico: la conservazione gira nel motore e lascia stare i passi recenti');
@@ -386,6 +402,12 @@ process.on('exit', code => {
   ok(!!(await shellSt.wait(e => e.event === 'counts' && e.data.waiting >= 1)), 'stream delle shell: i contatori vedono l\'attesa');
   await sleep(700);
   ok(shellSt.events.filter(e => e.event === 'notify' && e.data.sid === 'smoke-1').length === 1, 'nessun doppione della notifica');
+  // 2.14 (R6): una richiesta di permesso rischiosa dice livello, perché, prudenza mancante e se si torna indietro
+  await get(port, '/platypus-hook/permission', 'POST', JSON.stringify({ session_id: 'smoke-risk', cwd: tmp, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'git push --force origin main' } }));
+  const nRisk = await shellSt.wait(e => e.event === 'notify' && e.data.kind === 'wait' && e.data.sid === 'smoke-risk');
+  const stRisk = JSON.parse((await get(port, '/api/state')).body).sessions.find(s => s.id === 'smoke-risk');
+  ok(nRisk && /IRREVERSIB/.test(nRisk.data.body) && /(Non si torna indietro|no going back)/.test(nRisk.data.body) && stRisk && stRisk.main.perm && stRisk.main.perm.level === 3 && stRisk.main.perm.missed === true,
+    'paura, permesso: la notifica e lo stato dicono che è irreversibile → ' + (nRisk ? nRisk.data.body.replace(/\n/g, ' / ') : '-'));
   core.notify.off('notify', onNotify);
   shellSt.close();
   const shellBad = shellEvents(port, { Origin: 'http://127.0.0.1:1' });
@@ -702,14 +724,21 @@ process.on('exit', code => {
   {
     // le API dello storico (S10): stato, compatta, esporta, dimentica (con conferma), conservazione
     const si = JSON.parse((await get(port, '/api/store')).body);
+    // 2.14: le azioni rischiose salvate; un progetto sconosciuto risponde 404, come le altre API dello storico
+    const fz = JSON.parse((await get(port, '/api/fear')).body), fz404 = await get(port, '/api/fear?project=nonesiste');
+    const rp = JSON.parse((await get(port, '/api/report')).body);
+    ok(fz.ok && fz.days === 90 && typeof fz.levels === 'object' && Array.isArray(fz.rules) && Array.isArray(fz.recent) && fz404.status === 404 && rp.fear && Array.isArray(rp.fear.byAgent) && Array.isArray(rp.fear.scars),
+      `paura, /api/fear e il report: la scheda del Libro (${fz.total} eventi in ${fz.days} giorni) e le paure del giorno nel report`);
+    const rk = JSON.parse((await get(port, '/api/risks')).body), rkm = JSON.parse((await get(port, '/api/risks?missed=1&limit=5')).body), rk404 = await get(port, '/api/risks?project=nonesiste');
+    ok(rk.ok && Array.isArray(rk.risks) && rk.demo === false && rkm.ok && rkm.risks.every(x => x.missed) && rk404.status === 404, `paura, /api/risks: risponde (${rk.risks.length} eventi), filtra le paure mancate, 404 per un progetto sconosciuto`);
     const fkKey = core.history.keys.keyNow(fakeCwd);
-    ok(si.ok && si.backend === 'sqlite' && si.persistent && si.sizeBytes > 0 && si.usedBytes > 0 && si.limitMB === 200 && si.retention.steps === 90 && si.collections.length === 7 && si.notice === '' && si.projects.some(p => p.key === fkKey && p.name === 'progetto') && Array.isArray(si.backups),
+    ok(si.ok && si.backend === 'sqlite' && si.persistent && si.sizeBytes > 0 && si.usedBytes > 0 && si.limitMB === 200 && si.retention.steps === 90 && si.collections.length === 8 && si.notice === '' && si.projects.some(p => p.key === fkKey && p.name === 'progetto') && Array.isArray(si.backups),
       `storico, /api/store: ${si.backend}, ${si.sizeBytes} byte, ${si.collections.length} collezioni, ${si.projects.length} progetti`);
     const cp = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'compact' }))).body);
     const exDir = path.join(tmp, 'esportazione');
     const ex = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'export', dir: exDir }))).body);
     const exRel = await get(port, '/api/store', 'POST', JSON.stringify({ action: 'export', dir: 'relativa' }));
-    ok(cp.ok && cp.size && cp.size.after > 0 && ex.ok && ex.dir === exDir && fs.readdirSync(exDir).length === 7 && exRel.status === 400, 'storico: compatta, ed esporta in una cartella scelta (un percorso relativo è rifiutato)');
+    ok(cp.ok && cp.size && cp.size.after > 0 && ex.ok && ex.dir === exDir && fs.readdirSync(exDir).length === 8 && exRel.status === 400, 'storico: compatta, ed esporta in una cartella scelta (un percorso relativo è rifiutato)');
     const noConfirm = await get(port, '/api/store', 'POST', JSON.stringify({ action: 'forget', cwd: fakeCwd }));
     // con la demo accesa: il suo Libro è finto e non si dimentica
     core.demo.start({ scale: 0.02 }); await sleep(800);
@@ -731,7 +760,7 @@ process.on('exit', code => {
     const setx = JSON.parse((await get(port, '/api/settings')).body);
     const exp = JSON.parse((await get(port, '/api/feedback/experiment?cwd=' + encodeURIComponent(fakeCwd))).body);
     const exD = JSON.parse((await get(port, '/api/feedback/experiment')).body);
-    ok(setx.fbLoop === 'experiment' && setx.fbClaims === 'shadow' && exp.ok && exp.modes.loop === 'experiment' && exp.minN === 10 && exp.project.length === 3 && exp.all.length === 3 && exD.ok && exD.project === null,
+    ok(setx.fbLoop === 'experiment' && setx.fbClaims === 'shadow' && exp.ok && exp.modes.loop === 'experiment' && exp.minN === 10 && exp.project.length === 4 && exp.all.length === 4 && exp.modes.fear === 'shadow' && exD.ok && exD.project === null,
       'esperimento: l\'opzione si salva (solo per le funzioni che possono essere accese), la rotta dà i risultati per il progetto e per tutti');
     await get(port, '/api/settings', 'POST', JSON.stringify({ fbLoop: 'off', fbClaims: 'off' }));
     const rt = JSON.parse((await get(port, '/api/store', 'POST', JSON.stringify({ action: 'retention' }))).body);
@@ -760,18 +789,18 @@ process.on('exit', code => {
   ok(!hooks.feedbackStatus({ base }), 'hook di feedback: non installati insieme a quelli che osservano');
   const fi = hooks.installFeedback({ port: 47800, base });
   let cur = readS();
-  ok(hooks.feedbackStatus({ base }) && hooks.status({ base }) && fi.events === 5 && countFb(cur) === 5 && cur.model === 'opus', `hook di feedback installati a parte: ${countFb(cur)} eventi`);
+  ok(hooks.feedbackStatus({ base }) && hooks.status({ base }) && fi.events === 6 && countFb(cur) === 6 && cur.model === 'opus' && !hooks.feedbackOutdated({ base }), `hook di feedback installati a parte: ${countFb(cur)} eventi`);
   ok(others(cur) === before, 'gli hook che osservano e quelli dell\'utente restano identici');
-  ok(cur.hooks.Stop.some(g => g.hooks.some(h => h.type === 'http' && h.timeout === 3 && !h.async)) && cur.hooks.PostToolUseFailure.some(g => g.matcher === hooks.FEEDBACK_TOOLS && g.hooks.some(isFb)) && !cur.hooks.PreToolUse.some(g => g.hooks.some(isFb)), 'hook di feedback: http, sincroni, sui soli eventi previsti (mai PreToolUse)');
+  ok(cur.hooks.Stop.some(g => g.hooks.some(h => h.type === 'http' && h.timeout === 3 && !h.async)) && cur.hooks.PostToolUseFailure.some(g => g.matcher === hooks.FEEDBACK_TOOLS && g.hooks.some(isFb)) && cur.hooks.PreToolUse.some(g => g.matcher === hooks.FEAR_TOOLS && /mcp__/.test(g.matcher) && g.hooks.some(isFb)), 'hook di feedback: http, sincroni, sui soli eventi previsti (dalla 2.14 anche PreToolUse, per la paura, con gli strumenti MCP)');
   hooks.installFeedback({ port: 47800, base });
-  ok(countFb(readS()) === 5, 'installarli due volte non li raddoppia');
+  ok(countFb(readS()) === 6, 'installarli due volte non li raddoppia');
   hooks.installFeedback({ port: 47800, base, curl: true });
   cur = readS();
-  ok(countFb(cur) === 5 && cur.hooks.Stop.some(g => g.hooks.some(h => h.type === 'command' && /curl/.test(h.command) && isFb(h))), 'con curl: comandi al posto degli hook http, sempre cinque');
+  ok(countFb(cur) === 6 && cur.hooks.Stop.some(g => g.hooks.some(h => h.type === 'command' && /curl/.test(h.command) && isFb(h))), 'con curl: comandi al posto degli hook http, sempre sei');
   hooks.install({ port: 47800, base }); // reinstallare (o aggiornare) quelli che osservano non tocca quelli di feedback, nemmeno se sono comandi curl
-  ok(countFb(readS()) === 5 && !hooks.outdated({ base }), 'reinstallare gli hook che osservano lascia quelli di feedback');
+  ok(countFb(readS()) === 6 && !hooks.outdated({ base }), 'reinstallare gli hook che osservano lascia quelli di feedback');
   hooks.uninstall({ base });
-  ok(!hooks.status({ base }) && hooks.feedbackStatus({ base }) && countFb(readS()) === 5, 'togliere gli hook che osservano lascia quelli di feedback');
+  ok(!hooks.status({ base }) && hooks.feedbackStatus({ base }) && countFb(readS()) === 6, 'togliere gli hook che osservano lascia quelli di feedback');
   hooks.install({ port: 47800, base });
   const ru = hooks.uninstallFeedback({ base });
   cur = readS();

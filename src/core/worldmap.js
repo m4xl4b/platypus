@@ -257,6 +257,8 @@ class AgentWorld {
       // fino a fine riga: la cartella può avere spazi (es. C:\Users\Mario Rossi\shop)
       const reset = /Shell cwd was reset to ([^\r\n]+)/.exec(text);
       if (reset) this.shellCwd = normSlashes(reset[1].trim());
+      // "git status": resta solo se l'albero era pulito o no (serve alla prudenza, 2.14), mai l'output
+      if (step.act === 'look' && /^run:[^\n]*\bgit\b/.test(step.sig)) { const c = require('./prudence').gitStatusClean(step.sig.slice(4), text); if (c !== null) step.clean = c; }
       // gli elenchi di Grep/Glob hanno percorsi assoluti o già comprensivi della cartella cercata
       if (step.act === 'search') for (const p of listedPaths(text, r)) this.touch(relKey(p, cwd), LV.seen, t);
       else if (step.act === 'read' && step.target && !step.target.startsWith('web:')) {

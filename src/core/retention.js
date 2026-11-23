@@ -19,7 +19,7 @@ const DEFAULT_MAX_MB = 200;
 // le opzioni: i giorni di conservazione per collezione (0 = per sempre) e il limite in MB (0 = nessun limite)
 const SETTINGS = { storeKeepSteps: 'steps', storeKeepSessions: 'sessions', storeKeepFeedback: 'feedback', storeKeepLessons: 'lessons' };
 
-// dalle opzioni ai giorni per collezione: { steps: 90, sessions: 365, … } (experiments segue feedback)
+// dalle opzioni ai giorni per collezione: { steps: 90, sessions: 365, … } (experiments segue feedback, risks segue sessions)
 function retentionFromSettings(settings = {}) {
   const out = {};
   for (const [k, coll] of Object.entries(SETTINGS)) {
@@ -29,6 +29,7 @@ function retentionFromSettings(settings = {}) {
     if (Number.isFinite(n) && n >= 0) out[coll] = Math.min(n, 3650);
   }
   if ('feedback' in out) out.experiments = out.feedback;
+  if ('sessions' in out) out.risks = out.sessions; // le azioni rischiose (2.14) seguono le sessioni
   return out;
 }
 function maxBytes(settings = {}) {

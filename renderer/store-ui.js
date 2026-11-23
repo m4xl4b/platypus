@@ -6,7 +6,7 @@
   'use strict';
   const esc = s => String(s ?? '').replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
   const size = n => (n == null ? '—' : n >= 1073741824 ? (n / 1073741824).toFixed(1) + ' GB' : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
-  const NAMES = () => ({ projects: tr('progetti'), lessons: tr('lezioni'), steps: tr('passi'), sessions: tr('sessioni'), feedback: tr('messaggi agli agenti'), experiments: tr('esperimenti'), daily: tr('statistiche') });
+  const NAMES = () => ({ projects: tr('progetti'), lessons: tr('lezioni'), steps: tr('passi'), sessions: tr('sessioni'), feedback: tr('messaggi agli agenti'), experiments: tr('esperimenti'), risks: tr('azioni rischiose'), daily: tr('statistiche') });
   const FIELDS = () => [
     ['storeKeepSteps', tr('Passi (giorni)'), tr('Ogni azione degli agenti, senza testo: per quanti giorni tenerla. 0 = per sempre.')],
     ['storeKeepSessions', tr('Riassunti delle sessioni (giorni)'), tr('0 = per sempre.')],

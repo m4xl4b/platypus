@@ -14,7 +14,7 @@
   // scheda FEEDBACK: i nomi brevi delle funzioni e dei modi (i messaggi partono dagli hook, vedi le opzioni)
   const FEATURE = {
     sessionLessons: tr('Lezioni a inizio sessione'), elder: tr('Il Nonno'), loop: tr('Giro in tondo'),
-    stale: tr('File cambiato da un altro'), claims: tr('Affermazioni senza prove'), drift: tr('Ritorno al compito'),
+    stale: tr('File cambiato da un altro'), claims: tr('Affermazioni senza prove'), drift: tr('Ritorno al compito'), fear: tr('La paura'),
   };
   // gli esiti (vedi src/core/outcomes.js): etichette oneste, sono indizi
   const OUTCOME = { helped: tr('PROBABILMENTE UTILE'), ignored: tr('IGNORATO'), unclear: tr('NON SI PUÒ DIRE') };
@@ -29,7 +29,7 @@
 
   window.openBottega = function (sid, lessonId, opts = {}) {
     B.open = true; B.focus = lessonId || null; B.sig = ''; B.scrolled = false; B.md = null;
-    B.tab = ['feedback', 'history'].includes(opts.tab) ? opts.tab : 'lessons'; B.fb = null; B.fbAt = 0; B.hist = null; B.histTable = false; B.find = { kind: 'file', q: '', err: false, res: null, busy: false };
+    B.tab = ['feedback', 'history', 'fear'].includes(opts.tab) ? opts.tab : 'lessons'; B.fb = null; B.fbAt = 0; B.hist = null; B.histTable = false; B.find = { kind: 'file', q: '', err: false, res: null, busy: false };
     B.q = sid ? { sid } : opts.key ? { key: opts.key } : null;
     if (!B.q) return;
     el().hidden = false;
@@ -79,7 +79,7 @@
   }
   // per ogni funzione: i mandati accanto a quelli in ombra, che sono il termine di paragone
   // l'esperimento (S11): i due gruppi a confronto, solo con numeri e solo quando ce ne sono abbastanza
-  function experimentHtml() {
+  function experimentHtml(only) {
     const x = B.exp;
     if (!x || !x.all) return '';
     const pct = v => (v * 100).toFixed(0) + '%', num = v => (Math.round(v * 10) / 10).toFixed(1), sgn = (v, f) => (v > 0 ? '+' : v < 0 ? '−' : '') + f(Math.abs(v));
@@ -94,6 +94,7 @@
           { scope, a: num(q.m1), na: r.n.on, b: num(q.m2), nb: r.n.shadow, d: sgn(q.diff, num), lo: sgn(q.lo, num), hi: sgn(q.hi, num) });
     };
     const rows = x.all.map((all, i) => {
+      if (only && all.feature !== only) return '';
       const proj = x.project && x.project[i], on = x.modes && x.modes[all.feature] === 'experiment';
       const any = (r) => r && (r.n.on + r.n.shadow > 0);
       if (!on && !any(all)) return '';
@@ -128,7 +129,7 @@
 
   function tabsHtml() {
     const tab = (k, label) => `<button data-tab="${k}" class="${B.tab === k ? 'on' : ''}">${esc(label)}</button>`;
-    return `<div class="tabs">${tab('lessons', tr('LEZIONI'))}${tab('feedback', tr('FEEDBACK'))}${tab('history', tr('STORIA'))}</div>`;
+    return `<div class="tabs">${tab('lessons', tr('LEZIONI'))}${tab('fear', tr('PAURE'))}${tab('feedback', tr('FEEDBACK'))}${tab('history', tr('STORIA'))}</div>`;
   }
   function bindTabs() {
     for (const b of el().querySelectorAll('[data-tab]')) b.onclick = () => {
@@ -137,6 +138,7 @@
       render();
       if (B.tab === 'feedback') loadFeedback();
       if (B.tab === 'history') loadHistory();
+      if (B.tab === 'fear') loadFear();
     };
   }
 
@@ -144,6 +146,7 @@
   const HIST = () => [
     ['loops', tr('Giri in tondo')], ['stuck', tr('Fasi bloccate')], ['surprises', tr('Sorprese')], ['flaky', tr('Comandi instabili')],
     ['claims', tr('Affermazioni senza prove')], ['stale', tr('Memorie non aggiornate')], ['lessons', tr('Lezioni del Libro mandate agli agenti')], ['cost', tr('Costo')],
+    ['risky_actions', tr('Azioni rischiose')], ['missed_fears', tr('Paure mancate')], ['scars', tr('Cicatrici')], // la paura (2.14)
   ];
   const fmt = (m, v) => (v == null ? '—' : m === 'cost' ? '$' + v.toFixed(2) : (Math.round(v * 10) / 10).toFixed(1));
   async function loadHistory() {
@@ -236,6 +239,42 @@
     f.busy = false; render();
   }
 
+  // ---- scheda PAURE (2.14, R9): le azioni rischiose del progetto negli ultimi 90 giorni, le cicatrici, il messaggio "fear"
+  const LV = () => ({ 1: tr('ATTENZIONE'), 2: tr('PERICOLO'), 3: tr('IRREVERSIBILE') });
+  async function loadFear() {
+    try { const x = await (await fetch('/api/fear?' + new URLSearchParams(B.q))).json(); B.fear = x && x.ok ? { ...x, at: Date.now() } : { error: true, at: Date.now() }; } catch { B.fear = { error: true, at: Date.now() }; }
+    if (!B.exp) { try { const x = await (await fetch('/api/feedback/experiment?' + new URLSearchParams(B.q))).json(); B.exp = x && x.ok ? x : null; } catch {} }
+    if (B.open && B.data && B.tab === 'fear') { B.sig = ''; render(); }
+  }
+  function fearBody() {
+    const f = B.fear, d = B.data, lv = LV();
+    if (!f) return `<p class="dim">${esc(tr('Carico le azioni rischiose…'))}</p>`;
+    if (f.error) return `<p class="dim">${esc(tr('Lo storico non risponde: le azioni rischiose non si possono leggere adesso.'))}</p>`;
+    const scars = d.lessons.filter(l => l.kind === 'scar' && !l.ignored);
+    const levels = [3, 2, 1].map(k => `<span class="lv lv${k}">${esc(lv[k])} <b>${f.levels[k] || 0}</b></span>`).join(' ');
+    const rules = f.rules.length ? `<table class="frules"><thead><tr><th>${esc(tr('REGOLA'))}</th><th>${esc(tr('VOLTE'))}</th><th>${esc(tr('SENZA PRUDENZA'))}</th><th>${esc(tr('DANNI'))}</th></tr></thead><tbody>` +
+      f.rules.map(r => `<tr><td><span class="lv lv${r.level}">${esc(lv[r.level])}</span> ${esc(r.text)} <code>${esc(r.shape || '')}</code></td><td class="n">${r.count}</td><td class="n">${r.missed}</td><td class="n">${r.damage}</td></tr>`).join('') + '</tbody></table>'
+      : `<p class="dim">${esc(tr('Nessuna azione rischiosa negli ultimi {n} giorni.', { n: f.days }))}</p>`;
+    const scarList = scars.length ? scars.map(l => `<div class="lesson"><div class="lt"><b class="${l.level === 'lesson' ? 'ok' : ''}">${esc(l.level === 'lesson' ? tr('LEZIONE') : tr('OSSERVAZIONE'))}</b> ${esc(l.title)}</div><div class="ld">${esc(l.detail)}</div></div>`).join('')
+      : `<p class="dim">${esc(tr('Nessuna cicatrice: nessun danno visto dopo un\'azione rischiosa.'))}</p>`;
+    const recent = f.recent.length ? `<ul class="ev">${f.recent.map(r => `<li><span class="w">${esc(when(r.t))}</span> <span class="ag">${esc(r.name || (r.agent === 'main' ? 'Claude' : r.agent))}</span> <span class="lv lv${r.level}">${esc(lv[r.level])}</span> <code>${esc(r.shape || '')}</code>${r.target ? ' → ' + esc(r.target) : ''} · ${esc(r.missed ? tr('senza prudenza') : tr('con prudenza'))}${r.outcome === 'damage' ? ' · <b class="dmg">' + esc(tr('DANNO')) + '</b>' : ''}</li>`).join('')}</ul>` : '';
+    return `<div class="fbsum"><div><b>${esc(tr('ULTIMI {n} GIORNI', { n: f.days }))}</b>${f.demo ? ` <span class="dim">${esc(tr('(dati finti della demo)'))}</span>` : ''}</div>` +
+      `<div>${levels}</div><div>${esc(tr('{t} azioni rischiose, {m} senza abbastanza prudenza (paure mancate), {d} con un danno visto dopo.', { t: f.total, m: f.missed, d: f.damage }))}</div></div>` +
+      `<h4>${esc(tr('PER REGOLA'))}</h4>${rules}` +
+      `<h4>${esc(tr('CICATRICI'))}</h4>${scarList}` +
+      `<h4>${esc(tr('IL MESSAGGIO ALL\'AGENTE'))}</h4>${experimentHtml('fear') || `<p class="dim">${esc(tr('La paura detta all\'agente prima dell\'azione (opzioni, feedback agli agenti): nessun dato ancora. In ombra si registra senza dire niente; in esperimento i due gruppi si confrontano qui, con gli intervalli.'))}</p>`}` +
+      `<h4>${esc(tr('REGOLE ACCETTATE'))}</h4><p class="dim">${esc(tr('Segnare una regola come normale per questo progetto (per esempio «qui terraform apply è normale») arriverà con la guardia, che aspetta ancora le prove sugli hook.'))}</p>` +
+      (recent ? `<h4>${esc(tr('LE ULTIME'))}</h4>${recent}` : '');
+  }
+  function renderFear() {
+    const d = B.data;
+    el().innerHTML = `<span class="x" title="${esc(tr('Chiudi'))}">X</span>` +
+      `<h3>${esc(tr('LIBRO DELLA BOTTEGA'))} · ${esc(d.name)}</h3>` + tabsHtml() +
+      `<p class="honest">${esc(tr('Le azioni difficili da disfare che gli agenti di questo progetto hanno fatto, con o senza prudenza, e i danni visti dopo. Platypus non è una protezione: riconosce schemi noti e può non vedere quello che non conosce. Ogni giudizio è probabile.'))}</p>` +
+      `<div class="list fear">${fearBody()}</div>`;
+    bindClose(); bindTabs();
+    if (!B.fear || Date.now() - B.fear.at > 10000) loadFear();
+  }
   function renderHistory() {
     const d = B.data;
     el().innerHTML = `<span class="x" title="${esc(tr('Chiudi'))}">X</span>` +
@@ -281,10 +320,11 @@
   function render() {
     const d = B.data;
     const fbTab = B.tab === 'feedback';
-    const sig = JSON.stringify([B.hist && B.hist.at, B.histTable, B.find.res && B.find.res.at, B.find.busy, d.lessons.map(l => [l.id, l.count, l.pinned, l.ignored, l.level]), d.learning, B.showObs, B.showIgnored, B.focus, B.md, d.mute, B.tab, B.fb && [B.fb.length, B.fb[0] && B.fb[0].id, B.fb.map(e => e.outcome).join()]]);
+    const sig = JSON.stringify([B.fear && B.fear.at, B.hist && B.hist.at, B.histTable, B.find.res && B.find.res.at, B.find.busy, d.lessons.map(l => [l.id, l.count, l.pinned, l.ignored, l.level]), d.learning, B.showObs, B.showIgnored, B.focus, B.md, d.mute, B.tab, B.fb && [B.fb.length, B.fb[0] && B.fb[0].id, B.fb.map(e => e.outcome).join()]]);
     if (sig === B.sig) return;
     B.sig = sig;
     if (B.tab === 'history') return renderHistory();
+    if (B.tab === 'fear') return renderFear();
     const live = window.sessions ? new Set(sessions().filter(s => !s.demo).map(s => s.id)) : new Set();
     const isDemo = window.sessions && sessions().some(s => s.demo && s.cwd === d.cwd);
     const lessons = d.lessons.filter(l => !l.ignored && l.level === 'lesson');

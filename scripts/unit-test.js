@@ -448,7 +448,8 @@ function bottegaTests(ok) {
   const recent = Date.now() - 3 * 86400000; // i passi finti partono dal 1970: li spostiamo a tre giorni fa
   const cases = bt.digest(sess, [a, b]).map(c => ({ ...c, t: recent + c.t }));
   const kinds = new Set(cases.map(c => c.kind));
-  for (const k of bt.KINDS) ok(kinds.has(k), `dai fatti della sessione: ${k}`);
+  // le cicatrici (2.14) nascono da un'azione rischiosa segnata dal motore: hanno le loro prove in scarTests
+  for (const k of bt.KINDS.filter(k => k !== 'scar')) ok(kinds.has(k), `dai fatti della sessione: ${k}`);
   ok(cases.some(c => c.kind === 'known-fix' && /→ src\/auth\/refresh\.ts$/.test(c.key)), 'correzione nota: schema d\'errore → file corretto');
   ok(cases.some(c => c.kind === 'loop-trap' && c.key === 'npx tsc --noEmit'), 'trappola: il comando intero, non la sua etichetta');
   // il libro, in una cartella temporanea
@@ -603,9 +604,702 @@ function bottegaNameTests(ok) {
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
+// 2.14, R1: il classificatore del rischio contro la tabella di scripts/risk-cases.js
+function riskCase([level, cmd, rule, o = {}]) {
+  const risk = require(path.join(ROOT, 'src', 'core', 'risk'));
+  const root = o.win ? 'D:/dev/app' : '/home/u/proj', home = o.win ? 'C:/Users/u' : '/home/u';
+  return risk.classify({
+    tool: o.tool || (o.ps ? 'PowerShell' : 'Bash'), input: o.input || { command: cmd },
+    cwd: o.cwd || root, root, home, branch: o.branch,
+    fileState: o.state ? () => o.state : undefined, ...(o.turn || {}),
+  });
+}
+function riskTests(ok) {
+  const risk = require(path.join(ROOT, 'src', 'core', 'risk'));
+  const { CASES } = require('./risk-cases');
+  let wrong = 0;
+  for (const c of CASES) {
+    const r = riskCase(c), [level, cmd, rule, o = {}] = c;
+    const good = r.level === level && (!rule || r.ruleIds.includes(rule)) && (level > 0 || r.ruleIds.length === 0);
+    if (!good) { wrong++; ok(false, `rischio: «${cmd || o.tool}» atteso ${level}${rule ? ' ' + rule : ''}, trovato ${r.level} ${r.ruleIds.join(',')}`); }
+  }
+  ok(CASES.length >= 150 && wrong === 0, `rischio: ${CASES.length} comandi della tabella, ognuno al suo livello e con la sua regola (${wrong} sbagliati)`);
+  const levels = [0, 1, 2, 3].map(l => CASES.filter(c => c[0] === l).length);
+  ok(levels.every(n => n >= 15), 'rischio: la tabella copre tutti i livelli (0–3: ' + levels.join(', ') + ')');
+
+  // il risultato: forma senza argomenti, bersaglio relativo al progetto, prudenze, come si torna indietro
+  const r = riskCase([2, 'git reset --hard origin/feature-secret-name']);
+  ok(r.shape === 'git reset --hard <ref>' && !JSON.stringify(r).includes('secret-name'), 'rischio: del comando resta la forma, mai gli argomenti');
+  ok(r.category === 'git' && r.reach === 'project' && r.prudence.includes('backup') && r.prudence.includes('looked') && /reflog/.test(r.undo) && r.reasons.length === 1, 'rischio: categoria, portata, prudenze che contano e come tornare indietro');
+  const rm = riskCase([2, 'rm -rf /home/u/proj/data/export']);
+  ok(rm.targets.join() === 'data/export' && rm.undo === '', 'rischio: il bersaglio è relativo al progetto; senza rimedio, undo è vuoto');
+  const out = riskCase([3, 'rm -rf /home/u/Documents/private-folder']);
+  ok(out.level === 3 && out.targets.length === 0 && !JSON.stringify(out).includes('private-folder'), 'rischio: un percorso fuori dal progetto non viene riportato');
+  const two = riskCase([3, 'git reset --hard && git push --force origin main']);
+  ok(two.level === 3 && two.ruleIds.slice(0, 2).sort().join() === 'git-push-force-shared,git-push-main' && two.ruleIds[2] === 'git-reset-hard' && two.reach === 'remote', 'rischio: più regole insieme, le più gravi per prime');
+  const en = require(path.join(ROOT, 'src', 'i18n')).withLang('en', () => riskCase([2, 'git clean -fd']));
+  ok(/deletes the files git does not know/.test(en.reasons[0]), 'rischio: i testi sono tradotti in inglese');
+  ok(Object.values(risk.RULES).every(x => x.level >= 1 && x.level <= 3 && typeof x.text() === 'string' && Array.isArray(x.prudence) && x.prudence.length), 'rischio: ogni regola ha livello, testo e prudenze');
+  // segni per chi chiama: ha letto segreti, ha chiamato la rete
+  ok(riskCase([0, 'cat ~/.aws/credentials']).marks.readsSecret && riskCase([0, 'curl https://example.com']).marks.network && !riskCase([0, 'ls']).marks.network, 'rischio: segna la lettura di segreti e le chiamate di rete');
+  ok(riskCase([0, '', '', { tool: 'Read', input: { file_path: '/home/u/.ssh/id_ed25519' } }]).marks.readsSecret, 'rischio: anche lo strumento Read segna la lettura di segreti');
+  // non lancia mai eccezioni, nemmeno con input rotti
+  let threw = 0;
+  for (const bad of [undefined, null, {}, { tool: 'Bash' }, { tool: 'Bash', input: { command: 42 } }, { tool: 'Bash', input: { command: 'rm -rf "unclosed' } }, { tool: 'Bash', input: { command: 'cat <<EOF\nnever closed' } }, { tool: 'Bash', input: { command: '$((((' } }, { tool: 'Write', input: {} }, { tool: 'mcp__x', input: 'text' }]) {
+    try { const x = risk.classify(bad); if (typeof x.level !== 'number') threw++; } catch { threw++; }
+  }
+  ok(threw === 0, 'rischio: input rotti o vuoti non fanno eccezioni');
+  // tempo: p99 sotto 20 ms (in pratica molto meno), anche con un comando lunghissimo
+  const times = [];
+  for (let k = 0; k < 20; k++) for (const c of CASES) { const t0 = process.hrtime.bigint(); riskCase(c); times.push(Number(process.hrtime.bigint() - t0) / 1e6); }
+  times.sort((a, b) => a - b);
+  const p99 = times[Math.floor(times.length * 0.99)];
+  ok(p99 < 20, `rischio: ${times.length} classificazioni, p99 ${p99.toFixed(3)} ms (limite 20)`);
+  // un comando lunghissimo: la parte oltre il limite non si guarda (il rm -rf in fondo non conta), e il tempo resta basso.
+  // Il tempo si confronta con quello di un comando lungo quanto il limite, così la prova non dipende da quanto è veloce
+  // la macchina: la prima chiamata a freddo costa di più (anche 50 ms sulle macchine macOS della CI), quindi si scalda e
+  // si prende il migliore di 5, che misura il costo del classificatore e non quanto è occupata la macchina. Il p99 qui sopra
+  // resta la regola dei 20 ms per i comandi veri; per questo caso estremo basta un tetto largo.
+  const ctxRisk = { cwd: '/home/u/proj', root: '/home/u/proj', home: '/home/u' };
+  const unit = 'echo "$(date)" && ls -la | grep x; ';
+  const huge = { tool: 'Bash', input: { command: unit.repeat(5000) + 'rm -rf ~/x' }, ...ctxRisk };
+  const atLimit = { tool: 'Bash', input: { command: unit.repeat(Math.floor(risk.MAX_INPUT / unit.length)) }, ...ctxRisk };
+  ok(risk.classify(huge).level === 0 && risk.classify({ ...huge, input: { command: 'echo hi; rm -rf ~/x' } }).level === 3, 'rischio: un comando oltre il limite si guarda solo fino al limite');
+  const best = x => { risk.classify(x); let m = Infinity; for (let k = 0; k < 5; k++) { const t0 = process.hrtime.bigint(); risk.classify(x); m = Math.min(m, Number(process.hrtime.bigint() - t0) / 1e6); } return m; };
+  const big = best(huge), lim = best(atLimit);
+  ok(big <= 3 * lim + 1 && big < 50, `rischio: un comando di 200 mila caratteri si ferma al limite e risponde in ${big.toFixed(1)} ms (lungo quanto il limite: ${lim.toFixed(1)} ms; il migliore di 5)`);
+}
+
+// 2.14, R2: la prudenza prima di un'azione rischiosa
+function prudenceTests(ok) {
+  const risk = require(path.join(ROOT, 'src', 'core', 'risk'));
+  const { assess, missedFear, gitStatusClean } = require(path.join(ROOT, 'src', 'core', 'prudence'));
+  const root = '/home/u/proj';
+  let k = 0;
+  const run = (cmd, extra = {}) => ({ t: ++k, tool: 'Bash', act: 'run', target: 'cmd:x', sig: 'run:' + cmd, err: false, ...extra });
+  const read = file => ({ t: ++k, tool: 'Read', act: 'read', target: file, sig: 'Read:' + file, err: false });
+  const edit = file => ({ t: ++k, tool: 'Edit', act: 'edit', target: file, sig: 'Edit:' + file, err: false });
+  const go = (cmd, steps = [], prompt = '', o = {}) => {
+    const action = { tool: o.tool || 'Bash', input: o.input || { command: cmd } };
+    const r = risk.classify({ ...action, cwd: root, root, home: '/home/u', ...o.ctx });
+    const p = assess({ risk: r, action, steps, prompt });
+    return { r, p, missed: missedFear(r, p) };
+  };
+  const has = (x, kind) => x.p.present.includes(kind);
+
+  // senza niente prima: paura mancata
+  let x = go('git reset --hard');
+  ok(x.r.level === 2 && x.p.score === 0 && x.missed && x.p.missing.join() === 'looked,backup,clean,asked', 'prudenza: git reset --hard senza niente prima è una paura mancata, e dice che cosa manca');
+  // guardare da solo non basta
+  x = go('git reset --hard', [run('git status')]);
+  ok(has(x, 'looked') && x.p.score === 0.3 && x.missed, 'prudenza: aver guardato (git status) conta, ma da solo non basta');
+  x = go('git reset --hard', [run('ls -la')]);
+  ok(!has(x, 'looked'), 'prudenza: per git, un ls non è aver guardato');
+  // copia di sicurezza
+  for (const b of ['git commit -m "wip"', 'git add -A && git commit -m wip', 'git stash', 'git stash push -u', 'git branch backup-1', 'git checkout -b safe', 'git tag before-reset']) {
+    x = go('git reset --hard', [run(b)]);
+    ok(has(x, 'backup') && !x.missed, 'prudenza: copia di sicurezza con «' + b + '»');
+  }
+  for (const b of ['git commit --amend', 'git stash drop', 'git stash pop', 'git branch -D x', 'git tag -d v1', 'git stash list']) {
+    x = go('git reset --hard', [run(b)]);
+    ok(!has(x, 'backup'), 'prudenza: «' + b + '» non è una copia di sicurezza');
+  }
+  x = go('git reset --hard', [run('git commit -m wip', { err: true })]);
+  ok(!has(x, 'backup') && x.missed, 'prudenza: un commit fallito non è una copia di sicurezza');
+  x = go('git reset --hard', [run('git commit -m wip'), ...Array.from({ length: 12 }, (_, i) => run('echo ' + i))]);
+  ok(!has(x, 'backup'), 'prudenza: un commit di più di 12 azioni fa non conta più');
+  // albero pulito
+  x = go('git reset --hard', [run('git status', { act: 'look', clean: true })]);
+  ok(has(x, 'clean') && has(x, 'looked') && x.p.score === 1 && !x.missed, 'prudenza: albero pulito all\'ultimo git status');
+  x = go('git reset --hard', [run('git status', { act: 'look', clean: true }), edit('src/a.js')]);
+  ok(!has(x, 'clean'), 'prudenza: dopo una modifica l\'albero non è più pulito');
+  x = go('git reset --hard', [run('git status', { act: 'look', clean: false })]);
+  ok(!has(x, 'clean') && x.missed, 'prudenza: albero sporco, niente prudenza "pulito"');
+  ok(gitStatusClean('git status', 'On branch main\nnothing to commit, working tree clean') === true && gitStatusClean('git status', 'Changes not staged for commit:\n  modified: a.js') === false &&
+    gitStatusClean('git status --porcelain', '') === true && gitStatusClean('git status --short', ' M a.js') === false && gitStatusClean('git status', 'nothing added to commit but untracked files present') === false &&
+    gitStatusClean('git log', 'nothing to commit') === null && gitStatusClean('git status', 'fatal: not a git repository') === null, 'prudenza: l\'output di git status dice pulito, sporco o non si sa');
+  // il segno arriva dalla mappa: la prova passa da worldmap.js
+  {
+    const w = new AgentWorld();
+    w.start('g1', 'Bash', { command: 'git status' }, 1000, root, 0);
+    w.end('g1', false, { content: 'On branch main\nnothing to commit, working tree clean' }, {}, 1100, root);
+    w.start('g2', 'Bash', { command: 'git status --short' }, 2000, root, 0);
+    w.end('g2', false, { content: ' M src/a.js' }, {}, 2100, root);
+    ok(w.steps[0].clean === true && w.steps[1].clean === false && !JSON.stringify(w.steps).includes('nothing to commit'), 'prudenza: la mappa segna pulito/sporco sul passo di git status, senza tenere l\'output');
+  }
+  // prova a vuoto
+  x = go('git clean -fd', [run('git clean -n')]);
+  ok(has(x, 'dryrun') && !x.missed, 'prudenza: git clean -n prima di git clean -fd');
+  x = go('terraform apply', [run('terraform plan -out=tfplan')]);
+  ok(has(x, 'dryrun') && has(x, 'looked') && x.r.level === 3 && !x.missed, 'prudenza: terraform plan prima di apply');
+  x = go('terraform apply', [run('kubectl get pods --dry-run=client')]);
+  ok(!has(x, 'dryrun') && x.missed, 'prudenza: la prova a vuoto di un altro strumento non conta');
+  x = go('npm publish', [run('npm publish --dry-run')]);
+  ok(has(x, 'dryrun'), 'prudenza: npm publish --dry-run prima di npm publish');
+  x = go('kubectl delete -f k8s/', [run('kubectl delete -f k8s/ --dry-run=server')]);
+  ok(has(x, 'dryrun'), 'prudenza: kubectl delete --dry-run prima');
+  // guardare il bersaglio, sui file
+  x = go('rm -rf data/export', [run('ls data/export')]);
+  ok(has(x, 'looked') && x.missed, 'prudenza: ls del bersaglio prima di cancellarlo (da solo non basta)');
+  x = go('rm -rf data/export', [run('ls src/other')]);
+  ok(!has(x, 'looked'), 'prudenza: guardare un\'altra cartella non conta');
+  x = go('rm -rf data/export', [read('data/export/a.csv')]);
+  ok(has(x, 'looked'), 'prudenza: aver letto un file del bersaglio conta');
+  x = go('rm -rf data/export', [run('cp -r data/export /tmp/export-bak')]);
+  ok(has(x, 'backup') && !x.missed, 'prudenza: una copia del bersaglio è una copia di sicurezza');
+  x = go('rm -rf data/export', [run('cp -r src/other /tmp/x')]);
+  ok(!has(x, 'backup'), 'prudenza: la copia di un\'altra cartella non conta');
+  x = go('rm -rf data/export', [run('git add -A && git commit -m "before cleanup"')]);
+  ok(has(x, 'backup'), 'prudenza: un commit prima di cancellare');
+  // database
+  x = go('psql -c "DELETE FROM users"', [run('psql -c "SELECT count(*) FROM users"')]);
+  ok(has(x, 'looked') && x.missed, 'prudenza: un SELECT sulla stessa tabella prima del DELETE');
+  x = go('psql -c "DELETE FROM users"', [run('psql -c "SELECT count(*) FROM orders"')]);
+  ok(!has(x, 'looked'), 'prudenza: un SELECT su un\'altra tabella non conta');
+  x = go('psql -c "DROP TABLE users"', [run('pg_dump app > /tmp/app.sql')]);
+  ok(has(x, 'backup') && !x.missed, 'prudenza: pg_dump prima di un DROP');
+  x = go('psql -c "DROP TABLE users"', [run('git commit -m wip')]);
+  ok(!has(x, 'backup'), 'prudenza: un commit non salva un database');
+  // l'ha chiesto l'utente (probabile)
+  x = go('git reset --hard origin/main', [], 'butta tutto e fai un reset hard a origin/main');
+  ok(has(x, 'asked') && x.p.probable.join() === 'asked' && !x.missed, 'prudenza: l\'utente ha chiesto il reset (probabile)');
+  x = go('git push --force origin main', [], 'please force push to main');
+  ok(has(x, 'asked') && x.r.level === 3, 'prudenza: l\'utente ha chiesto il force push su main');
+  x = go('git push --force origin main', [], 'sistema il test che fallisce');
+  ok(!has(x, 'asked') && x.missed, 'prudenza: un messaggio che parla d\'altro non è una richiesta');
+  x = go('rm -rf data/export', [], 'cancella la cartella export, non serve più');
+  ok(has(x, 'asked'), 'prudenza: l\'utente ha chiesto di cancellare proprio quella cartella');
+  x = go('rm -rf data/export', [], 'cancella i file temporanei');
+  ok(!has(x, 'asked'), 'prudenza: ha chiesto di cancellare, ma un\'altra cosa');
+  x = go('terraform apply -auto-approve', [], 'ok, run terraform apply');
+  ok(has(x, 'asked'), 'prudenza: l\'utente ha scritto proprio il comando');
+  x = go('psql -c "DROP TABLE users"', [], 'elimina la tabella users dal database di prova');
+  ok(has(x, 'asked'), 'prudenza: l\'utente ha chiesto di eliminare quella tabella');
+  x = go('', [], 'manda la mail a Fabio con il riassunto', { tool: 'mcp__gmail__send_message', input: { to: 'x' } });
+  ok(x.r.level === 3 && has(x, 'asked') && !x.missed, 'prudenza: uno strumento esterno che manda, chiesto dall\'utente');
+  x = go('', [], 'riassumi le mail di oggi', { tool: 'mcp__gmail__send_message', input: { to: 'x' } });
+  ok(!has(x, 'asked') && x.missed, 'prudenza: mandare una mail quando l\'utente ha chiesto solo di leggere è una paura mancata');
+  x = go('sudo apt-get install -y jq', [run('git status'), run('git commit -m wip')], '');
+  ok(x.p.present.length === 0 && x.p.missing.join() === 'asked', 'prudenza: contano solo le prudenze che la regola dichiara (per sudo, solo la richiesta)');
+  // azioni non rischiose e input rotti
+  x = go('ls -la');
+  ok(x.p.score === 1 && !x.missed && x.p.missing.length === 0, 'prudenza: un\'azione non rischiosa non ha niente da farsi perdonare');
+  let threw = 0;
+  for (const bad of [undefined, {}, { risk: null }, { risk: { level: 2 } }, { risk: { level: 2, prudence: ['looked'] }, steps: [null, {}, { sig: 5 }], prompt: 7 }]) { try { const r = assess(bad); if (typeof r.score !== 'number') threw++; } catch { threw++; } }
+  ok(threw === 0, 'prudenza: input rotti o vuoti non fanno eccezioni');
+  ok(!JSON.stringify(go('git reset --hard', [], 'il mio segreto è 12345, fai reset hard').p).includes('12345'), 'prudenza: del messaggio dell\'utente non resta niente nel risultato');
+}
+
+// 2.14, R3: le azioni rischiose dal transcript allo storico (fear.js, state.js, history.js)
+async function fearStoreTests(ok) {
+  const { OfficeState } = require(path.join(ROOT, 'src', 'core', 'state'));
+  const { History } = require(path.join(ROOT, 'src', 'core', 'history'));
+  const fear = require(path.join(ROOT, 'src', 'core', 'fear'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-fear-'));
+  const iso = t => new Date(t).toISOString();
+  let now = Date.parse('2026-11-19T10:00:00Z');
+  const st = new OfficeState({ clock: () => now, settings: {} });
+  const h = new History({ dir: path.join(tmp, 'dati'), backend: 'memory', log() {} });
+  h.keys.exec = async () => null;
+  st.on('step', (s, a, step) => h.recordStep(s, a, step));
+  st.on('risk', (s, a, step) => h.recordRisk(s, a, step));
+  const S = 'sess-fear-0001', cwd = '/home/u/proj';
+  let n = 0, branch = 'feature/login';
+  const line = (type, content, extra = {}) => ({ type, timestamp: iso(now += 1000), cwd, gitBranch: branch, message: { role: type, content, ...(type === 'assistant' ? { id: 'm' + (++n), usage: { input_tokens: 1, output_tokens: 1 } } : {}) }, ...extra });
+  const use = (id, name, input) => st.applyTranscriptLine(S, null, line('assistant', [{ type: 'tool_use', id, name, input }]));
+  const res = (id, content = 'ok', isErr = false) => st.applyTranscriptLine(S, null, line('user', [{ type: 'tool_result', tool_use_id: id, content, is_error: isErr }]));
+  const bash = (id, command, out) => { use(id, 'Bash', { command }); res(id, out); };
+  try {
+    st.applyTranscriptLine(S, null, line('user', 'sistema il test del login che fallisce'));
+    bash('t1', 'npm test', 'ok');
+    bash('t2', 'git reset --hard origin/feature-secret-xyz', 'HEAD is now at 1234567');
+    const s = st.sessions.get(S), steps = s.main.world.steps;
+    const r2 = steps.find(x => x.id === 't2').risk;
+    ok(r2 && r2.level === 2 && r2.ruleIds.join() === 'git-reset-hard' && r2.missed === true && r2.prudence === 0 && r2.missing.includes('backup') && !steps.find(x => x.id === 't1').risk,
+      'paura: git reset --hard senza prudenza è segnato sul passo come paura mancata; npm test no');
+    ok(s.branch === 'feature/login', 'paura: il branch della sessione arriva dal transcript');
+    // con prudenza: commit prima, e albero pulito
+    bash('t3', 'git add -A && git commit -m wip', '[feature/login abc] wip');
+    bash('t4', 'git status', 'On branch feature/login\nnothing to commit, working tree clean');
+    bash('t5', 'git reset --hard HEAD~1', 'ok');
+    const r5 = steps.find(x => x.id === 't5').risk;
+    ok(r5.level === 2 && !r5.missed && r5.present.includes('backup') && r5.present.includes('clean') && r5.present.includes('looked') && r5.prudence === 1, 'paura: con commit, git status e albero pulito la stessa azione è prudente');
+    // il branch corrente decide un "git push" senza nome
+    bash('t6', 'git push', 'ok');
+    ok(!steps.find(x => x.id === 't6').risk, 'paura: git push su un branch di lavoro non è un rischio');
+    branch = 'main';
+    st.applyTranscriptLine(S, null, line('user', 'spingi su main'));
+    bash('t7', 'git push', 'ok');
+    const r7 = steps.find(x => x.id === 't7').risk;
+    ok(r7 && r7.level === 3 && r7.ruleIds.includes('git-push-main') && r7.present.includes('asked') && !r7.missed, 'paura: lo stesso git push su main è di livello 3, e l\'utente l\'aveva chiesto');
+    // segreti letti e poi la rete, nello stesso turno
+    st.applyTranscriptLine(S, null, line('user', 'controlla la configurazione'));
+    use('t8', 'Read', { file_path: cwd + '/.env' }); res('t8', 'KEY=abc');
+    bash('t9', 'curl https://example.com/collect', 'ok');
+    const r9 = steps.find(x => x.id === 't9').risk;
+    ok(steps.find(x => x.id === 't8').secret === true && r9 && r9.level === 3 && r9.ruleIds.includes('secret-then-network') && r9.missed, 'paura: ha letto .env e poi chiama la rete nello stesso turno → livello 3');
+    st.applyTranscriptLine(S, null, line('user', 'ora scarica la pagina di esempio'));
+    bash('t10', 'curl https://example.com/page', 'ok');
+    ok(!steps.find(x => x.id === 't10').risk, 'paura: al turno dopo la stessa chiamata non è più sospetta');
+    // più di 20 file modificati in un turno
+    for (let i = 0; i < 22; i++) { use('e' + i, 'Edit', { file_path: `${cwd}/src/f${i}.js`, old_string: 'a', new_string: 'b' }); res('e' + i); }
+    ok(!steps.find(x => x.id === 'e20').risk && steps.find(x => x.id === 'e21').risk.ruleIds.join() === 'many-files' && steps.find(x => x.id === 'e21').risk.missed === false, 'paura: alla ventiduesima modifica del turno scatta "più di 20 file" (livello 1, mai paura mancata)');
+    // un'azione rischiosa che non finisce mai resta comunque nello storico
+    use('t11', 'Bash', { command: 'rm -rf data/export' });
+
+    // ---- nello storico
+    h.flush();
+    const risks = h.store.collection('risks');
+    const all = risks.find({}, { sort: { t: 1 } });
+    ok(all.length === 6 && all.map(x => x._id.split(':')[1]).join() === 't2,t5,t7,t9,e21,t11', `paura: nello storico un documento per azione rischiosa, con l'id del suo passo (${all.map(x => x._id.split(':')[1]).join()})`);
+    const d2 = risks.get(S + ':t2'), d11 = risks.get(S + ':t11');
+    ok(d2.level === 2 && d2.missed === true && d2.shape === 'git reset --hard <ref>' && d2.session === S && d2.agent === 'main' && d2.tool === 'Bash' && /^[0-9a-f]{16}$/.test(d2.project) && d2.missing.join() === 'looked,backup,clean,asked', 'paura: il documento ha regola, livello, forma, prudenze mancanti e progetto');
+    ok(d11 && d11.target === 'data/export' && d11.level === 2, 'paura: il bersaglio dentro il progetto è relativo; un\'azione mai finita è salvata lo stesso');
+    const raw = JSON.stringify(h.store.collection('risks').find({})) + JSON.stringify(h.store.collection('steps').find({}));
+    ok(!/feature-secret-xyz|example\.com|KEY=abc|sistema il test|spingi su main/.test(raw), 'paura: nello storico non c\'è il comando, né l\'output, né il messaggio dell\'utente');
+    // rileggere la sessione (a ogni avvio) non raddoppia e non cancella com'è finita
+    risks.patch(S + ':t2', { outcome: 'damage', at: now });
+    h.recordRisk(s, s.main, steps.find(x => x.id === 't2'));
+    h.flush();
+    ok(risks.count({}) === 6 && risks.get(S + ':t2').outcome === 'damage', 'paura: riscrivere lo stesso evento non lo raddoppia e non cancella l\'esito');
+    // la demo non lascia niente
+    h.recordRisk({ ...s, demo: true }, s.main, steps.find(x => x.id === 't5'));
+    h.recordRisk(s, s.main, { id: 'zz', t: now, tool: 'Bash' });
+    h.flush();
+    ok(risks.count({}) === 6, 'paura: la demo e i passi senza rischio non scrivono niente');
+
+    // ---- la lettura (GET /api/risks usa questa)
+    const q = fear.queryRisks(h.store, {});
+    ok(q.length === 6 && q[0].t >= q[5].t && q.every(x => !('_id' in x) && Array.isArray(x.reasons) && x.reasons.length), 'paura: queryRisks dà gli eventi dal più recente, con il perché');
+    const m = fear.queryRisks(h.store, { missed: true });
+    ok(m.length === 3 && m.every(x => x.missed), 'paura: solo le paure mancate (' + m.length + ')');
+    ok(fear.queryRisks(h.store, { session: 'altra' }).length === 0 && fear.queryRisks(h.store, { session: S, limit: 2 }).length === 2 && fear.queryRisks(h.store, { projects: ['0000000000000000'] }).length === 0 &&
+      fear.queryRisks(h.store, { from: d11.t }).length === 1 && fear.queryRisks(h.store, { to: d2.t + 1 }).length === 1, 'paura: filtri per sessione, progetto, periodo e limite');
+    const en = require(path.join(ROOT, 'src', 'i18n')).withLang('en', () => fear.queryRisks(h.store, { session: S, to: d2.t + 1 })[0]);
+    ok(/throws away every change/.test(en.reasons[0]) && /reflog/.test(en.undo) && en.category === 'git', 'paura: i testi arrivano dalla regola, nella lingua dell\'ufficio');
+    // conservazione: 365 giorni, e segue le sessioni nelle opzioni
+    const { COLLECTIONS } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
+    const { retentionFromSettings } = require(path.join(ROOT, 'src', 'core', 'retention'));
+    ok(COLLECTIONS.risks.retention.days === 365 && retentionFromSettings({ storeKeepSessions: 30 }).risks === 30, 'paura: conservazione di 365 giorni, o quella scelta per le sessioni');
+    // la guardia della privacy rifiuta un campo non dichiarato
+    let refused = false;
+    try { h.store.collection('risks').put({ _id: 'x:y', project: d2.project, t: now, session: 'x', level: 2, command: 'git reset --hard secret' }); } catch { refused = true; }
+    ok(refused || !h.store.collection('risks').get('x:y') || !('command' in h.store.collection('risks').get('x:y')), 'paura: la guardia non lascia entrare un campo "command"');
+    // dimenticare un progetto toglie anche i suoi eventi
+    h.forgetProject(d2.project, { state: st });
+    ok(h.store.collection('risks').count({}) === 0, 'paura: "Dimentica questo progetto" toglie anche le azioni rischiose');
+  } finally {
+    try { h.stop(); } catch {}
+    try { st.stop && st.stop(); } catch {}
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+// 2.14, R4: le cicatrici. Dopo un'azione rischiosa, i segni di un danno; poi la lezione nel Libro e il Nonno
+async function scarTests(ok) {
+  const { OfficeState } = require(path.join(ROOT, 'src', 'core', 'state'));
+  const { History } = require(path.join(ROOT, 'src', 'core', 'history'));
+  const fear = require(path.join(ROOT, 'src', 'core', 'fear'));
+  const bt = require(path.join(ROOT, 'src', 'core', 'bottega'));
+  const i18n = require(path.join(ROOT, 'src', 'i18n'));
+  const iso = t => new Date(t).toISOString();
+  const cwd = '/home/u/proj';
+  let seq = 0;
+  // una sessione finta: scrive righe di transcript e restituisce lo stato
+  const session = () => {
+    let now = Date.parse('2026-11-19T10:00:00Z') + (++seq) * 3600000, n = 0;
+    const st = new OfficeState({ clock: () => now, settings: {} });
+    const S = 'sess-scar-' + seq;
+    const line = (type, content) => ({ type, timestamp: iso(now += 1000), cwd, gitBranch: 'feature/x', message: { role: type, content, ...(type === 'assistant' ? { id: 'm' + (++n), usage: { input_tokens: 1, output_tokens: 1 } } : {}) } });
+    const api = {
+      st, S,
+      say: text => st.applyTranscriptLine(S, null, line('user', text)),
+      use: (id, name, input) => st.applyTranscriptLine(S, null, line('assistant', [{ type: 'tool_use', id, name, input }])),
+      res: (id, content = 'ok', isErr = false) => st.applyTranscriptLine(S, null, line('user', [{ type: 'tool_result', tool_use_id: id, content, is_error: isErr }])),
+      bash: (id, command, out, isErr) => { api.use(id, 'Bash', { command }); api.res(id, out, isErr); },
+      read: (id, file, out, isErr) => { api.use(id, 'Read', { file_path: cwd + '/' + file }); api.res(id, out || 'contenuto', isErr); },
+      get s() { return st.sessions.get(S); },
+      get agents() { const s = st.sessions.get(S); return [{ id: 'main', name: 'Claude', world: s.main.world, mind: s.main.mind }]; },
+      step: id => st.sessions.get(S).main.world.steps.find(x => x.id === id),
+    };
+    return api;
+  };
+  const stops = [];
+  try {
+    // 1. nessun segno: nessuna cicatrice
+    let x = session(); stops.push(x.st);
+    x.say('pulisci i file generati');
+    x.bash('a1', 'rm -rf data/export', 'ok');
+    x.bash('a2', 'npm test', 'ok');
+    ok(fear.scars(x.s, x.agents).length === 0, 'cicatrici: un\'azione rischiosa senza segni di danno non lascia cicatrici');
+
+    // 2. file che conosceva e che dopo non c'è più (fantasma), più un errore sul bersaglio
+    x = session(); stops.push(x.st);
+    x.say('riordina la cartella data');
+    x.read('b1', 'data/export/report.csv');
+    x.bash('b2', 'rm -rf data/export', 'ok');
+    x.read('b3', 'data/export/report.csv', 'File does not exist.', true);
+    let sc = fear.scars(x.s, x.agents);
+    ok(sc.length === 1 && sc[0].step.id === 'b2' && sc[0].signs.includes('ghost') && sc[0].signs.includes('error') && sc[0].evidence.join() === 'b3' && sc[0].key === 'rm -r <path> → data/export' && !sc[0].probable,
+      'cicatrici: dopo rm -rf un file già letto non c\'è più e la lettura fallisce → danno, con il passo come prova');
+    // un file mai visto prima che "non esiste" non è un danno di questa azione
+    x = session(); stops.push(x.st);
+    x.say('riordina');
+    x.bash('c1', 'rm -rf data/export', 'ok');
+    x.read('c2', 'src/mai-esistito.ts', 'File does not exist.', true);
+    ok(fear.scars(x.s, x.agents).length === 0, 'cicatrici: un percorso inventato altrove non è un danno dell\'azione');
+
+    // 3. tentativo di recupero dopo git reset --hard
+    x = session(); stops.push(x.st);
+    x.say('sistema il test');
+    x.bash('d1', 'git reset --hard HEAD~2', 'HEAD is now at abc');
+    x.bash('d2', 'git reflog', 'abc HEAD@{0}: reset');
+    x.bash('d3', 'git reset --hard HEAD@{1}', 'ok');
+    sc = fear.scars(x.s, x.agents);
+    ok(sc.length === 1 && sc[0].step.id === 'd1' && sc[0].signs.join() === 'recovery' && sc[0].evidence.join() === 'd2,d3' && sc[0].key === 'git reset --hard <ref> → *', 'cicatrici: git reflog e un reset a HEAD@{1} dopo un reset --hard sono un tentativo di recupero');
+    // il recupero oltre le 8 azioni seguenti non conta più
+    x = session(); stops.push(x.st);
+    x.say('sistema il test');
+    x.bash('e1', 'git reset --hard HEAD~2', 'ok');
+    for (let i = 0; i < 8; i++) x.bash('ee' + i, 'npm test', 'ok');
+    x.bash('e2', 'git reflog', 'abc');
+    ok(fear.scars(x.s, x.agents).length === 0, 'cicatrici: si guardano solo le 8 azioni seguenti');
+
+    // 4. l'utente se ne accorge (lessicale: probabile)
+    x = session(); stops.push(x.st);
+    x.say('pulisci il repository');
+    x.bash('f1', 'git clean -fdx', 'Removing notes.md');
+    x.say('hai cancellato i miei appunti! ripristina notes.md');
+    sc = fear.scars(x.s, x.agents);
+    ok(sc.length === 1 && sc[0].signs.join() === 'user' && sc[0].probable === true && sc[0].evidence.length === 0, 'cicatrici: «hai cancellato… ripristina» nel messaggio dopo è un segno, da solo "probabile"');
+    // la sola frase dell'utente resta un'osservazione nel Libro; con un secondo caso, o con un segno nei fatti, diventa lezione
+    {
+      const book = new bt.Bottega({}), t0 = x.step('f1').t;
+      const c1 = bt.digest(x.s, x.agents).filter(c => c.kind === 'scar');
+      book.learn(cwd, c1);
+      const v1 = book.view(cwd, t0 + 60000).lessons.find(l => l.kind === 'scar');
+      ok(c1.length === 1 && c1[0].excerpt.startsWith('?') && v1 && v1.level === 'observation' && !/\?/.test(v1.detail.split('.')[1] || ''), 'cicatrici: con il solo segno delle parole dell\'utente è un\'osservazione, non una lezione');
+      book.learn(cwd, [{ ...c1[0], sid: 'altra-sessione', t: t0 + 1000 }]);
+      ok(book.view(cwd, t0 + 60000).lessons.find(l => l.kind === 'scar').level === 'lesson', 'cicatrici: alla seconda volta, in un\'altra sessione, diventa una lezione come le altre');
+      const book2 = new bt.Bottega({});
+      book2.learn(cwd, [...c1, { ...c1[0], sid: 'altra', t: t0 + 2000, excerpt: 'backup' }]);
+      const v2 = book2.view(cwd, t0 + 60000).lessons.find(l => l.kind === 'scar');
+      ok(v2.level === 'lesson' && /fai un commit o una copia/.test(v2.detail), 'cicatrici: basta un caso con un segno nei fatti perché sia una lezione');
+      book.stop(); book2.stop();
+    }
+    x = session(); stops.push(x.st);
+    x.say('pulisci il repository');
+    x.bash('g1', 'git clean -fdx', 'ok');
+    x.say('perfetto, ora aggiungi i test');
+    ok(fear.scars(x.s, x.agents).length === 0, 'cicatrici: un messaggio contento non è un segno');
+    for (const t of ['you deleted my config', 'undo that please', 'where did the uploads folder go? where is it', 'dov\'è finita la cartella?', 'che fine ha fatto il file', 'rimetti com\'era', 'bring it back']) {
+      x = session(); stops.push(x.st);
+      x.say('pulisci'); x.bash('h1', 'git clean -fd', 'ok'); x.say(t);
+      ok(fear.scars(x.s, x.agents).length === 1, 'cicatrici: «' + t + '» è un segno');
+    }
+    // un'azione di livello 1 o ancora in corso non lascia cicatrici
+    x = session(); stops.push(x.st);
+    x.say('aggiungi lodash');
+    x.bash('i1', 'npm install lodash', 'ok');
+    x.use('i2', 'Bash', { command: 'git clean -fd' });
+    x.say('hai cancellato tutto, ripristina');
+    ok(fear.scars(x.s, x.agents).length === 0, 'cicatrici: non per il livello 1, né per un\'azione ancora in corso');
+
+    // 5. dal danno allo storico e al Libro
+    x = session(); stops.push(x.st);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-scar-'));
+    const h = new History({ dir: path.join(tmp, 'dati'), backend: 'memory', log() {} });
+    h.keys.exec = async () => null;
+    x.st.on('risk', (s, a, step) => h.recordRisk(s, a, step));
+    try {
+      x.say('sistema il test');
+      x.read('k0', 'data/export/report.csv');
+      x.bash('k1', 'rm -rf data/export', 'ok');
+      x.read('k2', 'data/export/report.csv', 'File does not exist.', true);
+      h.flush();
+      ok(!h.store.collection('risks').get(x.S + ':k1').outcome, 'cicatrici: appena scritto, l\'evento non ha ancora un esito');
+      const fresh = fear.markScars(x.s, x.agents);
+      for (const s of fresh) h.recordRisk(x.s, { id: s.agent }, s.step);
+      h.flush();
+      const doc = h.store.collection('risks').get(x.S + ':k1');
+      ok(fresh.length === 1 && doc.outcome === 'damage' && doc.evidence.join() === x.S + ':k2' && doc.at > doc.t && doc.level === 2 && doc.missed === true && x.step('k1').risk.outcome === 'damage', 'cicatrici: l\'evento nello storico prende esito "damage", con i passi come prova');
+      ok(fear.markScars(x.s, x.agents).length === 0, 'cicatrici: lo stesso danno non viene segnato due volte');
+      ok(fear.queryRisks(h.store, {})[0].outcome === 'damage' && !JSON.stringify(h.store.collection('risks').find({})).includes('does not exist'), 'cicatrici: l\'esito si legge da /api/risks; nessun testo dell\'errore nello storico');
+
+      // nel Libro: una lezione di tipo "scar", forte dal primo caso
+      const book = new bt.Bottega({});
+      const cases = bt.digest(x.s, x.agents);
+      const scase = cases.find(c => c.kind === 'scar');
+      ok(scase && scase.key === 'rm -r <path> → data/export' && scase.excerpt === 'backup,asked', 'cicatrici: il caso per il Libro ha la forma, il bersaglio e le prudenze mancate (aveva guardato: manca la copia e la richiesta)');
+      book.learn(cwd, cases);
+      book.learn(cwd, bt.digest(x.s, x.agents)); // riletto ogni minuto: non conta due volte
+      const now = x.step('k1').t + 60000;
+      const lesson = book.view(cwd, now).lessons.find(l => l.kind === 'scar');
+      ok(lesson && lesson.count === 1 && lesson.level === 'lesson' && /Cicatrice: rm -r <path> su data\/export/.test(lesson.title) && /probabile/.test(lesson.detail) && /prima: fai un commit o una copia e chiedi all'utente\./.test(lesson.detail), 'cicatrici: nel Libro è una lezione dal primo caso, con il consiglio: ' + (lesson && lesson.title));
+      // decade più piano: dopo 60 giorni una cicatrice è ancora una lezione, una lezione normale con lo stesso peso no
+      const DAY = 86400000, L = (kind, count) => ({ kind, key: 'k', count, sessions: ['s'], last: 0, pinned: false });
+      ok(Math.abs(bt.weightOf(L('scar', 1), 90 * DAY) - 0.5) < 1e-9 && Math.abs(bt.weightOf(L('ghost-path', 1), 30 * DAY) - 0.5) < 1e-9 && bt.SCAR_HALF_LIFE === 90 * DAY, 'cicatrici: il peso si dimezza in 90 giorni invece di 30');
+      ok(book.view(cwd, now + 60 * DAY).lessons.find(l => l.kind === 'scar').level === 'lesson' && book.view(cwd, now + 120 * DAY).lessons.find(l => l.kind === 'scar').level === 'observation', 'cicatrici: dopo 60 giorni è ancora una lezione, dopo 120 è un\'osservazione');
+
+      // il Nonno: stessa forma, stesso bersaglio; e le cicatrici prima delle altre lezioni
+      const y = session(); stops.push(y.st);
+      y.say('pulisci');
+      y.use('n1', 'Bash', { command: 'rm -rf data/export' });
+      const lessons = book.view(cwd, y.step('n1').t).lessons.concat([{ id: 'zz', kind: 'slow-step', key: 'rm -rf data/export', level: 'lesson', weight: 99, evidence: [{ t: 0, agent: 'A' }], count: 3 }]);
+      const hint = bt.hints(y.s, y.agents, lessons, y.step('n1').t + 1000);
+      ok(hint.length === 1 && hint[0].kind === 'scar' && /Qui rm -r <path> ha già distrutto del lavoro su data\/export/.test(hint[0].text) && /Stavolta, prima: fai un commit o una copia/.test(hint[0].text), 'Nonno: racconta la cicatrice, e prima di una lezione più pesante: ' + (hint[0] && hint[0].text));
+      const z = session(); stops.push(z.st);
+      z.say('pulisci');
+      z.use('o1', 'Bash', { command: 'rm -rf data/other' });
+      ok(bt.hints(z.s, z.agents, book.view(cwd, z.step('o1').t).lessons, z.step('o1').t + 1000).length === 0, 'Nonno: la cicatrice su un\'altra cartella non c\'entra');
+      // le righe per il CLAUDE.md e per l'inizio sessione: la cicatrice prima, e in inglese
+      const lines = bt.lessonLines(lessons.map(l => ({ ...l, pinned: !!l.pinned })));
+      ok(/^Qui `rm -r <path>` ha già distrutto del lavoro su `data\/export`\. Prima di rifarlo: fai un commit o una copia e chiedi all'utente\.$/.test(lines[0]), 'cicatrici: è la prima riga tra le lezioni per l\'agente: ' + lines[0]);
+      const en = i18n.withLang('en', () => ({ v: book.view(cwd, now).lessons.find(l => l.kind === 'scar'), line: bt.lessonLines(book.view(cwd, now).lessons)[0] }));
+      ok(/^Scar: /.test(en.v.title) && /already destroyed work on `data\/export`/.test(en.line) && /Before doing it again: make a commit or a copy and ask the user\.$/.test(en.line), 'cicatrici: testi in inglese: ' + en.line);
+      // dimenticarla funziona come per le altre lezioni
+      ok(book.act(cwd, 'forget', lesson.id) && !book.view(cwd, now).lessons.some(l => l.kind === 'scar') && book.learn(cwd, bt.digest(x.s, x.agents)) === 0, 'cicatrici: "Dimentica" la toglie e i casi già visti non la riportano');
+      book.stop();
+    } finally { try { h.stop(); } catch {} fs.rmSync(tmp, { recursive: true, force: true }); }
+  } finally {
+    for (const st of stops) { try { st.stop && st.stop(); } catch {} }
+  }
+}
+
+// 2.14, R5: quello che l'ufficio riceve per disegnare la paura (a.fear nello stato) e l'opzione fearEnabled
+function fearViewTests(ok) {
+  const { OfficeState, DEFAULT_SETTINGS } = require(path.join(ROOT, 'src', 'core', 'state'));
+  const fear = require(path.join(ROOT, 'src', 'core', 'fear'));
+  const iso = t => new Date(t).toISOString();
+  let now = Date.parse('2026-11-19T15:00:00Z'), n = 0;
+  const st = new OfficeState({ clock: () => now, settings: {} });
+  const S = 'sess-view-0001', cwd = '/home/u/proj';
+  const line = (type, content) => ({ type, timestamp: iso(now += 1000), cwd, gitBranch: 'feature/x', message: { role: type, content, ...(type === 'assistant' ? { id: 'm' + (++n), usage: { input_tokens: 1, output_tokens: 1 } } : {}) } });
+  const bash = (id, command, out, isErr = false) => {
+    st.applyTranscriptLine(S, null, line('assistant', [{ type: 'tool_use', id, name: 'Bash', input: { command } }]));
+    if (out !== undefined) st.applyTranscriptLine(S, null, line('user', [{ type: 'tool_result', tool_use_id: id, content: out, is_error: isErr }]));
+  };
+  const mainView = () => st.snapshot().sessions.find(s => s.id === S).main.fear;
+  try {
+    ok(DEFAULT_SETTINGS.fearEnabled === true, 'ufficio: la paura è accesa di base (osserva soltanto)');
+    st.applyTranscriptLine(S, null, line('user', 'sistema il login'));
+    bash('v1', 'npm test', 'ok');
+    ok(mainView() === null, 'ufficio: senza azioni rischiose l\'agente non ha niente da mostrare');
+    bash('v2', 'git push --force origin main');
+    const v = mainView();
+    ok(v && v.last && v.last.id === 'v2' && v.last.level === 3 && v.last.missed === true && v.last.shape && /main branch|branch principale/.test(v.last.reasons.join(' ')) && v.last.advice.length >= 2,
+      'ufficio: l\'ultima azione rischiosa arriva con livello, paura mancata, il perché e i consigli');
+    ok(!JSON.stringify(v).includes('--force origin'), 'ufficio: del comando arriva solo la forma della regola');
+    bash('v3', 'git add -A && git commit -m wip', 'ok');
+    bash('v4', 'git reset --hard HEAD~1', 'ok');
+    const v4 = mainView().last;
+    ok(v4.id === 'v4' && v4.missed === false && v4.level === 2, 'ufficio: dopo un commit, il reset --hard è una paura giusta (il personaggio suda)');
+    now += fear.FRESH_MS + 1000;
+    ok(mainView() === null, 'ufficio: dopo due minuti l\'azione rischiosa non si mostra più');
+    // la cicatrice resta per il resto della sessione
+    const s = st.sessions.get(S);
+    s.main.world.scarAt = now - 5000;
+    now += 3600000;
+    ok(mainView() && mainView().scarAt === s.main.world.scarAt && !mainView().last, 'ufficio: la cicatrice resta anche un\'ora dopo, senza azione recente');
+    // markScars la mette sul mondo dell'agente
+    const st2 = new OfficeState({ clock: () => now, settings: {} });
+    const S2 = 'sess-view-0002';
+    const l2 = (type, content) => ({ ...line(type, content) });
+    st2.applyTranscriptLine(S2, null, l2('user', 'pulisci'));
+    st2.applyTranscriptLine(S2, null, l2('assistant', [{ type: 'tool_use', id: 'w1', name: 'Bash', input: { command: 'git clean -fd' } }]));
+    st2.applyTranscriptLine(S2, null, l2('user', [{ type: 'tool_result', tool_use_id: 'w1', content: 'ok' }]));
+    st2.applyTranscriptLine(S2, null, l2('user', 'hai cancellato i miei appunti'));
+    const s2 = st2.sessions.get(S2);
+    fear.markScars(s2, [{ id: 'main', name: 'Claude', world: s2.main.world, mind: s2.main.mind }]);
+    ok(s2.main.world.scarAt > 0 && st2.snapshot().sessions.find(x => x.id === S2).main.fear.scarAt === s2.main.world.scarAt, 'ufficio: markScars mette la cicatrice sul personaggio');
+    st2.stop && st2.stop();
+    // R6: il rischio di una richiesta di permesso
+    const pv = (cmd, steps = []) => fear.permissionView({ s, a: { world: { steps, open: new Map() } }, tool: 'Bash', input: { command: cmd } });
+    ok(pv('ls -la') === null, 'permesso: un comando innocuo non ha rischio');
+    const pf = pv('git push --force origin main');
+    ok(pf.level === 3 && /IRREVERSIB/.test(pf.name) && pf.missed && pf.undo === '' && /(Non si torna indietro|no going back)/.test(fear.permissionLine(pf)), 'permesso: force push su main, irreversibile, senza rimedio: ' + fear.permissionLine(pf));
+    const pr = pv('git reset --hard HEAD~1', [{ t: 1, act: 'run', sig: 'run:git commit -m wip', err: false }]);
+    ok(pr.level === 2 && !pr.missed && /reflog/.test(pr.undo) && /reflog/.test(fear.permissionLine(pr)), 'permesso: reset --hard dopo un commit, con il modo di tornare indietro');
+    const pp = pv('git push origin main');
+    ok(pp.level === 3 && /revert/.test(pp.undo), 'permesso: un push normale su main si rimedia con un revert, un force push no');
+    // il passo aperto per la stessa azione non è prudenza
+    const self = { t: 2, act: 'look', sig: 'run:git status', err: null };
+    const open = new Map([['x', self]]);
+    ok(fear.permissionView({ s, a: { world: { steps: [self], open } }, tool: 'Bash', input: { command: 'git reset --hard' } }).missed === true, 'permesso: l\'azione ancora aperta non conta come prudenza');
+    // nello stato solo mentre aspetta
+    st.applyHook({ session_id: S, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'git clean -fd' } });
+    const waitView = st.snapshot().sessions.find(x => x.id === S).main;
+    ok(waitView.status === 'waiting' && waitView.perm && waitView.perm.level === 2 && waitView.perm.reasons.length === 1, 'permesso: nello stato, il rischio dell\'agente che aspetta');
+    st.applyTranscriptLine(S, null, line('user', [{ type: 'tool_result', tool_use_id: 'zz', content: 'ok' }]));
+    st.setAgent(s.main, 'working', 'ok');
+    ok(st.snapshot().sessions.find(x => x.id === S).main.perm === null, 'permesso: quando non aspetta più, il rischio sparisce');
+    // l'opzione si spegne e si riaccende come le altre
+    st.setSettings({ fearEnabled: false });
+    ok(st.settings.fearEnabled === false && st.snapshot().settings.fearEnabled === false, 'ufficio: fearEnabled si spegne dalle opzioni');
+    st.setSettings({ fearEnabled: 'sì' });
+    ok(st.settings.fearEnabled === true, 'ufficio: e si riaccende');
+  } finally { st.stop && st.stop(); }
+}
+
+// 2.14, R7: la paura prestata all'agente (feedback "fear" al PreToolUse), il suo esito, gli hook da aggiornare
+function fearFeedbackTests(ok) {
+  const { OfficeState } = require(path.join(ROOT, 'src', 'core', 'state'));
+  const fb = require(path.join(ROOT, 'src', 'core', 'feedback'));
+  require(path.join(ROOT, 'src', 'core', 'feedback-rules'));
+  const { judge } = require(path.join(ROOT, 'src', 'core', 'outcomes'));
+  const hooks = require(path.join(ROOT, 'src', 'core', 'hooks'));
+  const i18n = require(path.join(ROOT, 'src', 'i18n'));
+  const iso = t => new Date(t).toISOString();
+  let now = Date.parse('2026-11-19T16:00:00Z'), n = 0, seqS = 0;
+  const cwd = '/home/u/proj';
+  const mk = () => {
+    const st = new OfficeState({ clock: () => now, settings: {} }), S = 'sess-fb-fear-' + (++seqS);
+    const line = (type, content, extra = {}) => ({ type, timestamp: iso(now += 1000), cwd, gitBranch: 'feature/x', message: { role: type, content, ...(type === 'assistant' ? { id: 'm' + (++n), usage: { input_tokens: 1, output_tokens: 1 } } : {}) }, ...extra });
+    const x = {
+      st, S,
+      say: t => st.applyTranscriptLine(S, null, line('user', t)),
+      bash: (id, command, out = 'ok') => { st.applyTranscriptLine(S, null, line('assistant', [{ type: 'tool_use', id, name: 'Bash', input: { command } }])); if (out !== null) st.applyTranscriptLine(S, null, line('user', [{ type: 'tool_result', tool_use_id: id, content: out }])); },
+      get s() { return st.sessions.get(S); },
+      hook: (command, extra = {}) => ({ hook_event_name: 'PreToolUse', session_id: S, cwd, tool_name: 'Bash', tool_input: { command }, tool_use_id: 'hook-' + (++n), ...extra }),
+    };
+    return x;
+  };
+  const gate = () => new fb.Gate({ now: () => now });
+  const ctxOf = (x, settings = { fbFear: 'on' }, lessons = []) => ({ now: () => now, session: x.s, cwd, settings, lessons: () => lessons });
+  const stops = [];
+  try {
+    // acceso: il messaggio parla dell'azione appena fatta (arriva con il risultato, R0), in inglese, con il perché, che cosa mancava e che cosa fare adesso
+    let x = mk(); stops.push(x.st);
+    x.say('sistema il test del login');
+    x.bash('a1', 'npm test');
+    let g = gate();
+    let r = fb.respond(x.hook('git push --force origin main'), ctxOf(x), g);
+    const txt = r.out && r.out.hookSpecificOutput.additionalContext;
+    ok(r.out && r.out.hookSpecificOutput.hookEventName === 'PreToolUse' && /^Platypus: the command you just ran is irreversible \(pushes to the main branch\)\./.test(txt) && /Missing in the actions before it: .*a commit or a copy/.test(txt) && /If the user did not ask for exactly this, check what it changed and tell them now\./.test(txt) && /Before the next risky action: .*make a commit or a copy\.$/.test(txt) && txt.length <= fb.MAX_TEXT,
+      'paura all\'agente: dopo l\'azione, irreversibile, che cosa mancava e che cosa fare adesso → ' + txt);
+    ok(r.entry.feature === 'fear' && r.entry.mode === 'on' && r.entry.event === 'PreToolUse' && r.entry.about.kind === 'fear' && r.entry.about.cmd === 'git push <remote> main' && /^git-push/.test(r.entry.tag) && r.entry.toolUseId, 'paura all\'agente: nel registro la funzione, la regola e la forma del comando');
+    ok(!JSON.stringify(r.entry).includes('--force origin'), 'paura all\'agente: nel registro non c\'è il comando');
+    // una volta per regola per sessione: né allo stesso agente né a un altro
+    now += 10 * 60000;
+    ok(!fb.respond(x.hook('git push --force origin main'), ctxOf(x), g).out && !fb.respond(x.hook('git push -f origin main', { agent_id: 'sub-1' }), ctxOf(x), g).out, 'paura all\'agente: la stessa regola non torna nella stessa sessione, nemmeno a un sottoagente');
+    // un'altra regola, più tardi: sì
+    now += 3 * 60000;
+    ok(/destroys|throws away every change/.test((fb.respond(x.hook('git reset --hard'), ctxOf(x), g).out || { hookSpecificOutput: {} }).hookSpecificOutput.additionalContext || ''), 'paura all\'agente: un\'altra regola, più tardi, sì');
+    // di base (in ombra): niente all'agente, ma nel registro
+    x = mk(); stops.push(x.st);
+    x.say('sistema il login');
+    const { DEFAULT_SETTINGS } = require(path.join(ROOT, 'src', 'core', 'state'));
+    r = fb.respond(x.hook('git clean -fd'), ctxOf(x, DEFAULT_SETTINGS), gate());
+    ok(!r.out && r.entry && r.entry.mode === 'shadow' && r.entry.feature === 'fear', 'paura all\'agente: di base in ombra, registrata ma non detta');
+    ok(!fb.respond(x.hook('git clean -fd'), ctxOf(x, { fbFear: 'off' }), gate()).entry, 'paura all\'agente: spenta, niente nemmeno nel registro');
+    // quando tace: azione prudente, livello 1, richiesta dell'utente, azione innocua
+    x = mk(); stops.push(x.st);
+    x.say('sistema il login');
+    x.bash('b1', 'git add -A && git commit -m wip', '[x] wip');
+    ok(!fb.respond(x.hook('git reset --hard HEAD~1'), ctxOf(x), gate()).entry, 'paura all\'agente: dopo un commit il reset --hard è prudente, niente da dire');
+    ok(!fb.respond(x.hook('npm install lodash'), ctxOf(x), gate()).entry && !fb.respond(x.hook('ls -la'), ctxOf(x), gate()).entry, 'paura all\'agente: niente per il livello 1 o per un comando innocuo');
+    x = mk(); stops.push(x.st);
+    x.say('butta tutto e fai un reset hard');
+    ok(!fb.respond(x.hook('git reset --hard'), ctxOf(x), gate()).entry, 'paura all\'agente: niente se l\'utente l\'ha chiesto (probabile)');
+    // l'azione stessa, se il transcript è già arrivato, non è prudenza
+    x = mk(); stops.push(x.st);
+    x.say('sistema il login');
+    x.bash('c1', 'git status && git reset --hard', null);
+    r = fb.respond(x.hook('git status && git reset --hard', { tool_use_id: 'c1' }), ctxOf(x), gate());
+    ok(r.out && r.entry.mode === 'on', 'paura all\'agente: il passo aperto della stessa azione non conta come prudenza');
+    // con una cicatrice nel Libro su quell'azione, lo dice: un messaggio solo, niente doppione con il Nonno
+    x = mk(); stops.push(x.st);
+    x.say('sistema il login');
+    const scar = { id: 'L1', kind: 'scar', key: 'git reset --hard <ref> → *', level: 'lesson', ignored: false, weight: 2 };
+    r = fb.respond(x.hook('git reset --hard origin/main'), ctxOf(x, { fbFear: 'on' }, [scar]), gate());
+    ok(/already destroyed work once/.test(r.out.hookSpecificOutput.additionalContext) && /\/scar$/.test(r.entry.tag), 'paura all\'agente: con una cicatrice nel Libro, lo stesso messaggio la cita');
+    // in italiano nell'ufficio, sempre in inglese per l'agente
+    const prev = i18n.getLang(); i18n.setLang('it');
+    try {
+      x = mk(); stops.push(x.st);
+      x.say('sistema il login');
+      r = fb.respond(x.hook('git clean -fd'), ctxOf(x), gate());
+      ok(/^Platypus: the command you just ran is dangerous/.test(r.out.hookSpecificOutput.additionalContext) && /^Platypus: il comando che hai appena lanciato è pericoloso/.test(r.entry.local), 'paura all\'agente: inglese per l\'agente, la lingua dell\'ufficio nel registro');
+    } finally { i18n.setLang(prev); }
+
+    // ---- l'esito: nelle 3 azioni dopo quella avvisata
+    const E = { t: 1000, agent: 'main', feature: 'fear', toolUseId: 'p1', about: { kind: 'fear', cmd: 'git reset --hard <ref>', pat: 'git-reset-hard' } };
+    const step = (id, sig, extra = {}) => ({ id, t: 1000 + Number(String(id).replace(/\D/g, '') || 0), act: 'run', tool: 'Bash', sig: 'run:' + sig, err: false, ...extra });
+    const ag = (...rest) => ({ steps: [step('p1', 'git reset --hard'), ...rest], goals: [] });
+    ok(judge(E, ag(step('q2', 'git status')), 5000).outcome === 'helped', 'paura, esito: ha guardato dopo l\'avviso → probabilmente utile');
+    ok(judge(E, ag(step('q2', 'git stash')), 5000).outcome === 'helped', 'paura, esito: ha messo da parte il lavoro → probabilmente utile');
+    ok(judge(E, ag({ id: 'q2', t: 1002, act: 'other', tool: 'AskUserQuestion', sig: 'AskUserQuestion', err: false }), 5000).why.length > 0 && judge(E, ag({ id: 'q2', t: 1002, act: 'other', tool: 'AskUserQuestion', sig: 'AskUserQuestion', err: false }), 5000).outcome === 'helped', 'paura, esito: ha chiesto all\'utente → probabilmente utile');
+    ok(judge(E, ag(step('q2', 'git clean -fd', { risk: { level: 2, missed: true } })), 5000).outcome === 'ignored', 'paura, esito: un\'altra azione rischiosa senza prudenza → ignorato');
+    ok(judge(E, ag(step('q2', 'npm test'), step('q3', 'npm run lint'), step('q4', 'node x.js')), 5000).outcome === 'unclear', 'paura, esito: tre azioni d\'altro → non si può dire');
+    ok(judge(E, ag(step('q2', 'npm test')), 5000) === null, 'paura, esito: meno di tre azioni, ancora presto');
+    ok(judge(E, ag(step('q2', 'git status', { err: null })), 5000) === null, 'paura, esito: l\'azione dopo è ancora in corso');
+    ok(judge(E, { steps: [step('p1', 'git reset --hard')], goals: [{ t: 3000 }] }, 5000).outcome === 'helped', 'paura, esito: il turno finisce lì → si è fermato e ha lasciato decidere');
+
+    // ---- gli hook di feedback di prima della 2.14 sono da aggiornare
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-fearhooks-'));
+    try {
+      hooks.installFeedback({ port: 47800, base: tmp });
+      const fresh = !hooks.feedbackOutdated({ base: tmp });
+      const p = path.join(tmp, 'settings.json'), j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      delete j.hooks.PreToolUse;
+      fs.writeFileSync(p, JSON.stringify(j));
+      ok(fresh && hooks.feedbackOutdated({ base: tmp }) && hooks.feedbackStatus({ base: tmp }), 'hook di feedback senza PreToolUse (installati con la 2.13): da aggiornare');
+      hooks.uninstallFeedback({ base: tmp });
+      ok(!hooks.feedbackOutdated({ base: tmp }), 'hook di feedback assenti: niente da aggiornare');
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  } finally { for (const st of stops) { try { st.stop && st.stop(); } catch {} } }
+}
+
+// 2.14, R9: report del giorno, scheda PAURE del Libro, metriche nello storico
+function fearReportTests(ok) {
+  const { openStore } = require(path.join(ROOT, 'src', 'core', 'store'));
+  const { declareCollections } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
+  const fear = require(path.join(ROOT, 'src', 'core', 'fear'));
+  const HQ = require(path.join(ROOT, 'src', 'core', 'history-query'));
+  const { COUNT_FIELDS } = require(path.join(ROOT, 'src', 'core', 'history'));
+  const store = declareCollections(openStore({ requireFields: true, guard: 'reject' }));
+  const DAY = 86400000, NOW = Date.parse('2026-11-19T18:00:00'), D0 = Date.parse('2026-11-19T00:00:00');
+  let k = 0;
+  const risk = (o) => store.collection('risks').put({ _id: 's:' + (++k), project: 'p1', session: 's1', agent: 'main', tool: 'Bash', ruleIds: ['git-reset-hard'], level: 2, prudence: 0, present: [], missing: ['backup'], missed: true, shape: 'git reset --hard <ref>', t: D0 + 3600000, ...o });
+  try {
+    store.collection('projects').put({ _id: 'p1', name: 'negozio' });
+    risk({ name: 'Claude' });
+    risk({ name: 'Claude', ruleIds: ['git-push-main', 'git-push-force-shared'], level: 3, shape: 'git push <remote> main' });
+    risk({ agent: 'a1', name: 'EXPLORE', missed: false, prudence: 1 });
+    risk({ agent: 'a2', name: 'REVIEWER', ruleIds: ['rm-recursive'], shape: 'rm -r <path>', target: 'data/export', outcome: 'damage', at: D0 + 7200000, evidence: ['s:x'] });
+    risk({ name: 'Claude', ruleIds: ['lockfile'], level: 1, missed: false, shape: '' });
+    risk({ name: 'Claude', t: D0 - 2 * DAY, project: 'p2' }); // un altro giorno, un altro progetto
+    risk({ name: 'Claude', t: NOW - 120 * DAY }); // oltre i 90 giorni
+    // il report del giorno
+    const rd = fear.reportDay(store, D0, D0 + DAY);
+    ok(rd.total === 4 && rd.missed === 3 && JSON.stringify(rd.byAgent) === JSON.stringify([{ name: 'Claude', n: 2 }, { name: 'REVIEWER', n: 1 }]), 'report: paure mancate per agente, solo livello 2 o più, solo quel giorno → ' + JSON.stringify(rd.byAgent));
+    ok(rd.scars.length === 1 && rd.scars[0].project === 'negozio' && rd.scars[0].name === 'REVIEWER' && rd.scars[0].target === 'data/export' && rd.scars[0].shape === 'rm -r <path>' && rd.scars[0].reason, 'report: le cicatrici del giorno, con il progetto per nome');
+    ok(fear.reportDay(store, D0 + DAY, D0 + 2 * DAY).total === 0 && fear.reportDay(null, 0, 1).total === 0, 'report: un giorno senza azioni rischiose, e senza storico');
+    // il riassunto per il Libro: ultimi 90 giorni, per livello e per regola, per progetto
+    const sm = fear.summary(store, { projects: ['p1'], now: NOW });
+    ok(sm.days === 90 && sm.total === 5 && sm.levels[1] === 1 && sm.levels[2] === 3 && sm.levels[3] === 1 && sm.missed === 3 && sm.damage === 1, 'Libro: livelli, paure mancate e danni degli ultimi 90 giorni del progetto');
+    ok(sm.rules[0].id === 'git-push-main' && sm.rules[0].text && sm.rules[0].shape && sm.rules.find(r => r.id === 'git-reset-hard').count === 2 && sm.rules.find(r => r.id === 'git-reset-hard').missed === 1, 'Libro: per regola, le più gravi prima, con il testo e la forma');
+    ok(sm.recent.length === 5 && sm.recent[0].t >= sm.recent[4].t && sm.recent.every(r => r.reasons), 'Libro: le azioni più recenti, con il perché');
+    ok(fear.summary(store, { now: NOW }).total === 6 && fear.summary(null).total === 0, 'Libro: senza progetto, tutti i progetti; senza storico, niente');
+    // il nome dell'agente è un campo dichiarato
+    ok(store.collection('risks').get('s:1').name === 'Claude', 'storico: l\'evento tiene il nome dell\'agente in ufficio');
+    // le tre metriche nuove: nei riassunti delle sessioni, nello storico nel tempo
+    ok(['risky_actions', 'missed_fears', 'scars'].every(m => COUNT_FIELDS.includes(m) && HQ.SESSION_METRICS.includes(m) && HQ.LOWER_IS_BETTER.has(m)), 'storico: risky_actions, missed_fears e scars nei riassunti, e meno è meglio');
+    for (let i = 0; i < 12; i++) store.collection('sessions').put({ _id: 'S' + i, project: 'p1', t: NOW - (i < 6 ? 3 : 40) * DAY - i * 3600000, actions: 50, risky_actions: 2, missed_fears: i < 6 ? 0 : 2, scars: 0 });
+    const all = HQ.queryAll(store, { projects: ['p1'], from: NOW - 70 * DAY, to: NOW, metrics: ['missed_fears', 'risky_actions'] });
+    const t = HQ.trend(all.missed_fears, NOW);
+    ok(t.verdict === 'fewer' && t.better === true && HQ.trend(all.risky_actions, NOW).verdict === 'same', 'storico: le paure mancate in calo sono un miglioramento; le azioni rischiose stabili');
+  } finally { store.close(); }
+}
+
 function run(ok) {
   console.log('libro della bottega');
   bottegaTests(ok);
+  riskTests(ok);
+  prudenceTests(ok);
+  fearViewTests(ok);
+  fearFeedbackTests(ok);
+  fearReportTests(ok);
   bottegaNameTests(ok);
   elderTests(ok);
   console.log('sorprese');
@@ -622,7 +1316,7 @@ function run(ok) {
   alertTests(ok);
 }
 
-module.exports = { run };
+module.exports = { run, riskTests, prudenceTests, fearStoreTests, scarTests, fearViewTests, fearFeedbackTests, fearReportTests };
 
 if (require.main === module) {
   require('./test-guard').requireTempDataDir('unit-test'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea

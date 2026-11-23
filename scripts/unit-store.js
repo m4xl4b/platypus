@@ -464,8 +464,8 @@ async function collectionsTests(ok) {
   const { COLLECTIONS, NAMES, declareCollections, defaultRetention } = require(path.join(ROOT, 'src', 'core', 'store', 'collections'));
   const { ProjectKeys } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
   const code = fn => { try { fn(); } catch (e) { return e.code; } return null; };
-  ok(NAMES.join() === 'projects,lessons,steps,sessions,feedback,experiments,daily' && JSON.stringify(defaultRetention()) === '{"projects":0,"lessons":180,"steps":90,"sessions":365,"feedback":365,"experiments":365,"daily":0}',
-    'le sette collezioni, con la conservazione di partenza: passi 90 giorni, sessioni e feedback 365, lezioni 180, progetti e statistiche per sempre');
+  ok(NAMES.join() === 'projects,lessons,steps,sessions,feedback,experiments,risks,daily' && JSON.stringify(defaultRetention()) === '{"projects":0,"lessons":180,"steps":90,"sessions":365,"feedback":365,"experiments":365,"risks":365,"daily":0}',
+    'le otto collezioni, con la conservazione di partenza: passi 90 giorni, sessioni, feedback e azioni rischiose 365, lezioni 180, progetti e statistiche per sempre');
   const P = '0123456789abcdef', T = 1763500000000;
   // un documento per collezione, con la forma che i dati hanno oggi nel motore
   const samples = {
@@ -898,7 +898,7 @@ async function retentionTests(ok) {
   const { Bottega } = require(path.join(ROOT, 'src', 'core', 'bottega'));
   const { ProjectKeys } = require(path.join(ROOT, 'src', 'core', 'store', 'project-key'));
   const DAY = 86400000, NOW = Date.now();
-  ok(JSON.stringify(retentionFromSettings({ storeKeepSteps: 30, storeKeepSessions: 0, storeKeepFeedback: '400', storeKeepLessons: -5, other: 1 })) === '{"steps":30,"sessions":0,"feedback":400,"experiments":400}' &&
+  ok(JSON.stringify(retentionFromSettings({ storeKeepSteps: 30, storeKeepSessions: 0, storeKeepFeedback: '400', storeKeepLessons: -5, other: 1 })) === '{"steps":30,"sessions":0,"feedback":400,"experiments":400,"risks":0}' &&
     JSON.stringify(retentionFromSettings({ storeKeepSteps: 99999 })) === '{"steps":3650}' && maxBytes({}) === 200 * 1048576 && maxBytes({ storeMaxMB: 0 }) === 0 && maxBytes({ storeMaxMB: 'boh' }) === 0,
     'dalle opzioni: giorni per collezione (0 = per sempre, al massimo 10 anni, i valori senza senso non contano) e il limite in MB');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'platypus-conserva-'));
@@ -1045,13 +1045,13 @@ async function forgetTests(ok) {
     const ex = h.exportAll(out);
     const files = fs.readdirSync(out).sort();
     const lines = f => fs.readFileSync(path.join(out, f), 'utf8').split('\n').filter(Boolean).length;
-    ok(ex.dir === out && files.join() === 'daily.jsonl,experiments.jsonl,feedback.jsonl,lessons.jsonl,projects.jsonl,sessions.jsonl,steps.jsonl' && ex.files.every(f => lines(f.file) === f.count && f.count === h.store.collection(f.collection).count({})),
+    ok(ex.dir === out && files.join() === 'daily.jsonl,experiments.jsonl,feedback.jsonl,lessons.jsonl,projects.jsonl,risks.jsonl,sessions.jsonl,steps.jsonl' && ex.files.every(f => lines(f.file) === f.count && f.count === h.store.collection(f.collection).count({})),
       'esporta: un file JSONL per collezione, con tutti i documenti');
     const home = path.join(tmp, 'casa'), prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
     process.env.HOME = home; process.env.USERPROFILE = home;
     try {
       const d1 = h.exportAll(), d2 = h.exportAll();
-      ok(path.dirname(d1.dir) === path.join(home, 'Downloads') && /^platypus-export-\d{8}-\d{4}$/.test(path.basename(d1.dir)) && d2.dir === d1.dir + '-2' && fs.readdirSync(d2.dir).length === 7, 'esporta: di base in Scaricati/platypus-export-<data>, senza mai sovrascrivere un\'esportazione di prima');
+      ok(path.dirname(d1.dir) === path.join(home, 'Downloads') && /^platypus-export-\d{8}-\d{4}$/.test(path.basename(d1.dir)) && d2.dir === d1.dir + '-2' && fs.readdirSync(d2.dir).length === 8, 'esporta: di base in Scaricati/platypus-export-<data>, senza mai sovrascrivere un\'esportazione di prima');
     } finally { for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
   } finally {
     if (h) { try { h.stop(); } catch {} }
@@ -1078,7 +1078,7 @@ async function experimentTests(ok) {
     `statistica: Wilson 81/263 = ${w.map(x => x.toFixed(4)).join('–')}, Newcombe 56/70 contro 48/80 = ${d.diff.toFixed(4)} (${d.lo.toFixed(4)}–${d.hi.toFixed(4)}), come nei lavori originali`);
   // il quarto modo: solo per le funzioni che possono essere accese
   ok(fb.cleanMode('fbLoop', 'experiment') === 'experiment' && fb.cleanMode('fbSessionLessons', 'experiment') === 'experiment' && fb.cleanMode('fbClaims', 'experiment') === 'shadow' && fb.cleanMode('fbDrift', 'experiment') === 'shadow' &&
-    fb.modeOf({ fbElder: 'experiment' }, 'elder') === 'experiment' && JSON.stringify(X.FEATURES) === '["sessionLessons","elder","loop"]', 'il modo «esperimento» vale per le tre funzioni che possono essere accese; le altre restano in ombra');
+    fb.modeOf({ fbElder: 'experiment' }, 'elder') === 'experiment' && fb.cleanMode('fbFear', 'experiment') === 'experiment' && JSON.stringify(X.FEATURES) === '["sessionLessons","elder","loop","fear"]', 'il modo «esperimento» vale per le quattro funzioni che possono essere accese (con la paura, 2.14); le altre restano in ombra');
   // respond: il gruppo decide se il messaggio parte, e resta scritto nel messaggio
   const rules = { PostToolUseFailure: [{ feature: 'loop', run: () => ({ feature: 'loop', text: 'Platypus: stop looping.' }) }] };
   const sidOn = ids.find(id => X.groupOf(id, 'loop') === 'on'), sidSh = ids.find(id => X.groupOf(id, 'loop') === 'shadow');
@@ -1106,7 +1106,7 @@ async function experimentTests(ok) {
     store.collection('sessions').put({ _id: sid, project: 'p1', t: i, actions: i < 2 ? 3 : 100, errors: group === 'on' ? 4 + (i % 3) : 9 + (i % 3) });
   }
   const sl = X.resultFor(store, 'sessionLessons');
-  ok(sl.enough && sl.kind === 'sessions' && sl.n.on === 11 && sl.n.shadow === 11 && sl.assigned === 24 && sl.result.diff < -3 && sl.result.hi < 0 && X.results(store).length === 3,
+  ok(sl.enough && sl.kind === 'sessions' && sl.n.on === 11 && sl.n.shadow === 11 && sl.assigned === 24 && sl.result.diff < -3 && sl.result.hi < 0 && X.results(store).length === 4,
     `lezioni a inizio sessione: ${sl.result.m1.toFixed(1)} errori ogni 100 azioni con le lezioni contro ${sl.result.m2.toFixed(1)} senza (n = ${sl.n.on} e ${sl.n.shadow}; le sessioni con meno di ${X.MIN_ACTIONS} azioni non contano)`);
   store.close();
 }
@@ -1243,6 +1243,19 @@ async function demoHistoryTests(ok) {
   ok(same && a.seeded.sessions > 200 && a.seeded.steps > 300 && a.seeded.feedback > 100 && a.backend === 'memory', `tre mesi finti, sempre uguali e solo in memoria: ${a.seeded.sessions} sessioni, ${a.seeded.steps} passi, ${a.seeded.feedback} messaggi`);
   const verdicts = PROJECTS.map(p => { const all = HQ.queryAll(a, { projects: [pathKey(p.cwd)], from: HQ.addDays(HQ.bucketStart(now, 'week'), -7 * 25), to: now + 1, bucket: 'week' }); return ['loops', 'stuck', 'claims', 'surprises'].map(m => HQ.trend(all[m], now).verdict).join(','); });
   ok(verdicts[0] === 'fewer,fewer,fewer,fewer' && verdicts[1] === 'more,more,more,more' && verdicts[2] === 'same,same,same,same', `un progetto migliora, uno peggiora, uno resta uguale: ${verdicts.join(' | ')}`);
+  // 2.14 (R10): la paura nello storico finto
+  {
+    const fear = require(path.join(ROOT, 'src', 'core', 'fear'));
+    const sameRisks = JSON.stringify(a.collection('risks').find({}, { sort: { _id: 1 } })) === JSON.stringify(b.collection('risks').find({}, { sort: { _id: 1 } }));
+    const mf = PROJECTS.map(p => { const all = HQ.queryAll(a, { projects: [pathKey(p.cwd)], from: HQ.addDays(HQ.bucketStart(now, 'week'), -7 * 25), to: now + 1, bucket: 'week', metrics: ['missed_fears'] }); return HQ.trend(all.missed_fears, now).verdict; });
+    const sm = fear.summary(a, { projects: [pathKey(PROJECTS[1].cwd)], now });
+    const d0 = new Date(now); d0.setHours(0, 0, 0, 0);
+    const today = fear.reportDay(a, d0.getTime(), d0.getTime() + 86400000);
+    const ex = X.resultFor(a, 'fear');
+    ok(sameRisks && a.seeded.risks > 100 && mf[0] === 'fewer' && mf[1] === 'more' && sm.total > 20 && sm.damage > 0 && sm.rules.length >= 5 && today.total >= 3 && today.scars.length >= 1 && ex.enough,
+      `la paura finta: ${a.seeded.risks} azioni rischiose, paure mancate ${mf.join('/')}, oggi ${today.total} con ${today.scars.length} cicatrice, il messaggio in esperimento (n = ${ex.n.on} e ${ex.n.shadow})`);
+    ok(!/--force|origin\/|@example|DROP TABLE/.test(JSON.stringify(a.collection('risks').find({}))), 'la paura finta: solo forme di comandi, nessun comando');
+  }
   const loop = X.resultFor(a, 'loop'), sl = X.resultFor(a, 'sessionLessons');
   ok(loop.enough && loop.result.lo > 0.1 && sl.enough && sl.result.hi < 0, `l'esperimento della demo ha un effetto visibile: giro in tondo +${(loop.result.diff * 100).toFixed(0)} punti (da +${(loop.result.lo * 100).toFixed(0)}), lezioni a inizio sessione ${sl.result.diff.toFixed(1)} errori ogni 100 azioni`);
   const s1 = searchSteps(a, { projects: [pathKey(PROJECTS[0].cwd)], file: 'login' }), t = HQ.reportTrend(a, now);

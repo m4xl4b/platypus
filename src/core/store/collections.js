@@ -9,6 +9,7 @@
 //   sessions     il riassunto di ogni sessione                                                 365 giorni
 //   feedback     i messaggi agli agenti (2.11) e che cosa è successo dopo                      365 giorni
 //   experiments  il gruppo assegnato a ogni sessione per ogni funzione del feedback (S11)      365 giorni
+//   risks        le azioni rischiose (2.14): regola, livello, prudenze, com'è finita            365 giorni
 //   daily        le statistiche per giorno e per settimana (lo stats.json di prima)            per sempre (sono piccole)
 //
 // Mai il testo: niente richieste, risposte, uscite dei comandi, contenuto dei file. Dove resta una riga
@@ -59,6 +60,7 @@ const COLLECTIONS = {
       end: 'number', kind: 'string', model: 'string', effort: 'string', agents: 'number',
       actions: 'number', errors: 'number', surprises: 'number', claims: 'number', loops: 'number', stale: 'number', lessons: 'number',
       stuck: 'number', flaky: 'number', // fasi bloccate e comandi instabili (S12)
+      risky_actions: 'number', missed_fears: 'number', scars: 'number', // la paura (2.14, R9): azioni di livello 2+, paure mancate, danni
       cost: 'number', tokens: 'number',
     },
     indexes: [['project', 't']],
@@ -80,6 +82,19 @@ const COLLECTIONS = {
     // _id: "<sessione>:<funzione>"; t: quando è stato assegnato
     fields: { sid: 'id', feature: 'string', group: 'string' },
     indexes: [['feature', 't']],
+    retention: { days: 365 },
+  },
+  risks: {
+    // _id: "<sessione>:<id dell'azione>", come i passi; t: quando l'azione è cominciata (2.14, fear.js)
+    // Del comando resta la forma fissa della regola ("git reset --hard <ref>"), mai gli argomenti; target è relativo al progetto
+    fields: {
+      session: 'id', agent: 'string', name: 'string', tool: 'string', ruleIds: ['string'], level: 'number', // name: come l'agente si chiama in ufficio (R9)
+      prudence: 'number', present: ['string'], missing: ['string'], missed: 'boolean', // missed: paura mancata (livello 2+ senza abbastanza prudenza)
+      shape: 'excerpt', target: 'path',
+      outcome: 'string', evidence: ['id'], at: 'number', // com'è finita: lo scrive chi guarda dopo (le cicatrici, R4)
+      feedbackGroup: 'string',                            // il gruppo dell'esperimento sul messaggio "fear" (R7)
+    },
+    indexes: [['project', 't'], ['session', 't']],
     retention: { days: 365 },
   },
   daily: {

@@ -80,6 +80,7 @@ const DEFAULT_SETTINGS = {
   approveWaitSec: 120,  // quanto a lungo l'ufficio tiene in sospeso una richiesta
   groundingAlerts: false, // avvisi di ancoraggio: modifiche alla cieca e affermazioni smentite
   elderEnabled: true,   // il Nonno racconta le lezioni del Libro della bottega
+  fearEnabled: true,    // la paura (2.14): l'ufficio mostra le azioni rischiose. Solo osserva: non ferma niente
   // feedback agli agenti (2.11): ogni funzione è off | shadow | on, e parte spenta (vedi feedback.js)
   fbSessionLessons: 'off', // le lezioni del progetto a inizio sessione
   fbElder: 'off',          // il Nonno parla all'agente dopo una trappola nota
@@ -87,6 +88,7 @@ const DEFAULT_SETTINGS = {
   fbStale: 'off',          // file cambiato da un altro agente e modificato senza rileggerlo (nella 2.11 al massimo in ombra)
   fbClaims: 'off',         // affermazioni senza prove a fine turno (nella 2.11 al massimo in ombra)
   fbDrift: 'off',          // richiamo al compito (nella 2.11 al massimo in ombra)
+  fbFear: 'shadow',        // 2.14: la paura prima di un'azione rischiosa senza prudenza. In ombra di base: prima si misura
   bottegaLearn: true,   // il Libro della bottega impara dalle sessioni (dal vivo e dall'archivio)
   coworkDirs: '',       // cartelle extra dove cercare le sessioni Cowork (separate da ;)
   claudeDirs: '',       // altre cartelle di configurazione di Claude Code (es. dentro WSL), separate da ;
@@ -109,6 +111,7 @@ const LONG_STRINGS = { coworkDirs: 600, claudeDirs: 600, embedModel: 80, ollamaU
 const i18n = require('../i18n');
 const feedback = require('./feedback');
 const { AgentWorld } = require('./worldmap');
+const fear = require('./fear');
 const grounding = require('./grounding');
 const { AgentMind, Corpus } = require('./semantic');
 const embedOpts = require('./embed');
@@ -747,6 +750,15 @@ class OfficeState extends EventEmitter {
   // mappa della realtà dell'agente (vedi worldmap.js)
   worldStart(s, a, id, name, input, ts) {
     try { const w = a.world || (a.world = new AgentWorld()); w.model = a.model || w.model || ''; w.start(id, name, input, ts || this.now(), s.cwd, a.ctx || 0); } catch {}
+    // 2.14: quanto è rischiosa e con quanta prudenza (fear.js). Sul passo restano solo regola, livello e prudenze
+    try {
+      const step = a.world && a.world.open.get(id);
+      if (step && !step.risk) {
+        const f = fear.fearOf({ s, a, tool: name, input, steps: a.world.steps.filter(x => x !== step) });
+        if (f.risk.marks.readsSecret) step.secret = true;
+        if (f.event) { step.risk = f.event; this.emit('risk', s, a, step); }
+      }
+    } catch {}
     try { const m = this.mindOf(s, a); m.action(id, ts || this.now(), describeTool(name, input), actionText(name, input)); const p = m.byTool.get(id); if (p) p.tool = name; } catch {}
   }
   // testo completo delle ultime risposte: serve a confrontare quello che dice con quello che c'è (grounding.js)
@@ -782,6 +794,7 @@ class OfficeState extends EventEmitter {
     const ts = Date.parse(line.timestamp) || 0;
     const s = this.ensureSession(sessionId, line.cwd, ts || undefined);
     if (line.entrypoint) this.setEntrypoint(s, line.entrypoint);
+    if (typeof line.gitBranch === 'string' && line.gitBranch && !agentId) s.branch = line.gitBranch.slice(0, 200); // serve a sapere su che branch finisce un "git push" (2.14)
     if (type === 'ai-title' && line.aiTitle) { if (!s.titleFromApp) s.title = line.aiTitle; this.touch(); return; }
     if (type === 'custom-title' && line.customTitle) { if (!s.titleFromApp) s.title = line.customTitle; this.touch(); return; }
     if (type === 'summary' && line.summary && !s.title) { s.title = line.summary; this.touch(); return; }
@@ -1027,6 +1040,8 @@ class OfficeState extends EventEmitter {
       }
       case 'PermissionRequest': {
         const a = getA();
+        // 2.14 (R6): quanto è rischiosa l'azione da approvare; il fumetto e la notifica lo dicono
+        try { a.permRisk = fear.permissionView({ s, a, tool: ev.tool_name, input: ev.tool_input }); } catch { a.permRisk = null; }
         this.setAgent(a, 'waiting', tr('Serve il tuo OK: {what}', { what: describeTool(ev.tool_name, ev.tool_input) }));
         this.addLog(s, tr('{agent} chiede il permesso: {tool}', { agent: a.kind === 'main' ? 'CLAUDE' : displayName(a), tool: ev.tool_name || '' }), 'wait');
         break;
@@ -1209,8 +1224,8 @@ class OfficeState extends EventEmitter {
       workflows: [...s.workflows.values()].map(r => this.workflowSnapshot(s, r)),
       messages: s.messages.slice(-30),
       party: s.party,
-      main: supervise(pub(s.main, rate), s, t),
-      subs: [...s.subs.values()].sort((x, y) => x.startedAt - y.startedAt).map(a => pub(numbered(s, a), rate)),
+      main: supervise(pub(s.main, rate, t), s, t),
+      subs: [...s.subs.values()].sort((x, y) => x.startedAt - y.startedAt).map(a => pub(numbered(s, a), rate, t)),
     };
   }
 
@@ -1236,7 +1251,7 @@ class OfficeState extends EventEmitter {
       registry: this.registrySeen,
       demo: this.demo,
       weather: this.weather || null,
-      approvals: this.approvals ? [...this.approvals.values()].map(a => ({ id: a.id, sid: a.sid, agentId: a.agentId, tool: a.tool, text: a.text, always: !!a.always, t: a.t })) : [],
+      approvals: this.approvals ? [...this.approvals.values()].map(a => ({ id: a.id, sid: a.sid, agentId: a.agentId, tool: a.tool, text: a.text, always: !!a.always, t: a.t, risk: a.risk || null })) : [],
       cowork: this.coworkScan || null,
       lang: i18n.getLang(),
     };
@@ -1334,7 +1349,7 @@ function noteModel(a, line) {
   if (e && EFFORTS.has(e)) a.effort = e;
 }
 
-function pub(a, rate) {
+function pub(a, rate, now = Date.now()) {
   const tok = a.tok.in + a.tok.out + a.tok.cr + a.tok.cw;
   return {
     id: a.id, kind: a.kind, type: a.type, seq: a.seq || 0, name: a.name || '', description: a.description,
@@ -1344,6 +1359,8 @@ function pub(a, rate) {
     tokens: tok, cost: weight(a.tok) * rate,
     errStreak: a.errStreak || 0, interruptedAt: a.interruptedAt || 0,
     model: a.model || '', effort: a.effort || '',
+    fear: fear.fearView(a, now), // 2.14: l'ultima azione rischiosa, se recente, e la cicatrice
+    perm: a.status === 'waiting' && a.permRisk ? a.permRisk : null, // 2.14: il rischio della richiesta di permesso in attesa
   };
 }
 

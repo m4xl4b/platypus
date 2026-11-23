@@ -143,12 +143,22 @@ npm run hooks:status -- --feedback
 npm run hooks:uninstall -- --feedback
 ```
 
-- Sono hook `http` verso `http://127.0.0.1:47800/platypus-hook/feedback` su `SessionStart`, `PostToolUse`, `PostToolUseFailure`, `Stop` e `SubagentStop`, con un tempo massimo di 3 secondi. Se il tuo Claude Code è troppo vecchio per gli hook `http`, aggiungi `--curl` per installarli come comandi `curl`.
+- Sono hook `http` verso `http://127.0.0.1:47800/platypus-hook/feedback` su `SessionStart`, `PreToolUse` (dalla 2.14, per la paura; anche gli strumenti MCP), `PostToolUse`, `PostToolUseFailure`, `Stop` e `SubagentStop`, con un tempo massimo di 3 secondi. Se li hai installati con la 2.13, OPZ dice che sono di una versione precedente: toglili e installali di nuovo, altrimenti la paura non arriva mai all'agente. Se il tuo Claude Code è troppo vecchio per gli hook `http`, aggiungi `--curl` per installarli come comandi `curl`.
 - Installarli da solo non cambia niente: in OPZ → *Feedback agli agenti* ogni funzione parte *spenta*. *Ombra* registra che cosa Platypus avrebbe detto, senza dirlo; *accesa* lo dice. In questa versione tre funzioni si fermano all'ombra. Le tre che si possono accendere hanno anche *esperimento*: ogni sessione finisce a caso, metà e metà, in *accesa* o in *ombra*, e la scheda FEEDBACK del Libro confronta i due gruppi (con un intervallo al 95%, e "dati insufficienti" finché ci sono meno di 10 casi per gruppo).
 - Se Platypus è chiuso, o ci mette più di 300 ms a rispondere, Claude Code prosegue come sempre. Platypus non risponde mai al posto tuo a un permesso e non cambia mai l'input o l'output di uno strumento.
 - Per lasciare fuori un progetto: nel suo Libro spunta *Non parlare agli agenti di questo progetto*.
 
 Ogni messaggio, mandato o in ombra, finisce nel database dello storico, `~/.platypus/platypus.db`, sotto la chiave del progetto (la stessa del Libro della bottega), con che cosa è stato detto, a quale agente e che cosa ha fatto l'agente dopo. Il testo passa dal filtro dei segreti prima di essere tenuto, e i messaggi più vecchi di 365 giorni si cancellano. Niente esce dal computer. La scheda FEEDBACK del Libro mostra lo stesso registro; per cancellarlo usa *Dimentica questo progetto* (vedi *Lo storico* più sotto).
+
+### La paura
+
+Dalla 2.14 Platypus nota le azioni difficili da disfare (`git reset --hard`, un force push su `main`, `rm -rf` fuori dal progetto, `DROP TABLE`, `terraform apply`, uno strumento MCP che manda o cancella…) e se l'agente prima è stato prudente. **Platypus non è una protezione**: riconosce schemi noti e può non vedere quello che non conosce.
+
+- **Nell'ufficio** (OPZ → *PAURA E CICATRICI*, accesa di base): osserva soltanto. Senza hook funziona dai transcript, con qualche secondo di ritardo.
+- **All'agente** (OPZ → *Feedback agli agenti* → *La paura*, **in ombra** di base): dopo un'azione rischiosa senza prudenza, una riga di contesto ("il comando che hai appena lanciato è irreversibile… controlla che cosa ha cambiato e dillo all'utente; prima della prossima azione rischiosa fai un commit o una copia"). Servono gli hook di feedback con `PreToolUse`. Claude Code passa questo contesto all'agente insieme al risultato dell'azione, quindi non può fermarla: può solo cambiare quello che l'agente fa dopo. Platypus aggiunge contesto, non decide mai. In ombra registra che cosa avrebbe detto, così la scheda PAURE del Libro può mostrare se aiuta prima che tu l'accenda; *esperimento* confronta i due gruppi.
+- **Che cosa resta:** in `~/.platypus/platypus.db`, collezione `risks`, la regola, il livello, la prudenza, la forma del comando (`git reset --hard <ref>`) e il bersaglio relativo al progetto, mai il comando. Resta quanto i riassunti delle sessioni (365 giorni).
+- **La guardia non c'è nella 2.14.0.** Togliere l'approvazione automatica alle azioni irreversibili, e ridarti la decisione, aspetta le prove su che cosa permettono davvero gli hook di Claude Code in ogni modo dei permessi.
+
 
 ## Significato più preciso (facoltativo)
 

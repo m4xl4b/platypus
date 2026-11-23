@@ -37,8 +37,10 @@ function load(p) {
 // ---- hook di feedback (2.11): sincroni, dicono qualcosa all'agente. Si installano e si tolgono a parte da quelli
 // che osservano, e solo con una conferma esplicita: per questo hanno un loro marcatore e non contano come "nostri" qui sotto.
 const FEEDBACK = MARK + '/feedback';
-const FEEDBACK_EVENTS = ['SessionStart', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SubagentStop'];
+const FEEDBACK_EVENTS = ['SessionStart', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SubagentStop'];
 const FEEDBACK_TOOLS = 'Bash|PowerShell|Read|Glob|Grep|Edit|Write|MultiEdit';
+// prima di un'azione (2.14, la paura): anche NotebookEdit e gli strumenti MCP, che possono mandare, pubblicare o cancellare
+const FEAR_TOOLS = FEEDBACK_TOOLS + '|NotebookEdit|mcp__.*';
 function isFeedback(h) { return !!h && [h.url, h.command].some(x => typeof x === 'string' && x.includes(FEEDBACK)); }
 
 function isOurs(h) { return h && typeof h.command === 'string' && (h.command.includes(MARK) || h.command.includes(LEGACY)) && !isFeedback(h); }
@@ -119,7 +121,7 @@ function feedbackGroups({ port = 47800, curl = false } = {}) {
     ? { type: 'command', command: `${exe} -s -m 2 -X POST -H "Content-Type: application/json" --data-binary "@-" ${url}`, timeout: 3 }
     : { type: 'http', url, timeout: 3 };
   const out = {};
-  for (const ev of FEEDBACK_EVENTS) out[ev] = TOOL_EVENTS.has(ev) ? { matcher: FEEDBACK_TOOLS, hooks: [hook] } : { hooks: [hook] };
+  for (const ev of FEEDBACK_EVENTS) out[ev] = TOOL_EVENTS.has(ev) ? { matcher: ev === 'PreToolUse' ? FEAR_TOOLS : FEEDBACK_TOOLS, hooks: [hook] } : { hooks: [hook] };
   return out;
 }
 
@@ -153,8 +155,15 @@ const feedbackIn = s => !!(s.hooks && Object.values(s.hooks).some(gs => (gs || [
 function feedbackStatus({ base } = {}) {
   try { return feedbackIn(load(settingsPath(base))); } catch { return false; }
 }
+// installati prima della 2.14: senza PreToolUse la paura non arriva all'agente (nemmeno in ombra). Si reinstallano dalle opzioni
+function feedbackOutdated({ base } = {}) {
+  try {
+    const s = load(settingsPath(base));
+    return feedbackIn(s) && !((s.hooks && s.hooks.PreToolUse) || []).some(g => (g.hooks || []).some(isFeedback));
+  } catch { return false; }
+}
 
 module.exports = {
   install, uninstall, status, outdated, hookCommand, MARK, LEGACY, PERM, EVENTS,
-  installFeedback, uninstallFeedback, feedbackStatus, feedbackPreview, FEEDBACK, FEEDBACK_EVENTS, FEEDBACK_TOOLS,
+  installFeedback, uninstallFeedback, feedbackStatus, feedbackOutdated, feedbackPreview, FEEDBACK, FEEDBACK_EVENTS, FEEDBACK_TOOLS, FEAR_TOOLS,
 };

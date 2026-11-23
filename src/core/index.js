@@ -53,6 +53,7 @@ const { Stats } = require('./stats');
 const { History } = require('./history');
 const { runRetention } = require('./retention');
 const experiments = require('./experiments');
+const fear = require('./fear');
 const historyQuery = require('./history-query');
 const search = require('./search');
 const { demoHistoryStore } = require('./demo-history');
@@ -83,6 +84,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const history = new History({ dir: path.dirname(settingsPath), settings: initialSettings });
   // ogni azione finita diventa un passo nello storico; i riassunti delle sessioni ogni minuto e alla chiusura
   state.on('step', (s, a, step) => { try { history.recordStep(s, a, step); } catch {} });
+  state.on('risk', (s, a, step) => { try { history.recordRisk(s, a, step, displayName(a)); } catch {} }); // le azioni rischiose (2.14)
   const summaryTimer = setInterval(() => { try { history.summarize(state, { counts: sessionCounts }); } catch {} }, 60000);
   summaryTimer.unref && summaryTimer.unref();
   const stats = new Stats(state, { store: history.store }); // nello storico, collezione daily
@@ -100,9 +102,13 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
   const ARCHIVE_EVERY = 6 * 3600000, archived = new Map();
   function learnLive() {
     let n = 0;
-    if (!state.settings.bottegaLearn) return 0;
+    const learning = !!state.settings.bottegaLearn;
     for (const s of state.sessions.values()) {
-      if (s.demo || !s.cwd) continue;
+      if (!s.cwd) continue;
+      // le cicatrici (2.14): il danno visto dopo un'azione rischiosa va sul passo (anche nella demo, per l'ufficio)
+      // e nel suo evento nello storico (la demo non scrive: recordRisk la salta). Vale anche se il Libro non impara
+      try { const agents = agentsOf(s); for (const sc of fear.markScars(s, agents)) history.recordRisk(s, { id: sc.agent }, sc.step, sc.agentName); } catch {}
+      if (s.demo || !learning) continue;
       try { const agents = agentsOf(s); if (agents.length) n += bottega.learn(s.cwd, digest(s, agents)); } catch {}
       const key = projectKey(s.cwd);
       if (Date.now() - (archived.get(key) || 0) < ARCHIVE_EVERY) continue;
@@ -198,6 +204,8 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
       res, t: Date.now(),
     };
     ap.always = !!(ap.suggestions && ap.suggestions.length);
+    // 2.14 (R6): il rischio l'ha appena calcolato state.applyHook sull'agente
+    try { const s = state.sessions.get(ap.sid); const a = s && (ap.agentId === 'main' ? s.main : s.subs.get(ap.agentId)); ap.risk = (a && a.permRisk) || null; } catch { ap.risk = null; }
     ap.timer = setTimeout(() => finishApproval(id, null), wait * 1000);
     approvals.set(id, ap);
     // se rispondi nel terminale, Claude Code chiude l'hook: togliamo la richiesta
@@ -364,13 +372,14 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
 
   let hooksCache = { t: 0, v: false, f: false };
   function hooksInstalled() {
-    if (Date.now() - hooksCache.t > 5000) hooksCache = { t: Date.now(), v: hooks.status({ base }), f: hooks.feedbackStatus({ base }) };
+    if (Date.now() - hooksCache.t > 5000) hooksCache = { t: Date.now(), v: hooks.status({ base }), f: hooks.feedbackStatus({ base }), fo: hooks.feedbackOutdated({ base }) };
     return hooksCache.v;
   }
   function payload() {
     const snap = state.snapshot();
     snap.hooks.installed = hooksInstalled();
     snap.hooks.feedback = hooksCache.f; // gli hook di feedback, installati a parte
+    snap.hooks.feedbackOutdated = !!hooksCache.fo; // installati prima della 2.14, senza PreToolUse
     const nowMs = Date.now();
     feedbackSaid = feedbackSaid.filter(x => nowMs - x.t < SAID_MS);
     snap.feedback = feedbackSaid;
@@ -444,7 +453,10 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
     const claims = grounding.checkClaims(s, agents, s.cwd).claims.filter(c => c.status === 'ungrounded').length;
     let lessons = 0;
     try { lessons = history.store.collection('feedback').count({ sid: s.id, mode: 'on', lessonId: { $exists: true } }); } catch {}
-    return { surprises: sp.length, loops: loops.size, stuck, flaky, claims, stale: g.stale.length + g.blindEdits.length, lessons };
+    // la paura (2.14, R9): azioni di livello 2 o più, paure mancate, danni (dai passi già segnati dal motore)
+    let risky = 0, missedF = 0, scarsN = 0;
+    for (const a of agents) for (const st of a.world.steps) { const r = st.risk; if (!r || r.level < 2) continue; risky++; if (r.missed) missedF++; if (r.outcome === 'damage') scarsN++; }
+    return { surprises: sp.length, loops: loops.size, stuck, flaky, claims, stale: g.stale.length + g.blindEdits.length, lessons, risky_actions: risky, missed_fears: missedF, scars: scarsN };
   }
 
   // gli agenti di una sessione con la loro mappa, per grounding.js, surprise.js e bottega.js
@@ -751,6 +763,31 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         return json(res, 200, { ok: true, demo: sc.demo, ...r });
       } catch (e) { return json(res, e.code === 'bad-query' ? 400 : 200, { ok: false, error: e.message }); }
     }
+    // la scheda PAURE E CICATRICI del Libro (2.14, R9): livelli e regole degli ultimi 90 giorni, gli eventi recenti
+    if (url.pathname === '/api/fear') {
+      try {
+        history.flush();
+        const q = Object.fromEntries(url.searchParams);
+        if (q.project && !q.key) q.key = q.project; // come /api/risks
+        const sc = historyScope(q);
+        if (!sc) return json(res, 404, { ok: false });
+        if (!sc.store) return json(res, 200, { ok: true, demo: true, ...fear.summary(null, {}) });
+        return json(res, 200, { ok: true, demo: sc.demo, ...fear.summary(sc.store, { projects: sc.projects, now: Date.now() }) });
+      } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+    }
+    // le azioni rischiose salvate (2.14): per il progetto (sid, cwd, key o project) o per tutti; session, from, to, missed=1
+    if (url.pathname === '/api/risks') {
+      try {
+        history.flush();
+        const q = Object.fromEntries(url.searchParams);
+        if (q.project && !q.key) q.key = q.project;
+        const sc = historyScope(q);
+        if (!sc) return json(res, 404, { ok: false });
+        if (!sc.store) return json(res, 200, { ok: true, demo: true, risks: [] });
+        const risks = fear.queryRisks(sc.store, { projects: sc.projects, session: (q.session || '').slice(0, 200) || undefined, from: Number(q.from) || undefined, to: Number(q.to) || undefined, missed: q.missed === '1', limit: Number(q.limit) || 100 });
+        return json(res, 200, { ok: true, demo: sc.demo, risks });
+      } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+    }
     // lo storico nel tempo (S12): per il progetto (sid, cwd o key) o per tutti; metric=all dà tutte le metriche con la loro lettura
     if (url.pathname === '/api/history') {
       try {
@@ -783,7 +820,7 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         if (!sc) return json(res, 404, { ok: false });
         if (!sc.store) return json(res, 200, { ok: true, demo: true });
         // nella demo il giro in tondo e le lezioni a inizio sessione sono in esperimento (dati finti, demo-history.js)
-        const modes = sc.demo ? { sessionLessons: 'experiment', elder: 'on', loop: 'experiment' } : Object.fromEntries(experiments.FEATURES.map(f => [f, feedback.modeOf(state.settings, f)]));
+        const modes = sc.demo ? { sessionLessons: 'experiment', elder: 'on', loop: 'experiment', fear: 'experiment' } : Object.fromEntries(experiments.FEATURES.map(f => [f, feedback.modeOf(state.settings, f)]));
         return json(res, 200, { ok: true, demo: sc.demo, modes, minN: experiments.MIN_N, project: sc.projects ? experiments.results(sc.store, sc.projects) : null, all: experiments.results(sc.store) });
       } catch (e) { return json(res, 200, { ok: false, error: e.message }); }
     }
@@ -814,6 +851,9 @@ function startCore({ port = DEFAULT_PORT, base, includeCowork = true, settingsPa
         const ds = demoHistory();
         r.trend = historyQuery.reportTrend(ds || history.store, Math.min(Date.now(), end.getTime() - 1));
         if (ds) r.trend.demo = true;
+        // la paura (2.14, R9): le paure mancate per agente e le cicatrici del giorno
+        r.fear = fear.reportDay(ds || history.store, end.getTime() - 86400000, end.getTime());
+        if (ds) r.fear.demo = true;
       } catch { r.trend = null; }
       return json(res, 200, r);
     }
