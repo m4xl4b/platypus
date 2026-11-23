@@ -448,6 +448,40 @@ process.on('exit', code => {
   const fbView = JSON.parse((await get(port, '/api/bottega?cwd=' + encodeURIComponent(tmp))).body);
   await get(port, '/api/bottega', 'POST', JSON.stringify({ cwd: tmp, action: 'unmute' }));
   ok(fbMute.ok && fbMute.mute === true && fbView.mute === true && fbMuted.status === 204 && !core.feedbackLog.recent(tmp).some(e => e.sid === 'fb-muted'), 'feedback: un progetto zittito dal Libro non riceve né registra messaggi → ' + fbMuted.status);
+  // 2.14 (R8): la guardia, per progetto, dalla rotta vera dell'hook e dalle azioni del Libro
+  {
+    const GS = 'guard-smoke-1';
+    core.state.applyTranscriptLine(GS, null, { type: 'user', timestamp: new Date().toISOString(), cwd: tmp, entrypoint: 'cli', message: { role: 'user', content: 'sistema il login' } });
+    let gn = 0;
+    const pre = cmd => JSON.stringify({ hook_event_name: 'PreToolUse', session_id: GS, cwd: tmp, tool_name: 'Bash', tool_input: { command: cmd }, tool_use_id: 'g-' + (++gn) });
+    const post = body => get(port, '/api/bottega', 'POST', JSON.stringify({ cwd: tmp, ...body }));
+    const g0 = await get(port, '/platypus-hook/feedback', 'POST', pre('git push --force origin main'));
+    const gOn = JSON.parse((await post({ action: 'guard', mode: 'on' })).body);
+    const g1 = await get(port, '/platypus-hook/feedback', 'POST', pre('git push --force origin main'));
+    let g1j = {}; try { g1j = JSON.parse(g1.body); } catch {}
+    const g2 = await get(port, '/platypus-hook/feedback', 'POST', pre('git status'));
+    ok(g0.status === 204 && gOn.ok && gOn.guard === 'on' && g1.status === 200 && g1j.hookSpecificOutput && g1j.hookSpecificOutput.permissionDecision === 'ask' && /IRREVERSIB/.test(g1j.hookSpecificOutput.permissionDecisionReason || '') && g2.status === 204,
+      `guardia: spenta → ${g0.status}; accesa dal Libro → "ask" con il motivo per un push forzato su main; un comando innocuo → ${g2.status}`);
+    const acc = JSON.parse((await post({ action: 'accept', rule: 'git-push-main' })).body);
+    await post({ action: 'accept', rule: 'git-push-force-shared' });
+    const g3 = await get(port, '/platypus-hook/feedback', 'POST', pre('git push --force origin main'));
+    const fz = JSON.parse((await get(port, '/api/fear?cwd=' + encodeURIComponent(tmp))).body);
+    ok(acc.ok && acc.accepted['git-push-main'] > 0 && g3.status === 204 && fz.guard === 'on' && fz.accepted.length === 2 && fz.accepted[0].text && typeof fz.hooks.feedback === 'boolean' && typeof fz.hooks.outdated === 'boolean',
+      `guardia: con le regole accettate come normali qui tace (${g3.status}); /api/fear dà la modalità, le regole accettate e lo stato degli hook`);
+    const badMode = await post({ action: 'guard', mode: 'deny' }), badRule = await post({ action: 'accept', rule: 'nessuna' });
+    const foreignG = await new Promise(resolve => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/api/bottega', method: 'POST', headers: { Origin: 'http://localhost:3000', 'Content-Type': 'text/plain' } }, res => { res.resume(); resolve(res.statusCode); });
+      req.on('error', () => resolve(0)); req.end(JSON.stringify({ cwd: tmp, action: 'guard', mode: 'off' }));
+    });
+    const stillOn = core.bottega.guardOf(tmp);
+    ok(badMode.status === 400 && badRule.status === 400 && foreignG === 403 && stillOn === 'on', `guardia: un modo o una regola che non esistono → ${badMode.status}, ${badRule.status}; da un'altra origine → ${foreignG}, e resta ${stillOn}`);
+    await post({ action: 'unaccept', rule: 'git-push-main' });
+    await post({ action: 'unaccept', rule: 'git-push-force-shared' });
+    const gOff = JSON.parse((await post({ action: 'guard', mode: 'off' })).body);
+    const g4 = await get(port, '/platypus-hook/feedback', 'POST', pre('git push --force origin main'));
+    const logG = core.feedbackLog.recent(tmp).filter(e => e.feature === 'guard');
+    ok(gOff.guard === 'off' && g4.status === 204 && logG.length === 1 && logG[0].mode === 'on' && logG[0].event === 'PreToolUse', `guardia: rispenta → ${g4.status}; nel registro una domanda sola (${logG.length})`);
+  }
   fbOnly('PostToolUseFailure');
   fbOnly('PostToolUse', { feature: 'elder', run: () => { throw new Error('regola rotta'); } });
   const fb2 = await get(port, '/platypus-hook/feedback', 'POST', fbIn('PostToolUse', { session_id: 'fb-broken' }));

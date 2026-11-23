@@ -125,7 +125,7 @@ class Bottega {
     this.keys = keys;
     this.cwdOf = cwdOf;
     this.log = log;
-    this.books = new Map(); // chiave -> {key, name, cwd, lessons: {id: lesson}, learned: {}, forgotten: {id: t}, mute, strays, dirty}
+    this.books = new Map(); // chiave -> {key, name, cwd, lessons: {id: lesson}, learned: {}, forgotten: {id: t}, mute, guard, accepted: {regola: t}, strays, dirty}
     this.timer = setInterval(() => this.save(), 30000);
     this.timer.unref && this.timer.unref();
   }
@@ -142,7 +142,7 @@ class Bottega {
     let demo = false;
     try { demo = !!this.isDemo(cwd); } catch {}
     if (demo) {
-      const b = { key: pk, name: dirName(cwd) || String(cwd || ''), cwd: String(cwd || ''), lessons: {}, learned: {}, forgotten: {}, mute: false, strays: new Set(), dirty: false, demo: true };
+      const b = { key: pk, name: dirName(cwd) || String(cwd || ''), cwd: String(cwd || ''), lessons: {}, learned: {}, forgotten: {}, mute: false, guard: 'off', accepted: {}, strays: new Set(), dirty: false, demo: true };
       this.books.set(pk, b);
       return b;
     }
@@ -161,7 +161,7 @@ class Bottega {
 
   // un Libro vuoto, con quello che lo storico sa del progetto (anche sotto i suoi alias)
   loadBook(key, cwd) {
-    const b = { key, name: dirName(cwd) || String(cwd || ''), cwd: String(cwd || ''), lessons: {}, learned: {}, forgotten: {}, mute: false, strays: new Set(), dirty: false };
+    const b = { key, name: dirName(cwd) || String(cwd || ''), cwd: String(cwd || ''), lessons: {}, learned: {}, forgotten: {}, mute: false, guard: 'off', accepted: {}, strays: new Set(), dirty: false };
     if (!this.store) return b;
     try {
       const projects = this.store.collection('projects');
@@ -173,7 +173,9 @@ class Bottega {
         for (const [id, t] of Object.entries(p.forgotten || {})) b.forgotten[id] = Math.max(b.forgotten[id] || 0, t);
         for (const [id, t] of Object.entries(p.learned || {})) b.learned[id] = Math.max(b.learned[id] || 0, t);
         if (p.mute) b.mute = true;
-        if (k !== key && (p.forgotten || p.learned || p.mute)) b.strays.add(k);
+        if (p.guard && (k === key || !b.guard)) b.guard = p.guard;
+        for (const [id, t] of Object.entries(p.accepted || {})) b.accepted[id] = Math.max(b.accepted[id] || 0, t);
+        if (k !== key && (p.forgotten || p.learned || p.mute || p.guard || p.accepted)) b.strays.add(k);
       }
       for (const d of this.store.collection('lessons').find({ project: { $in: all } })) {
         const l = { id: d.lesson, kind: d.kind, key: d.key, count: d.count || 0, sessions: d.sessions || [], first: d.first || d.t, last: d.last || d.t, evidence: d.evidence || [], seen: d.seen || [], pinned: !!d.pinned, ignored: !!d.ignored };
@@ -192,6 +194,8 @@ class Bottega {
     for (const [id, t] of Object.entries(other.forgotten || {})) b.forgotten[id] = Math.max(b.forgotten[id] || 0, t);
     for (const [id, t] of Object.entries(other.learned || {})) b.learned[id] = Math.max(b.learned[id] || 0, t);
     if (other.mute) b.mute = true;
+    if (other.guard && !b.guard) b.guard = other.guard;
+    for (const [id, t] of Object.entries(other.accepted || {})) { b.accepted = b.accepted || {}; b.accepted[id] = Math.max(b.accepted[id] || 0, t); }
     if (other.job && !b.job) b.job = other.job;
     b.strays.add(other.key);
     for (const k of other.strays || []) b.strays.add(k);
@@ -254,7 +258,7 @@ class Bottega {
     const cur = projects.get(b.key) || {};
     projects.put({
       ...cur, _id: b.key, name: b.name || cur.name || '', aliases: cur.aliases || {}, firstSeen: cur.firstSeen || now, lastSeen: now,
-      forgotten: b.forgotten || {}, learned: b.learned || {}, mute: !!b.mute,
+      forgotten: b.forgotten || {}, learned: b.learned || {}, mute: !!b.mute, guard: b.guard || 'off', accepted: b.accepted || {},
     });
     const keep = new Set();
     for (const l of Object.values(b.lessons)) {
@@ -272,7 +276,7 @@ class Bottega {
   // il libro finto della demo: solo in memoria, mai sul disco
   seedDemo(cwd, cases) {
     // creato qui, con la chiave della cartella: book() lo ritrova senza chiedere niente allo storico né a git
-    const b = { key: projectKey(cwd), name: dirName(cwd) || String(cwd || ''), cwd: String(cwd || ''), lessons: {}, learned: {}, forgotten: {}, mute: false, strays: new Set(), dirty: false, demo: true };
+    const b = { key: projectKey(cwd), name: dirName(cwd) || String(cwd || ''), cwd: String(cwd || ''), lessons: {}, learned: {}, forgotten: {}, mute: false, guard: 'off', accepted: {}, strays: new Set(), dirty: false, demo: true };
     this.books.set(b.key, b);
     this.learn(cwd, cases);
     b.dirty = false;
@@ -336,6 +340,18 @@ class Bottega {
 
   // "non parlare agli agenti di questo progetto": il feedback (feedback.js) lo rispetta prima di ogni altra cosa
   setMute(cwd, on) { const b = this.book(cwd); b.mute = !!on; b.dirty = true; return b.mute; }
+  // la guardia del progetto (2.14, R8): off | on | auto. Si cambia solo dal Libro dell'ufficio locale
+  setGuard(cwd, mode) { const b = this.book(cwd); b.guard = ['off', 'on', 'auto'].includes(mode) ? mode : 'off'; b.dirty = true; return b.guard; }
+  guardOf(cwd) { try { return this.book(cwd).guard || 'off'; } catch { return 'off'; } }
+  // le regole accettate come normali per il progetto: la guardia e il messaggio della paura tacciono per loro
+  accept(cwd, ruleId, on = true) {
+    const b = this.book(cwd);
+    b.accepted = b.accepted || {};
+    if (on) b.accepted[String(ruleId)] = Date.now(); else delete b.accepted[String(ruleId)];
+    b.dirty = true;
+    return { ...b.accepted };
+  }
+  acceptedOf(cwd) { try { return { ...(this.book(cwd).accepted || {}) }; } catch { return {}; } }
   muted(cwd) { try { return !!this.book(cwd).mute; } catch { return false; } }
 
   // le lezioni pronte da mostrare: peso, livello e testi nella lingua di adesso
@@ -347,7 +363,7 @@ class Bottega {
       return { ...rest, weight: Math.round(weight * 100) / 100, level: isStrong(l, weight) ? 'lesson' : 'observation', ...describe(l) };
     }).sort((x, y) => (y.pinned - x.pinned) || (y.weight - x.weight));
     const job = b.job ? { running: b.job.running, total: b.job.total, done: b.job.done, cases: b.job.cases, error: b.job.error } : null;
-    return { key: b.key, name: b.name, cwd: b.cwd, mute: !!b.mute, learnedSessions: Object.keys(b.learned || {}).length, learning: job, lessons };
+    return { key: b.key, name: b.name, cwd: b.cwd, mute: !!b.mute, guard: b.guard || 'off', accepted: { ...(b.accepted || {}) }, learnedSessions: Object.keys(b.learned || {}).length, learning: job, lessons };
   }
 
   // i progetti che hanno un libro (nello storico o già in memoria), per la scheda BOTTEGA dell'atrio. Solo quelli di

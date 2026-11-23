@@ -14,7 +14,7 @@
   // scheda FEEDBACK: i nomi brevi delle funzioni e dei modi (i messaggi partono dagli hook, vedi le opzioni)
   const FEATURE = {
     sessionLessons: tr('Lezioni a inizio sessione'), elder: tr('Il Nonno'), loop: tr('Giro in tondo'),
-    stale: tr('File cambiato da un altro'), claims: tr('Affermazioni senza prove'), drift: tr('Ritorno al compito'), fear: tr('La paura'),
+    stale: tr('File cambiato da un altro'), claims: tr('Affermazioni senza prove'), drift: tr('Ritorno al compito'), fear: tr('La paura'), guard: tr('L\'interruzione'),
   };
   // gli esiti (vedi src/core/outcomes.js): etichette oneste, sono indizi
   const OUTCOME = { helped: tr('PROBABILMENTE UTILE'), ignored: tr('IGNORATO'), unclear: tr('NON SI PUÒ DIRE') };
@@ -246,24 +246,45 @@
     if (!B.exp) { try { const x = await (await fetch('/api/feedback/experiment?' + new URLSearchParams(B.q))).json(); B.exp = x && x.ok ? x : null; } catch {} }
     if (B.open && B.data && B.tab === 'fear') { B.sig = ''; render(); }
   }
+  // l'interruzione (la guardia, R8): per progetto, spenta / automatica / sempre
+  const GUARD = () => ({
+    off: [tr('SPENTA'), tr('Platypus avvisa soltanto: la paura nell\'ufficio e, se è accesa nelle opzioni, il messaggio all\'agente. Nessuna azione viene fermata.')],
+    auto: [tr('AUTOMATICA'), tr('Platypus stima se c\'è qualcuno che può rispondere: una sessione interattiva (riga di comando, app, IDE, Cowork) con un tuo messaggio negli ultimi 30 minuti, e non un sottoagente in background. Se sì, prima di un\'azione irreversibile senza prudenza Claude Code ti chiede conferma; se no, lascia passare e avvisa soltanto, e nel registro resta che avrebbe chiesto. È una stima: può sbagliare in tutti e due i sensi.')],
+    on: [tr('SEMPRE'), tr('Prima di ogni azione irreversibile senza prudenza Claude Code ti chiede conferma. Attenzione: in una sessione dove nessuno può rispondere (claude -p negli script, agenti in background) la domanda diventa un rifiuto automatico e l\'azione non parte.')],
+  });
+  function guardHtml(f) {
+    const g = GUARD(), cur = f.guard || 'off';
+    if (f.demo) return '';
+    const hooks = f.hooks || {};
+    const warn = cur === 'off' ? '' : !hooks.feedback ? tr('Gli hook di feedback non sono installati: senza, l\'interruzione non arriva a Claude Code. Si installano dalle opzioni (FEEDBACK AGLI AGENTI).')
+      : hooks.outdated ? tr('Gli hook di feedback sono di una versione precedente, senza PreToolUse: l\'interruzione non arriva a Claude Code. Toglili e installali di nuovo dalle opzioni.') : '';
+    return `<h4>${esc(tr('INTERRUZIONE'))}</h4>` +
+      `<p>${esc(tr('Solo per le azioni irreversibili (livello 3) fatte senza abbastanza prudenza, e mai per le regole normali qui. Non risponde mai «no» al posto tuo e non cambia mai il comando: toglie l\'approvazione automatica e ti fa decidere.'))}</p>` +
+      `<div class="seg">${['off', 'auto', 'on'].map(m => `<button data-guard="${m}" class="${cur === m ? 'on' : ''}">${esc(g[m][0])}</button>`).join('')}</div>` +
+      `<p class="dim">${esc(g[cur][1])}</p>` + (warn ? `<p class="warn">${esc(warn)}</p>` : '');
+  }
   function fearBody() {
     const f = B.fear, d = B.data, lv = LV();
     if (!f) return `<p class="dim">${esc(tr('Carico le azioni rischiose…'))}</p>`;
     if (f.error) return `<p class="dim">${esc(tr('Lo storico non risponde: le azioni rischiose non si possono leggere adesso.'))}</p>`;
     const scars = d.lessons.filter(l => l.kind === 'scar' && !l.ignored);
     const levels = [3, 2, 1].map(k => `<span class="lv lv${k}">${esc(lv[k])} <b>${f.levels[k] || 0}</b></span>`).join(' ');
-    const rules = f.rules.length ? `<table class="frules"><thead><tr><th>${esc(tr('REGOLA'))}</th><th>${esc(tr('VOLTE'))}</th><th>${esc(tr('SENZA PRUDENZA'))}</th><th>${esc(tr('DANNI'))}</th></tr></thead><tbody>` +
-      f.rules.map(r => `<tr><td><span class="lv lv${r.level}">${esc(lv[r.level])}</span> ${esc(r.text)} <code>${esc(r.shape || '')}</code></td><td class="n">${r.count}</td><td class="n">${r.missed}</td><td class="n">${r.damage}</td></tr>`).join('') + '</tbody></table>'
+    const acc = new Set((f.accepted || []).map(a => a.id));
+    const accBtn = r => (r.level >= 2 ? `<button data-accept="${esc(r.id)}" class="${acc.has(r.id) ? 'on' : ''}" title="${esc(acc.has(r.id) ? tr('Torna a considerarla rischiosa in questo progetto') : tr('In questo progetto è normale: la guardia e il messaggio della paura tacciono per questa regola'))}">${esc(acc.has(r.id) ? tr('ANNULLA') : tr('NORMALE QUI'))}</button>` : '');
+    const rules = f.rules.length ? `<table class="frules"><thead><tr><th>${esc(tr('REGOLA'))}</th><th>${esc(tr('VOLTE'))}</th><th>${esc(tr('SENZA PRUDENZA'))}</th><th>${esc(tr('DANNI'))}</th><th></th></tr></thead><tbody>` +
+      f.rules.map(r => `<tr><td><span class="lv lv${r.level}">${esc(lv[r.level])}</span> ${esc(r.text)} <code>${esc(r.shape || '')}</code>${acc.has(r.id) ? ' <span class="dim">' + esc(tr('(normale qui)')) + '</span>' : ''}</td><td class="n">${r.count}</td><td class="n">${r.missed}</td><td class="n">${r.damage}</td><td>${accBtn(r)}</td></tr>`).join('') + '</tbody></table>'
       : `<p class="dim">${esc(tr('Nessuna azione rischiosa negli ultimi {n} giorni.', { n: f.days }))}</p>`;
     const scarList = scars.length ? scars.map(l => `<div class="lesson"><div class="lt"><b class="${l.level === 'lesson' ? 'ok' : ''}">${esc(l.level === 'lesson' ? tr('LEZIONE') : tr('OSSERVAZIONE'))}</b> ${esc(l.title)}</div><div class="ld">${esc(l.detail)}</div></div>`).join('')
       : `<p class="dim">${esc(tr('Nessuna cicatrice: nessun danno visto dopo un\'azione rischiosa.'))}</p>`;
     const recent = f.recent.length ? `<ul class="ev">${f.recent.map(r => `<li><span class="w">${esc(when(r.t))}</span> <span class="ag">${esc(r.name || (r.agent === 'main' ? 'Claude' : r.agent))}</span> <span class="lv lv${r.level}">${esc(lv[r.level])}</span> <code>${esc(r.shape || '')}</code>${r.target ? ' → ' + esc(r.target) : ''} · ${esc(r.missed ? tr('senza prudenza') : tr('con prudenza'))}${r.outcome === 'damage' ? ' · <b class="dmg">' + esc(tr('DANNO')) + '</b>' : ''}</li>`).join('')}</ul>` : '';
     return `<div class="fbsum"><div><b>${esc(tr('ULTIMI {n} GIORNI', { n: f.days }))}</b>${f.demo ? ` <span class="dim">${esc(tr('(dati finti della demo)'))}</span>` : ''}</div>` +
       `<div>${levels}</div><div>${esc(tr('{t} azioni rischiose, {m} senza abbastanza prudenza (paure mancate), {d} con un danno visto dopo.', { t: f.total, m: f.missed, d: f.damage }))}</div></div>` +
+      guardHtml(f) +
       `<h4>${esc(tr('PER REGOLA'))}</h4>${rules}` +
       `<h4>${esc(tr('CICATRICI'))}</h4>${scarList}` +
       `<h4>${esc(tr('IL MESSAGGIO ALL\'AGENTE'))}</h4>${experimentHtml('fear') || `<p class="dim">${esc(tr('La paura detta all\'agente prima dell\'azione (opzioni, feedback agli agenti): nessun dato ancora. In ombra si registra senza dire niente; in esperimento i due gruppi si confrontano qui, con gli intervalli.'))}</p>`}` +
-      `<h4>${esc(tr('REGOLE ACCETTATE'))}</h4><p class="dim">${esc(tr('Segnare una regola come normale per questo progetto (per esempio «qui terraform apply è normale») arriverà con la guardia, che aspetta ancora le prove sugli hook.'))}</p>` +
+      `<h4>${esc(tr('REGOLE ACCETTATE'))}</h4>` + ((f.accepted || []).length ? `<ul class="ev">${f.accepted.map(a => `<li><span class="lv lv${a.level}">${esc(lv[a.level])}</span> ${esc(a.text)} <code>${esc(a.shape || '')}</code> <span class="w">${esc(when(a.t))}</span> <button data-accept="${esc(a.id)}" class="on">${esc(tr('ANNULLA'))}</button></li>`).join('')}</ul>`
+        : `<p class="dim">${esc(tr('Nessuna: con «NORMALE QUI» nella tabella dici che in questo progetto una regola è normale (per esempio «qui terraform apply è normale»). La guardia e il messaggio della paura tacciono per lei; si annulla quando vuoi.'))}</p>`) +
       (recent ? `<h4>${esc(tr('LE ULTIME'))}</h4>${recent}` : '');
   }
   function renderFear() {
@@ -273,6 +294,19 @@
       `<p class="honest">${esc(tr('Le azioni difficili da disfare che gli agenti di questo progetto hanno fatto, con o senza prudenza, e i danni visti dopo. Platypus non è una protezione: riconosce schemi noti e può non vedere quello che non conosce. Ogni giudizio è probabile.'))}</p>` +
       `<div class="list fear">${fearBody()}</div>`;
     bindClose(); bindTabs();
+    const e = el();
+    for (const b of e.querySelectorAll('[data-guard]')) b.onclick = async () => {
+      const mode = b.dataset.guard;
+      if (mode === 'on' && !confirm(tr('Interruzione SEMPRE: in una sessione dove nessuno può rispondere (script con claude -p, agenti in background) un\'azione irreversibile senza prudenza non partirà. Confermi?'))) return;
+      const r = await post('/api/bottega', { action: 'guard', mode });
+      if (r && r.ok) { B.fear = { ...B.fear, guard: r.guard }; B.sig = ''; render(); if (window.toast) toast(tr('Interruzione: {mode}', { mode: GUARD()[r.guard][0] }), true); }
+      else if (window.toast) toast(tr('Non sono riuscito a cambiare l\'interruzione'), false);
+    };
+    for (const b of e.querySelectorAll('[data-accept]')) b.onclick = async () => {
+      const on = !b.classList.contains('on');
+      const r = await post('/api/bottega', { action: on ? 'accept' : 'unaccept', rule: b.dataset.accept });
+      if (r && r.ok) loadFear(); else if (window.toast) toast(tr('Non sono riuscito a cambiare la regola'), false);
+    };
     if (!B.fear || Date.now() - B.fear.at > 10000) loadFear();
   }
   function renderHistory() {

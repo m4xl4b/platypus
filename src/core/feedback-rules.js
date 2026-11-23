@@ -257,6 +257,8 @@ function fearBefore(input, ctx) {
   const steps = w ? w.steps.filter(x => !open.has(x) && x.id !== input.tool_use_id) : [];
   const f = fearMod.fearOf({ s, a, tool: input.tool_name, input: input.tool_input || {}, steps });
   if (!f.event || f.risk.level < 2 || !f.missed) return null;
+  // una regola che il progetto ha accettato come normale (2.14, R8): niente messaggio
+  try { if (ctx.accepted && require('./guard').acceptedAll(f.risk, ctx.accepted(s.cwd))) return null; } catch {}
   const rule = f.risk.ruleIds[0];
   const target = f.risk.targets[0] || '';
   let scar = null;

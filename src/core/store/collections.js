@@ -28,6 +28,7 @@ const COLLECTIONS = {
       name: 'string', remote: 'string', aliases: NUM, firstSeen: 'number', lastSeen: 'number',
       // del Libro: le lezioni dimenticate (id → quando) e le sessioni d'archivio già lette (id → fine)
       forgotten: NUM, learned: NUM, mute: 'boolean', // mute: "non parlare agli agenti di questo progetto" (2.11)
+      guard: 'string', accepted: NUM, // la guardia (2.14, R8): off | on | auto, e le regole accettate come normali (id → quando)
     },
     indexes: [],
     retention: null,

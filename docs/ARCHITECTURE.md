@@ -75,7 +75,7 @@ Everything that depends on the operating system lives in three places: `osint.js
 | `GET /i18n.js` | translations for the page |
 | `GET /api/grounding` | map versus territory and surprises of an agent or session (`sid`, `aid`, `replay`) |
 | `GET /api/bottega`, `/api/bottega/list`, `/api/bottega/hints` | a project's book (`sid`, `cwd` or `key`), the projects with a book, what Grandpa would say now |
-| `POST /api/bottega`, `/api/bottega/learn` | pin/ignore/unignore/forget a lesson; learn from the project's archive in the background |
+| `POST /api/bottega`, `/api/bottega/learn` | pin/ignore/unignore/forget a lesson; `mute`/`unmute`; the project's guard (`action: guard`, `mode`: `off`, `on`, `auto`) and its rules accepted as normal (`accept`/`unaccept`, `rule`); learn from the project's archive in the background |
 | `GET`/`POST /api/bottega/claudemd` | preview of the `CLAUDE.md` section; write it (only with `confirm: true`) |
 | `POST /platypus-hook/feedback` | synchronous feedback hook: the answer for Claude Code, or an empty `204` |
 | `GET`/`POST /api/feedback/hooks` | whether the feedback hooks are installed and the exact lines; install or remove them (only with `confirm: true`) |
@@ -84,7 +84,7 @@ Everything that depends on the operating system lives in three places: `osint.js
 | `GET /api/history` | metrics per day or week (`metric`, `from`, `to`, `bucket`, project by `sid`, `cwd` or `key`), each with its trend; `metric=all` for all of them |
 | `GET /api/history/search` | the stored steps by `file`, `command` or `error` (and `outcome`, `from`, `to`, `limit`), with a 150 ms budget |
 | `GET /api/risks` | the stored risky actions (2.14), for a project (`sid`, `cwd`, `key` or `project`) or all; `session`, `from`, `to`, `missed=1`, `limit`; each with its reasons and how to undo, in the office's language |
-| `GET /api/fear` | the Book's FEARS tab: the last 90 days of a project by level and rule, and the latest events |
+| `GET /api/fear` | the Book's FEARS tab: the last 90 days of a project by level and rule, and the latest events; with a project, also its guard mode, its accepted rules and whether the feedback hooks are installed and up to date |
 | `GET`/`POST /api/store` | the store's state (backend, size, retention, notice); `compact`, `export`, `forget` (only with `confirm: true`), retention and size limit |
 
 The server rejects requests whose `Host` or `Origin` is not `127.0.0.1`/`localhost` (protection against DNS rebinding and websites).
@@ -98,7 +98,7 @@ The server rejects requests whose `Host` or `Origin` is not `127.0.0.1`/`localho
 | `SessionStart`, `PreToolUse` (from 2.14, the fear), `PostToolUse`, `PostToolUseFailure` | `{"hookSpecificOutput": {"hookEventName": …, "additionalContext": "Platypus: …"}}` |
 | `Stop`, `SubagentStop` | `{"decision": "block", "reason": "Platypus: …"}`, never while `stop_hook_active` is true; in 2.11 the only feature that would use it (claims) stops at shadow, so it is never sent |
 
-Never `permissionDecision`, `updatedInput` or `updatedToolOutput`: Platypus adds context, it does not decide for you. Each feature is `off`, `shadow` or `on` (`fbSessionLessons`, `fbElder`, `fbLoop`, `fbStale`, `fbClaims`, `fbDrift`, `fbFear` in the options; `fbStale`, `fbClaims` and `fbDrift` are `shadow` at most, and `fbFear`, from 2.14, starts in `shadow`). Limits: one message per agent every 2 minutes, 6 per session per hour, the same lesson once per agent; shadow messages count like sent ones. The demo calls the same function without the network, with its own modes and an in-memory log.
+Never `updatedInput` or `updatedToolOutput`, and `permissionDecision` only as the guard's `ask` (see *Fear*), never `deny`: Platypus adds context, it does not decide for you. Each feature is `off`, `shadow` or `on` (`fbSessionLessons`, `fbElder`, `fbLoop`, `fbStale`, `fbClaims`, `fbDrift`, `fbFear` in the options; `fbStale`, `fbClaims` and `fbDrift` are `shadow` at most, and `fbFear`, from 2.14, starts in `shadow`). Limits: one message per agent every 2 minutes, 6 per session per hour, the same lesson once per agent; shadow messages count like sent ones. The demo calls the same function without the network, with its own modes and an in-memory log.
 
 ### Meaning (embeddings)
 
@@ -132,7 +132,7 @@ From 2.14 Platypus notices the actions that are hard to undo. Platypus is not a 
 - **Office** (option `fearEnabled`, on, it only observes): a prudent risky action makes the character sweat; a missed fear brings the Nonno with a hand on the shoulder and a DANGER or IRREVERSIBLE stamp on the desk; a scar stays on the character for the session. The permission balloon and notification add the level, the reasons, the missing prudence and how to undo; ALWAYS on level 3 asks once more.
 - **The fear message** (feedback feature `fear`, option `fbFear`, shadow by default): at `PreToolUse`, for level 2 or more without prudence, one line of context for the agent, once per rule per session. Only `additionalContext`: the action still runs.
 - **Report, Book, history:** missed fears per agent and the day's scars in the daily report; the Book's FEARS tab (`/api/fear`); the session metrics `risky_actions`, `missed_fears`, `scars`.
-- **The guard** (answering `ask` on an irreversible action without prudence) is not in 2.14.0: it waits for tests on what Claude Code's hooks really allow in each permission mode.
+- **The guard** (`guard.js`, R8): at `PreToolUse`, for a level 3 action without prudence, the feedback route answers `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": …}}` (plus the fear's `additionalContext` if there is one). Per project in the Book (`guard`: `off` by default, `on`, `auto`) with the rules accepted as normal (`accepted`, which also silence the fear message), both in the project document. `auto` asks only when `attended()` estimates that someone can answer: an interactive session kind (`cli`, `desktop`, `ide`, `cowork`, from the transcript's `entrypoint`), not a background subagent, a user message in the last 30 minutes; otherwise it logs a `guard` entry in shadow. R0 found that `ask` prompts in every permission mode, even over `allow` rules, and becomes an automatic refusal where nobody can answer; the hook cannot tell those sessions apart, hence the estimate. Fail open: a late or failed answer is no answer.
 
 ## Interface (`renderer/`)
 

@@ -1292,6 +1292,85 @@ function fearReportTests(ok) {
   } finally { store.close(); }
 }
 
+// 2.14, R8: la guardia. Per progetto: spenta, sempre, automatica (stima se c'è qualcuno); regole accettate come normali
+function guardTests(ok) {
+  const { OfficeState } = require(path.join(ROOT, 'src', 'core', 'state'));
+  const guard = require(path.join(ROOT, 'src', 'core', 'guard'));
+  const bt = require(path.join(ROOT, 'src', 'core', 'bottega'));
+  const iso = t => new Date(t).toISOString();
+  let now = Date.parse('2026-11-23T11:00:00Z'), n = 0, k = 0;
+  const cwd = '/home/u/proj';
+  const mk = (entrypoint = 'cli') => {
+    const st = new OfficeState({ clock: () => now, settings: {} }), S = 'sess-guard-' + (++k);
+    const line = (type, content, extra = {}) => ({ type, timestamp: iso(now += 1000), cwd, entrypoint, gitBranch: 'feature/x', message: { role: type, content, ...(type === 'assistant' ? { id: 'm' + (++n), usage: { input_tokens: 1, output_tokens: 1 } } : {}) }, ...extra });
+    const x = {
+      st, S, line,
+      say: t => st.applyTranscriptLine(S, null, line('user', t)),
+      bash: (id, command) => { st.applyTranscriptLine(S, null, line('assistant', [{ type: 'tool_use', id, name: 'Bash', input: { command } }])); st.applyTranscriptLine(S, null, line('user', [{ type: 'tool_result', tool_use_id: id, content: 'ok' }])); },
+      get s() { return st.sessions.get(S); },
+      pre: (command, extra = {}) => ({ hook_event_name: 'PreToolUse', session_id: S, cwd, tool_name: 'Bash', tool_input: { command }, tool_use_id: 'pre-' + (++n), ...extra }),
+    };
+    return x;
+  };
+  const decide = (x, input, mode, accepted = {}) => guard.decide({ s: x.s, a: input.agent_id ? x.s.subs.get(input.agent_id) : x.s.main, input, mode, accepted, now });
+  const stops = [];
+  try {
+    let x = mk(); stops.push(x.st);
+    x.say('sistema il test del login');
+    // sempre: livello 3 senza prudenza → ask, con il motivo
+    let d = decide(x, x.pre('git push --force origin main'), 'on');
+    ok(d && d.ask && d.mode === 'on' && d.risk.level === 3 && /Platypus \((guardia|guard)\)/.test(d.reason) && /IRREVERSIB/.test(d.reason), 'guardia sempre: livello 3 senza prudenza → chiede, con il motivo: ' + (d && d.reason));
+    const ans = guard.answer(d, 'Platypus: the command you just ran…');
+    ok(ans.hookSpecificOutput.hookEventName === 'PreToolUse' && ans.hookSpecificOutput.permissionDecision === 'ask' && ans.hookSpecificOutput.permissionDecisionReason === d.reason && ans.hookSpecificOutput.additionalContext && !('updatedInput' in ans.hookSpecificOutput),
+      'guardia: la risposta è "ask" con il motivo e il contesto della paura, mai "deny" e mai un comando cambiato');
+    ok(!guard.answer(null) && !guard.answer({ ask: false, reason: 'x' }), 'guardia: niente da chiedere → nessuna risposta');
+    // spenta, livello 2, prudenza, regola accettata: niente
+    ok(decide(x, x.pre('git push --force origin main'), 'off') === null && decide(x, x.pre('git push --force origin main'), 'boh') === null, 'guardia spenta (o un modo che non esiste): niente');
+    ok(decide(x, x.pre('git reset --hard'), 'on') === null, 'guardia: il livello 2 non la fa scattare (resta la paura che avvisa)');
+    ok(decide(x, x.pre('ls -la'), 'on') === null, 'guardia: un comando innocuo, niente');
+    ok(decide(x, x.pre('git push --force origin main'), 'on', { 'git-push-main': 1, 'git-push-force-shared': 1 }) === null, 'guardia: le regole accettate come normali qui la zittiscono');
+    ok(!!decide(x, x.pre('git push --force origin main'), 'on', { 'git-push-main': 1 }), 'guardia: accettarne una sola non zittisce l\'altra regola dello stesso livello');
+    const y = mk(); stops.push(y.st);
+    y.say('rilascia la versione');
+    y.bash('b1', 'npm publish --dry-run');
+    ok(decide(y, y.pre('npm publish'), 'on') === null, 'guardia: dopo una prova a vuoto l\'azione è prudente, niente');
+    // automatica: sessione interattiva con un messaggio recente → chiede
+    d = decide(x, x.pre('terraform apply -auto-approve'), 'auto');
+    ok(d && d.ask && d.estimate.attended && /interattiva|interactive/.test(d.estimate.why), 'guardia automatica: sessione interattiva con un messaggio recente → chiede (' + (d && d.estimate.why) + ')');
+    // automatica: nessun messaggio da più di 30 minuti → avvisa soltanto
+    now += 31 * 60000;
+    d = decide(x, x.pre('terraform apply -auto-approve'), 'auto');
+    ok(d && !d.ask && !d.estimate.attended && /31/.test(d.estimate.why), 'guardia automatica: l\'ultimo messaggio è di 31 minuti fa → non chiede, avvisa (' + (d && d.estimate.why) + ')');
+    ok(decide(x, x.pre('terraform apply -auto-approve'), 'on').ask === true, 'guardia sempre: chiede anche senza messaggi recenti');
+    // automatica: sessione da script (claude -p, SDK)
+    const z = mk('sdk-cli'); stops.push(z.st);
+    z.say('fai il deploy');
+    d = decide(z, z.pre('vercel --prod'), 'auto');
+    ok(d && !d.ask && /script|SDK/.test(d.estimate.why), 'guardia automatica: sessione da script → non chiede (' + (d && d.estimate.why) + ')');
+    // automatica: sottoagente in background
+    const b = mk(); stops.push(b.st);
+    b.say('prepara il rilascio');
+    b.st.applyTranscriptLine(b.S, null, b.line('assistant', [{ type: 'tool_use', id: 'sp1', name: 'Agent', input: { subagent_type: 'general-purpose', description: 'pubblica', prompt: 'pubblica', run_in_background: true } }]));
+    b.st.applyTranscriptLine(b.S, 'ag1', b.line('user', 'pubblica'));
+    const sub = b.s.subs.get('ag1');
+    if (sub) sub.background = true;
+    d = sub ? decide(b, b.pre('npm publish', { agent_id: 'ag1' }), 'auto') : null;
+    ok(d && !d.ask && /background/.test(d.estimate.why), 'guardia automatica: sottoagente in background → non chiede');
+    // automatica: tipo di sessione sconosciuto, o sessione che Platypus non conosce
+    const u = mk(''); stops.push(u.st);
+    u.say('pulisci');
+    ok(decide(u, u.pre('git push --force origin main'), 'auto').ask === false && guard.attended({ s: null }).attended === false, 'guardia automatica: tipo di sessione sconosciuto, o sessione sconosciuta → nel dubbio non chiede');
+    // il Libro tiene la guardia e le regole accettate, e le dimentica a richiesta
+    const book = new bt.Bottega({});
+    ok(book.guardOf('/p') === 'off' && book.setGuard('/p', 'auto') === 'auto' && book.guardOf('/p') === 'auto' && book.setGuard('/p', 'boh') === 'off', 'Libro: la guardia è spenta di base, si sceglie per progetto, un valore sbagliato la spegne');
+    book.accept('/p', 'terraform-apply');
+    ok(book.acceptedOf('/p')['terraform-apply'] > 0 && book.view('/p').accepted['terraform-apply'] > 0, 'Libro: una regola accettata come normale resta nel Libro');
+    book.accept('/p', 'terraform-apply', false);
+    ok(!book.acceptedOf('/p')['terraform-apply'], 'Libro: e si annulla');
+    book.stop();
+  } finally { for (const st of stops) { try { st.stop && st.stop(); } catch {} } }
+}
+
 function run(ok) {
   console.log('libro della bottega');
   bottegaTests(ok);
@@ -1300,6 +1379,7 @@ function run(ok) {
   fearViewTests(ok);
   fearFeedbackTests(ok);
   fearReportTests(ok);
+  guardTests(ok);
   bottegaNameTests(ok);
   elderTests(ok);
   console.log('sorprese');
@@ -1316,7 +1396,7 @@ function run(ok) {
   alertTests(ok);
 }
 
-module.exports = { run, riskTests, prudenceTests, fearStoreTests, scarTests, fearViewTests, fearFeedbackTests, fearReportTests };
+module.exports = { run, riskTests, prudenceTests, fearStoreTests, scarTests, fearViewTests, fearFeedbackTests, fearReportTests, guardTests };
 
 if (require.main === module) {
   require('./test-guard').requireTempDataDir('unit-test'); // mai nei dati veri: solo con PLATYPUS_DATA_DIR in una cartella temporanea

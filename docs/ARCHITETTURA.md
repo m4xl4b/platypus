@@ -75,7 +75,7 @@ Tutto ciò che dipende dal sistema operativo sta in tre punti: `osint.js`, `sour
 | `GET /i18n.js` | traduzioni per la pagina |
 | `GET /api/grounding` | mappa contro territorio e sorprese di un agente o della sessione (`sid`, `aid`, `replay`) |
 | `GET /api/bottega`, `/api/bottega/list`, `/api/bottega/hints` | il libro di un progetto (`sid`, `cwd` o `key`), i progetti con un libro, cosa direbbe adesso il Nonno |
-| `POST /api/bottega`, `/api/bottega/learn` | fissa/ignora/ripristina/dimentica una lezione; impara dall'archivio del progetto in background |
+| `POST /api/bottega`, `/api/bottega/learn` | fissa/ignora/ripristina/dimentica una lezione; `mute`/`unmute`; la guardia del progetto (`action: guard`, `mode`: `off`, `on`, `auto`) e le sue regole accettate come normali (`accept`/`unaccept`, `rule`); impara dall'archivio del progetto in background |
 | `GET`/`POST /api/bottega/claudemd` | anteprima della sezione per il `CLAUDE.md`; scriverla (solo con `confirm: true`) |
 | `POST /platypus-hook/feedback` | hook di feedback sincrono: la risposta per Claude Code, oppure un `204` vuoto |
 | `GET`/`POST /api/feedback/hooks` | se gli hook di feedback sono installati e le righe esatte; installarli o toglierli (solo con `confirm: true`) |
@@ -84,7 +84,7 @@ Tutto ciò che dipende dal sistema operativo sta in tre punti: `osint.js`, `sour
 | `GET /api/history` | metriche per giorno o settimana (`metric`, `from`, `to`, `bucket`, progetto per `sid`, `cwd` o `key`), ognuna con la sua tendenza; `metric=all` per tutte |
 | `GET /api/history/search` | i passi salvati per `file`, `command` o `error` (e `outcome`, `from`, `to`, `limit`), con un tempo massimo di 150 ms |
 | `GET /api/risks` | le azioni rischiose salvate (2.14), per un progetto (`sid`, `cwd`, `key` o `project`) o per tutti; `session`, `from`, `to`, `missed=1`, `limit`; ognuna con i motivi e come tornare indietro, nella lingua dell'ufficio |
-| `GET /api/fear` | la scheda PAURE del Libro: gli ultimi 90 giorni di un progetto per livello e per regola, e gli eventi più recenti |
+| `GET /api/fear` | la scheda PAURE del Libro: gli ultimi 90 giorni di un progetto per livello e per regola, e gli eventi più recenti; con un progetto, anche la modalità della guardia, le regole accettate e se gli hook di feedback sono installati e aggiornati |
 | `GET`/`POST /api/store` | lo stato dell'archivio (backend, dimensione, conservazione, avviso); `compact`, `export`, `forget` (solo con `confirm: true`), conservazione e limite di dimensione |
 
 Il server rifiuta le richieste con un `Host` o un `Origin` diversi da `127.0.0.1`/`localhost` (protezione dal DNS rebinding e dai siti web).
@@ -98,7 +98,7 @@ Il server rifiuta le richieste con un `Host` o un `Origin` diversi da `127.0.0.1
 | `SessionStart`, `PreToolUse` (dalla 2.14, la paura), `PostToolUse`, `PostToolUseFailure` | `{"hookSpecificOutput": {"hookEventName": …, "additionalContext": "Platypus: …"}}` |
 | `Stop`, `SubagentStop` | `{"decision": "block", "reason": "Platypus: …"}`, mai quando `stop_hook_active` è vero; nella 2.11 l'unica funzione che lo userebbe (le affermazioni) si ferma all'ombra, quindi non parte mai |
 
-Mai `permissionDecision`, `updatedInput` o `updatedToolOutput`: Platypus aggiunge contesto, non decide al posto tuo. Ogni funzione è `off`, `shadow` oppure `on` (`fbSessionLessons`, `fbElder`, `fbLoop`, `fbStale`, `fbClaims`, `fbDrift`, `fbFear` nelle opzioni; `fbStale`, `fbClaims` e `fbDrift` arrivano al massimo a `shadow`, e `fbFear`, dalla 2.14, parte in `shadow`). Limiti: un messaggio ogni 2 minuti per agente, 6 all'ora per sessione, la stessa lezione una volta sola per agente; i messaggi in ombra contano come quelli mandati. La demo chiama la stessa funzione senza passare dalla rete, con i suoi modi e un registro in memoria.
+Mai `updatedInput` o `updatedToolOutput`, e `permissionDecision` solo come `ask` della guardia (vedi *Paura*), mai `deny`: Platypus aggiunge contesto, non decide al posto tuo. Ogni funzione è `off`, `shadow` oppure `on` (`fbSessionLessons`, `fbElder`, `fbLoop`, `fbStale`, `fbClaims`, `fbDrift`, `fbFear` nelle opzioni; `fbStale`, `fbClaims` e `fbDrift` arrivano al massimo a `shadow`, e `fbFear`, dalla 2.14, parte in `shadow`). Limiti: un messaggio ogni 2 minuti per agente, 6 all'ora per sessione, la stessa lezione una volta sola per agente; i messaggi in ombra contano come quelli mandati. La demo chiama la stessa funzione senza passare dalla rete, con i suoi modi e un registro in memoria.
 
 ### Significato (embedding)
 
@@ -132,7 +132,7 @@ Dalla 2.14 Platypus nota le azioni difficili da disfare. Platypus non è una pro
 - **Ufficio** (opzione `fearEnabled`, accesa, osserva soltanto): un'azione rischiosa prudente fa sudare il personaggio; una paura mancata porta il Nonno con una mano sulla spalla e il timbro PERICOLO o IRREVERSIBILE sulla scrivania; una cicatrice resta sul personaggio per la sessione. Il fumetto e la notifica dei permessi aggiungono il livello, i motivi, la prudenza che manca e come tornare indietro; SEMPRE al livello 3 chiede una conferma in più.
 - **Il messaggio della paura** (funzione di feedback `fear`, opzione `fbFear`, in ombra di base): al `PreToolUse`, per il livello 2 o più senza prudenza, una riga di contesto per l'agente, una volta per regola per sessione. Solo `additionalContext`: l'azione parte comunque.
 - **Report, Libro, storico:** le paure mancate per agente e le cicatrici del giorno nel report; la scheda PAURE del Libro (`/api/fear`); le metriche di sessione `risky_actions`, `missed_fears`, `scars`.
-- **La guardia** (rispondere `ask` a un'azione irreversibile senza prudenza) non c'è nella 2.14.0: aspetta le prove su che cosa permettono davvero gli hook di Claude Code in ogni modo dei permessi.
+- **La guardia** (`guard.js`, R8): al `PreToolUse`, per un'azione di livello 3 senza prudenza, la rotta del feedback risponde `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": …}}` (più l'`additionalContext` della paura, se c'è). Per progetto nel Libro (`guard`: `off` di base, `on`, `auto`) con le regole accettate come normali (`accepted`, che zittiscono anche il messaggio della paura), tutte e due nel documento del progetto. `auto` chiede solo quando `attended()` stima che qualcuno possa rispondere: un tipo di sessione interattivo (`cli`, `desktop`, `ide`, `cowork`, dall'`entrypoint` del transcript), non un sottoagente in background, un messaggio dell'utente negli ultimi 30 minuti; altrimenti registra una voce `guard` in ombra. R0 ha trovato che `ask` chiede in ogni modo dei permessi, anche sopra le regole `allow`, e diventa un rifiuto automatico dove nessuno può rispondere; l'hook non distingue quelle sessioni, da qui la stima. Fail open: una risposta in ritardo o fallita non è una risposta.
 
 ## Interfaccia (`renderer/`)
 
